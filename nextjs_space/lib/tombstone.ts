@@ -64,28 +64,31 @@ export async function getMissionStatus(missionId: string) {
         }
       }
     } else {
-      // workflow_id based lookup
-      const res = await fetch(`${TOMBSTONE_URL}/tasks?workflow_id=${missionId}`);
+      // The /tasks endpoint returns ALL tasks (filter param is ignored by the API),
+      // so we must filter client-side by workflow_id.
+      const res = await fetch(`${TOMBSTONE_URL}/tasks`);
       const data = await res.json().catch(() => []);
-      tasks = Array.isArray(data) ? data : [];
+      const allTasks = Array.isArray(data) ? data : [];
+      tasks = allTasks.filter((t: any) => t?.workflow_id === missionId);
     }
 
     if (tasks.length === 0) {
       return { success: false, data: null, status: 'unknown', tasks: [] };
     }
 
-    // Determine overall status
+    // Determine overall status from ONLY this workflow's tasks
     const statuses = tasks.map((t: any) => (t?.status ?? '').toLowerCase());
     const allComplete = statuses.every((s: string) => s === 'complete' || s === 'completed');
     const anyFailed = statuses.some((s: string) => s === 'failed' || s === 'error');
+    const anyBlocked = statuses.some((s: string) => s === 'blocked');
     const anyRunning = statuses.some((s: string) =>
-      s === 'in progress' || s === 'in_progress' || s === 'running' || s === 'claimed'
+      s === 'in progress' || s === 'in_progress' || s === 'running' || s === 'claimed' || s === 'ready for pickup'
     );
 
     let overallStatus = 'processing';
     if (allComplete) overallStatus = 'completed';
-    else if (anyFailed && !anyRunning) overallStatus = 'error';
-    else if (anyRunning) overallStatus = 'generating';
+    else if (anyFailed && !anyRunning && !anyBlocked) overallStatus = 'error';
+    else if (anyRunning || anyBlocked) overallStatus = 'generating';
 
     return { success: true, data: { tasks }, status: overallStatus, tasks };
   } catch (err: any) {
@@ -112,9 +115,10 @@ export async function getMissionResults(missionId: string) {
         }
       }
     } else {
-      const res = await fetch(`${TOMBSTONE_URL}/tasks?workflow_id=${missionId}`);
+      const res = await fetch(`${TOMBSTONE_URL}/tasks`);
       const data = await res.json().catch(() => []);
-      tasks = Array.isArray(data) ? data : [];
+      const allTasks = Array.isArray(data) ? data : [];
+      tasks = allTasks.filter((t: any) => t?.workflow_id === missionId);
     }
 
     return { success: true, data: tasks };
