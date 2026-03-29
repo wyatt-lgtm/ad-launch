@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getMissionStatus, getMissionResults, extractAdsFromResults } from '@/lib/tombstone';
+import { getMissionStatus, getMissionResults, extractAdsFromResults, enrichAdsWithOutputs } from '@/lib/tombstone';
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
     if (!analysisId) {
       return NextResponse.json({ error: 'analysisId required' }, { status: 400 });
     }
+
     const analysis = await prisma.analysis.findUnique({
       where: { id: analysisId },
       include: { ads: true },
@@ -18,6 +19,8 @@ export async function GET(request: NextRequest) {
     if (!analysis) {
       return NextResponse.json({ error: 'Analysis not found' }, { status: 404 });
     }
+
+    // If already completed with ads, return cached results
     if (analysis.status === 'completed' && (analysis.ads?.length ?? 0) > 0) {
       return NextResponse.json({
         status: 'completed',
@@ -26,24 +29,33 @@ export async function GET(request: NextRequest) {
         postingPlan: analysis.postingPlan ?? null,
       });
     }
+
     if (!analysis.missionId) {
       return NextResponse.json({ status: analysis.status, error: 'No mission ID' });
     }
+
+    // Poll Tombstone for status
     const statusResult = await getMissionStatus(analysis.missionId);
-    const missionStatus = statusResult?.status ?? 'unknown';
+    const overallStatus = statusResult?.status ?? 'processing';
 
-    if (missionStatus === 'completed' || missionStatus === 'done' || missionStatus === 'finished') {
+    console.log(`[mission-status] analysisId=${analysisId} missionId=${analysis.missionId} status=${overallStatus}`);
+
+    if (overallStatus === 'completed') {
+      // Fetch full results and extract ads
       const resultsResponse = await getMissionResults(analysis.missionId);
-      const { ads, seoData, postingPlan } = extractAdsFromResults(resultsResponse.data);
+      const { ads: rawAds, seoData, postingPlan } = extractAdsFromResults(resultsResponse.data ?? []);
 
-      // Create ad records
-      for (const ad of ads) {
+      // Enrich ads with outputs and artifact URLs
+      const enrichedAds = await enrichAdsWithOutputs(rawAds);
+
+      // Create ad records in DB
+      for (const ad of enrichedAds) {
         await prisma.ad.create({
           data: {
             analysisId: analysis.id,
-            imageUrl: ad?.imageUrl ?? ad?.image_url ?? null,
-            caption: ad?.caption ?? ad?.text ?? '',
-            headline: ad?.headline ?? ad?.title ?? 'Ad',
+            imageUrl: ad?.imageUrl ?? null,
+            caption: ad?.caption ?? '',
+            headline: ad?.headline ?? 'Ad',
             watermarked: true,
           },
         });
@@ -67,15 +79,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         status: 'completed',
         ads: updatedAnalysis?.ads ?? [],
-        seoData: seoData,
-        postingPlan: postingPlan,
-        rawResults: resultsResponse.data,
+        seoData,
+        postingPlan,
       });
     }
 
-    let mappedStatus = 'processing';
-    if (missionStatus === 'failed' || missionStatus === 'error') mappedStatus = 'error';
-    else if (missionStatus === 'running' || missionStatus === 'in_progress') mappedStatus = 'generating';
+    // Update status in DB if changed
+    const mappedStatus = overallStatus === 'error' ? 'error' : overallStatus === 'generating' ? 'generating' : 'processing';
 
     if (analysis.status !== mappedStatus) {
       await prisma.analysis.update({
@@ -86,8 +96,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       status: mappedStatus,
-      missionStatus,
-      missionData: statusResult.data,
+      missionStatus: overallStatus,
     });
   } catch (err: any) {
     console.error('Mission status error:', err);
