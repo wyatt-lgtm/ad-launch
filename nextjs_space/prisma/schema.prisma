@@ -1,0 +1,55 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/ad_launch/nextjs_space/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String     @id @default(cuid())
+  email             String     @unique
+  password          String
+  confirmed         Boolean    @default(false)
+  confirmationToken String?    @unique
+  freeAdsUsed       Int        @default(0)
+  paidAdsCount      Int        @default(0)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  analyses          Analysis[]
+}
+
+model Analysis {
+  id         String   @id @default(cuid())
+  userId     String?
+  websiteUrl String
+  missionId  String?
+  status     String   @default("pending")
+  results    Json?    @db.JsonB
+  seoData    Json?    @db.JsonB
+  postingPlan Json?   @db.JsonB
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User?    @relation(fields: [userId], references: [id])
+  ads        Ad[]
+
+  @@index([userId])
+  @@index([missionId])
+}
+
+model Ad {
+  id              String   @id @default(cuid())
+  analysisId      String
+  imageUrl        String?
+  watermarkedUrl  String?
+  caption         String?  @db.Text
+  headline        String?
+  watermarked     Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([analysisId])
+}
