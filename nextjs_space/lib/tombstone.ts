@@ -16,6 +16,7 @@ async function sendCommand(command: string) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command }),
+      cache: 'no-store',
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -26,7 +27,7 @@ async function sendCommand(command: string) {
     let workflowId: string | null = null;
     if (taskIds.length > 0) {
       try {
-        const taskRes = await fetch(`${TOMBSTONE_URL}/tasks/${taskIds[0]}`);
+        const taskRes = await fetch(`${TOMBSTONE_URL}/tasks/${taskIds[0]}`, { cache: 'no-store' });
         const taskData = await taskRes.json().catch(() => ({}));
         workflowId = taskData?.workflow_id ?? null;
       } catch { /* ignore */ }
@@ -108,7 +109,7 @@ export function getTaskLabel(department: string): { label: string; description: 
  */
 export async function getMultiWorkflowStatus(workflowIds: string[]) {
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/tasks`);
+    const res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store' });
     const allTasks = await res.json().catch(() => []);
     if (!Array.isArray(allTasks)) return { success: false, tasks: [], status: 'error' };
 
@@ -175,7 +176,7 @@ export async function getMissionStatus(missionId: string) {
  */
 export async function getWorkflowResults(workflowIds: string[]) {
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/tasks`);
+    const res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store' });
     const allTasks = await res.json().catch(() => []);
     if (!Array.isArray(allTasks)) return { success: false, ads: [], research: null, marketing: null, creative: null };
 
@@ -285,7 +286,7 @@ export async function getWorkflowResults(workflowIds: string[]) {
 
 export async function getTaskArtifact(taskId: number): Promise<string | null> {
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/tasks/${taskId}/artifact`);
+    const res = await fetch(`${TOMBSTONE_URL}/tasks/${taskId}/artifact`, { cache: 'no-store' });
     if (!res.ok) return null;
     const data = await res.json().catch(() => ({}));
     return data?.artifact_url ?? null;
@@ -294,7 +295,7 @@ export async function getTaskArtifact(taskId: number): Promise<string | null> {
 
 export async function getTaskOutputs(taskId: number): Promise<any[]> {
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/tasks/${taskId}/outputs`);
+    const res = await fetch(`${TOMBSTONE_URL}/tasks/${taskId}/outputs`, { cache: 'no-store' });
     if (!res.ok) return [];
     const data = await res.json().catch(() => []);
     return Array.isArray(data) ? data : [];
