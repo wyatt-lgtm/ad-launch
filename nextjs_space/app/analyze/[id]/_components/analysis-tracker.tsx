@@ -291,19 +291,19 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
 
           {/* SEO Insights */}
           <div className="mb-12">
-            <SeoInsights data={seoData} locked={!(session?.user as any)?.confirmed} />
+            <SeoInsights data={seoData} locked={false} />
           </div>
 
           {/* 90-Day Posting Plan */}
           <div className="mb-12">
-            <PostingPlan data={postingPlan} locked={!(session?.user as any)?.confirmed} />
+            <PostingPlan data={postingPlan} locked={false} />
           </div>
 
           {/* Register CTA */}
           <div className="text-center py-8">
             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-8 max-w-xl mx-auto text-white">
-              <h3 className="text-2xl font-bold mb-3">Download Your Ads Free</h3>
-              <p className="text-blue-100 mb-6">Register with your business email to get all 3 ads without watermarks, plus full SEO insights and your complete 90-day posting plan.</p>
+              <h3 className="text-2xl font-bold mb-3">Download Your Ads Without Watermarks</h3>
+              <p className="text-blue-100 mb-6">Register with your business email to get all 3 ads in full resolution, ready to post.</p>
               <button
                 onClick={() => setShowRegister(true)}
                 className="px-8 py-4 bg-white text-blue-600 rounded-xl font-bold text-lg hover:bg-blue-50 transition-all shadow-lg"
