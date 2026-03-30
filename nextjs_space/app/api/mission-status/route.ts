@@ -37,8 +37,10 @@ export async function GET(request: NextRequest) {
     // Poll Tombstone for status
     const statusResult = await getMissionStatus(analysis.missionId);
     const overallStatus = statusResult?.status ?? 'processing';
+    const taskCount = statusResult?.tasks?.length ?? 0;
+    const taskStatuses = (statusResult?.tasks ?? []).map((t: any) => `${t?.id}:${t?.status}`).join(', ');
 
-    console.log(`[mission-status] analysisId=${analysisId} missionId=${analysis.missionId} status=${overallStatus}`);
+    console.log(`[mission-status] analysisId=${analysisId} missionId=${analysis.missionId} overallStatus=${overallStatus} tasks=${taskCount} [${taskStatuses}]`);
 
     if (overallStatus === 'completed') {
       // Fetch full results and extract ads

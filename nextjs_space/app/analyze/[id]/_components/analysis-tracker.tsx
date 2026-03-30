@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2, CheckCircle, AlertCircle, Search, Sparkles, FileCheck, Lock } from 'lucide-react';
 import WatermarkCard from '../../../components/watermark-card';
@@ -56,15 +56,20 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     }
   }, [analysisId]);
 
+  // Use a ref to track status so the interval always sees the latest value
+  const statusRef = React.useRef(status);
+  statusRef.current = status;
+
   useEffect(() => {
     pollStatus();
     const interval = setInterval(() => {
-      if (status !== 'completed' && status !== 'error') {
+      if (statusRef.current !== 'completed' && statusRef.current !== 'error') {
         pollStatus();
       }
     }, 5000);
     return () => clearInterval(interval);
-  }, [pollStatus, status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisId]);
 
   // If user is confirmed and analysis is complete, redirect to results
   useEffect(() => {
