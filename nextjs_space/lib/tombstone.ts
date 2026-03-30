@@ -1,12 +1,5 @@
 const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
-// Ad campaign angles for generating 3 distinct ads
-const AD_ANGLES = [
-  'awareness - focus on what makes this business unique and memorable',
-  'conversion - focus on a compelling offer, urgency, and clear call to action',
-  'trust - focus on credibility, social proof, customer results, and reliability',
-];
-
 /**
  * Submit a command to Tombstone OS. Returns created task IDs and workflow info.
  */
@@ -40,38 +33,24 @@ async function sendCommand(command: string) {
 }
 
 /**
- * Create 3 distinct ad missions for the given website.
- * Each mission targets a different advertising angle.
- * Returns an array of workflow IDs.
+ * Create a single mission that generates 3 ads (awareness, conversion, trust).
+ * Sends 1 command → 1 workflow → 6 tasks. Research & marketing run once;
+ * Creative Strategy produces 3 angle-specific headlines/CTAs which flow
+ * through Creative Direction → Render → Assembly as a multi-campaign.
  */
 export async function createMissions(websiteUrl: string) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
-  const results: { workflowId: string | null; taskIds: number[]; angle: string }[] = [];
 
-  for (let i = 0; i < AD_ANGLES.length; i++) {
-    const angle = AD_ANGLES[i];
-    const command = `review ${normalizedUrl} and make a minimal facebook ad for the business - use colors and logo from website - ad angle: ${angle}`;
-    console.log(`[tombstone] Creating mission ${i + 1}/3: ${angle.split(' - ')[0]}`);
-    const result = await sendCommand(command);
-    results.push({
-      workflowId: result.workflowId,
-      taskIds: result.taskIds,
-      angle: angle.split(' - ')[0],
-    });
-    // Small delay between commands to avoid overwhelming the API
-    if (i < AD_ANGLES.length - 1) {
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  }
+  const command = `review ${normalizedUrl} and make 3 minimal facebook ads for the business (awareness angle, conversion angle, trust angle) - use colors and logo from website`;
+  console.log(`[tombstone] Creating single 3-ad mission for: ${normalizedUrl}`);
 
-  const allTaskIds = results.flatMap((r) => r.taskIds);
-  const workflowIds = results.map((r) => r.workflowId).filter(Boolean) as string[];
+  const result = await sendCommand(command);
 
   return {
-    success: workflowIds.length > 0,
-    workflowIds,
-    allTaskIds,
-    angles: results.map((r) => r.angle),
+    success: !!result.workflowId,
+    workflowIds: result.workflowId ? [result.workflowId] : [],
+    allTaskIds: result.taskIds,
+    angles: ['awareness', 'conversion', 'trust'],
   };
 }
 
@@ -202,7 +181,7 @@ export async function getWorkflowResults(workflowIds: string[]) {
         const status = (task?.status ?? '').toLowerCase();
         if (status !== 'complete' && status !== 'completed') continue;
 
-        // Conversion Assembly = final ad
+        // Conversion Assembly = final ad(s)
         if (dept.includes('conversion') || dept.includes('assembly')) {
           ads.push({ taskId: task.id, workflowId: wfId });
         }
@@ -222,23 +201,47 @@ export async function getWorkflowResults(workflowIds: string[]) {
     }
 
     // Enrich ads with artifact URLs and outputs
+    // The Assembly task may contain an "assets" array with multiple ads
     const enrichedAds = [];
     for (const ad of ads.slice(0, 3)) {
-      const imageUrl = await getTaskArtifact(ad.taskId);
       const outputs = await getTaskOutputs(ad.taskId);
-      let headline = '';
-      let caption = '';
-      let cta = '';
+      let assemblyOutput: any = null;
       for (const out of outputs) {
         try {
-          const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
-          if (parsed?.headline) headline = parsed.headline;
-          if (parsed?.body_copy || parsed?.body) caption = parsed.body_copy || parsed.body;
-          if (parsed?.cta) cta = parsed.cta;
-          if (parsed?.caption) caption = parsed.caption;
+          assemblyOutput = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
         } catch { /* ignore */ }
       }
-      enrichedAds.push({ ...ad, headline, caption, cta, imageUrl });
+
+      // Multi-asset mode: assets array contains per-campaign ads
+      const assets = assemblyOutput?.assets;
+      if (Array.isArray(assets) && assets.length > 0) {
+        for (const asset of assets.slice(0, 3)) {
+          const artifactPath = asset?.artifact_path ?? asset?.final_ad_path ?? '';
+          const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(ad.taskId);
+          enrichedAds.push({
+            taskId: ad.taskId,
+            workflowId: ad.workflowId,
+            headline: asset?.headline ?? '',
+            caption: asset?.body ?? asset?.body_copy ?? '',
+            cta: asset?.cta ?? '',
+            imageUrl,
+            campaignId: asset?.campaign_id ?? '',
+            campaignName: asset?.campaign_name ?? '',
+          });
+        }
+      } else {
+        // Single-asset fallback
+        const imageUrl = await getTaskArtifact(ad.taskId);
+        let headline = '';
+        let caption = '';
+        let cta = '';
+        if (assemblyOutput) {
+          headline = assemblyOutput?.headline ?? '';
+          caption = assemblyOutput?.body_copy ?? assemblyOutput?.body ?? assemblyOutput?.caption ?? '';
+          cta = assemblyOutput?.cta ?? '';
+        }
+        enrichedAds.push({ ...ad, headline, caption, cta, imageUrl });
+      }
     }
 
     // Get research outputs for SEO
@@ -287,6 +290,21 @@ export async function getWorkflowResults(workflowIds: string[]) {
 export async function getTaskArtifact(taskId: number): Promise<string | null> {
   try {
     const res = await fetch(`${TOMBSTONE_URL}/tasks/${taskId}/artifact`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    return data?.artifact_url ?? null;
+  } catch { return null; }
+}
+
+/**
+ * Resolve an artifact path (R2 key or URL) into an accessible URL.
+ * If already a URL, return as-is. Otherwise, use the /artifacts/resolve endpoint.
+ */
+async function resolveArtifactUrl(artifactPath: string): Promise<string | null> {
+  if (!artifactPath) return null;
+  if (artifactPath.startsWith('http://') || artifactPath.startsWith('https://')) return artifactPath;
+  try {
+    const res = await fetch(`${TOMBSTONE_URL}/artifacts/resolve?artifact_path=${encodeURIComponent(artifactPath)}`, { cache: 'no-store' });
     if (!res.ok) return null;
     const data = await res.json().catch(() => ({}));
     return data?.artifact_url ?? null;
