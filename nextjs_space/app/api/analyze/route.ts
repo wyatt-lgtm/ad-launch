@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { createMission } from '@/lib/tombstone';
+import { createMissions } from '@/lib/tombstone';
 import { isValidUrl } from '@/lib/email-validation';
 
 export async function POST(request: NextRequest) {
@@ -18,23 +18,27 @@ export async function POST(request: NextRequest) {
 
     const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
 
-    console.log(`[analyze] Starting analysis for: ${normalizedUrl}`);
-    const missionResult = await createMission(normalizedUrl);
-    console.log(`[analyze] Mission result:`, {
-      success: missionResult.success,
-      missionId: missionResult.missionId,
-      taskIds: missionResult.taskIds,
+    console.log(`[analyze] Starting 3-ad analysis for: ${normalizedUrl}`);
+    const result = await createMissions(normalizedUrl);
+    console.log(`[analyze] Missions created:`, {
+      success: result.success,
+      workflowIds: result.workflowIds,
+      taskCount: result.allTaskIds.length,
+      angles: result.angles,
     });
 
-    if (!missionResult.success) {
-      console.error('[analyze] Tombstone API failed:', missionResult.data);
+    if (!result.success) {
+      console.error('[analyze] Tombstone API failed');
       return NextResponse.json({ error: 'Failed to start ad generation. Please try again.' }, { status: 502 });
     }
+
+    // Store all workflow IDs as comma-separated string in missionId field
+    const missionId = result.workflowIds.join(',');
 
     const analysis = await prisma.analysis.create({
       data: {
         websiteUrl: normalizedUrl,
-        missionId: missionResult.missionId ? String(missionResult.missionId) : null,
+        missionId,
         status: 'processing',
         userId: userId ?? null,
       },
@@ -42,7 +46,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       analysisId: analysis.id,
-      missionId: missionResult.missionId,
+      missionId,
+      workflowCount: result.workflowIds.length,
       status: analysis.status,
     });
   } catch (err: any) {

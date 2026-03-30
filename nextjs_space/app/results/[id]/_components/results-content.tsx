@@ -2,9 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Download, Mail, Sparkles, BarChart3, CalendarDays, Image as ImageIcon, Loader2, AlertCircle } from 'lucide-react';
+import { Download, Sparkles, Image as ImageIcon, Loader2, AlertCircle } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import SeoInsights from '../../../components/seo-insights';
+import PostingPlan from '../../../components/posting-plan';
 
 interface Ad {
   id: string;
@@ -65,6 +67,8 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
   const ads: Ad[] = analysis?.ads ?? [];
   const seoData = analysis?.seoData ?? null;
   const postingPlan = analysis?.postingPlan ?? null;
+  const angleLabels = ['Awareness', 'Conversion', 'Trust'];
+  const angleColors = ['bg-blue-500', 'bg-orange-500', 'bg-green-500'];
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-12">
@@ -92,10 +96,15 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
                   <span className="text-sm">Ad {i + 1}</span>
                 </div>
               )}
+              <div className="absolute top-3 left-3">
+                <span className={`${angleColors[i] ?? 'bg-gray-500'} text-white text-xs px-2.5 py-1 rounded-full font-medium`}>
+                  {angleLabels[i] ?? `Ad ${i + 1}`}
+                </span>
+              </div>
             </div>
             <div className="p-4">
               <h3 className="font-semibold text-gray-900 mb-2 text-sm">{ad?.headline ?? `Facebook Ad ${i + 1}`}</h3>
-              <p className="text-gray-600 text-sm mb-4">{ad?.caption ?? 'Ad copy here.'}</p>
+              <p className="text-gray-600 text-sm mb-4 line-clamp-3">{ad?.caption ?? 'Ad copy here.'}</p>
               <button
                 onClick={() => {
                   if (ad?.imageUrl) {
@@ -128,48 +137,14 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
       </div>
 
       {/* SEO Insights */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
-            <BarChart3 className="w-5 h-5 text-emerald-600" />
-          </div>
-          <h2 className="text-lg font-bold text-gray-900">SEO Insights</h2>
-        </div>
-        {seoData && typeof seoData === 'object' && Object.keys(seoData ?? {}).length > 0 ? (
-          <div className="space-y-3">
-            {Object.entries(seoData ?? {}).map(([key, value]: [string, any]) => (
-              <div key={key} className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm font-medium text-gray-700 capitalize">{key?.replace?.(/_/g, ' ') ?? key}</p>
-                <p className="text-sm text-gray-600 mt-1">{typeof value === 'string' ? value : JSON.stringify(value)}</p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-gray-500 text-sm">SEO insights will be available once the full analysis completes.</p>
-        )}
-      </motion.div>
+      <div className="mb-8">
+        <SeoInsights data={seoData} locked={false} />
+      </div>
 
-      {/* Posting Plan */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-10">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
-            <CalendarDays className="w-5 h-5 text-purple-600" />
-          </div>
-          <h2 className="text-lg font-bold text-gray-900">90-Day Posting Plan</h2>
-        </div>
-        {postingPlan && typeof postingPlan === 'object' && Object.keys(postingPlan ?? {}).length > 0 ? (
-          <div className="space-y-3">
-            {Object.entries(postingPlan ?? {}).map(([key, value]: [string, any]) => (
-              <div key={key} className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm font-medium text-gray-700 capitalize">{key?.replace?.(/_/g, ' ') ?? key}</p>
-                <p className="text-sm text-gray-600 mt-1">{typeof value === 'string' ? value : JSON.stringify(value)}</p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-gray-500 text-sm">Your 90-day posting plan will be available once the full analysis completes.</p>
-        )}
-      </motion.div>
+      {/* 90-Day Posting Plan */}
+      <div className="mb-12">
+        <PostingPlan data={postingPlan} locked={false} />
+      </div>
 
       {/* Generate More CTA */}
       <div className="text-center bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-8">

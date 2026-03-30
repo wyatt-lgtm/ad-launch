@@ -7,9 +7,15 @@ interface WatermarkCardProps {
   headline: string | null;
   imageUrl: string | null;
   index: number;
+  angle?: string;
 }
 
-export default function WatermarkCard({ caption, headline, imageUrl, index }: WatermarkCardProps) {
+export default function WatermarkCard({ caption, headline, imageUrl, index, angle }: WatermarkCardProps) {
+  const angleLabels = ['Awareness', 'Conversion', 'Trust'];
+  const angleColors = ['bg-blue-500', 'bg-orange-500', 'bg-green-500'];
+  const displayAngle = angle ?? angleLabels[index] ?? '';
+  const badgeColor = angleColors[index] ?? 'bg-gray-500';
+
   return (
     <div className="bg-white rounded-xl shadow-md hover:shadow-lg transition-all overflow-hidden border border-gray-100 group">
       <div className="relative aspect-[4/3] bg-gradient-to-br from-blue-100 to-indigo-100 overflow-hidden">
@@ -29,6 +35,12 @@ export default function WatermarkCard({ caption, headline, imageUrl, index }: Wa
         {/* Watermark */}
         <div className="watermark-overlay">
           <span className="watermark-text">Ad Launch</span>
+        </div>
+        {/* Badges */}
+        <div className="absolute top-3 left-3">
+          <span className={`${badgeColor} text-white text-xs px-2.5 py-1 rounded-full font-medium`}>
+            {displayAngle}
+          </span>
         </div>
         <div className="absolute top-3 right-3 bg-black/50 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
           <Lock className="w-3 h-3" /> Preview
