@@ -130,6 +130,26 @@ export default function PostingPlan({ data, locked = false }: PostingPlanProps) 
           <p className="text-gray-700 text-sm leading-relaxed">{data.overview}</p>
         </div>
 
+        {/* Upcoming Events */}
+        {data.upcomingEvents?.length > 0 && (
+          <div className="mb-8">
+            <h4 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3 flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-pink-500" /> Upcoming Events &amp; Holidays
+            </h4>
+            <div className="grid sm:grid-cols-2 gap-2">
+              {(data.upcomingEvents as any[]).map((event: any, i: number) => (
+                <div key={i} className="flex items-center gap-3 bg-gradient-to-r from-pink-50 to-orange-50 rounded-lg px-4 py-2.5 border border-pink-100">
+                  <span className="text-lg flex-shrink-0">{'\u{1F389}'}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-gray-900">{event.name}</div>
+                    <div className="text-xs text-gray-500">{event.date} &middot; Week {event.week}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Phases */}
         <div className="space-y-4 mb-8">
           {(data.phases ?? []).map((phase: any, i: number) => (
