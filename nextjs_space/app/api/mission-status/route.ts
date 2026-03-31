@@ -3,6 +3,40 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getMultiWorkflowStatus, getWorkflowResults } from '@/lib/tombstone';
+
+const TOMBSTONE_API = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
+
+/** Resolve an R2 key (or stale presigned URL) to a fresh presigned URL. */
+async function resolveImageUrl(keyOrUrl: string | null): Promise<string | null> {
+  if (!keyOrUrl) return null;
+  let r2Key = keyOrUrl;
+  if (r2Key.startsWith('http')) {
+    try {
+      const parsed = new URL(r2Key);
+      let path = parsed.pathname.replace(/^\/+/, '');
+      if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length);
+      r2Key = path;
+    } catch { return keyOrUrl; }
+  }
+  try {
+    const res = await fetch(
+      `${TOMBSTONE_API}/artifacts/resolve?artifact_path=${encodeURIComponent(r2Key)}`,
+      { cache: 'no-store' },
+    );
+    const data = await res.json().catch(() => ({}));
+    return data?.artifact_url ?? keyOrUrl;
+  } catch { return keyOrUrl; }
+}
+
+/** Resolve image URLs for an array of ad objects. */
+async function resolveAdImages(ads: any[]): Promise<any[]> {
+  return Promise.all(
+    ads.map(async (ad: any) => ({
+      ...ad,
+      imageUrl: await resolveImageUrl(ad?.imageUrl ?? null),
+    })),
+  );
+}
 import { runSeoAudit } from '@/lib/seo-audit';
 
 export async function GET(request: NextRequest) {
@@ -21,11 +55,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Analysis not found' }, { status: 404 });
     }
 
-    // If already completed with ads, return cached results
+    // If already completed with ads, return cached results with fresh image URLs
     if (analysis.status === 'completed' && (analysis.ads?.length ?? 0) > 0) {
+      const freshAds = await resolveAdImages(analysis.ads ?? []);
       return NextResponse.json({
         status: 'completed',
-        ads: analysis.ads ?? [],
+        ads: freshAds,
         seoData: analysis.seoData ?? null,
         postingPlan: analysis.postingPlan ?? null,
         tasks: [], // No need to poll tasks anymore
@@ -53,12 +88,22 @@ export async function GET(request: NextRequest) {
       const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl);
       const postingPlan = buildPostingPlan(results.research, results.creative);
 
-      // Create ad records in DB
+      // Create ad records in DB — store R2 keys, not presigned URLs
       for (const ad of results.ads) {
+        let imageKey = ad?.imageUrl ?? null;
+        // Extract R2 key from presigned URL so it doesn't expire
+        if (imageKey && imageKey.startsWith('http')) {
+          try {
+            const parsed = new URL(imageKey);
+            let path = parsed.pathname.replace(/^\/+/, '');
+            if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length);
+            imageKey = path;
+          } catch {}
+        }
         await prisma.ad.create({
           data: {
             analysisId: analysis.id,
-            imageUrl: ad?.imageUrl ?? null,
+            imageUrl: imageKey,
             caption: ad?.caption ?? '',
             headline: ad?.headline ?? 'Ad',
             watermarked: true,
@@ -81,9 +126,11 @@ export async function GET(request: NextRequest) {
         include: { ads: true },
       });
 
+      // Resolve fresh presigned URLs for ads just stored
+      const freshAds = await resolveAdImages(updatedAnalysis?.ads ?? []);
       return NextResponse.json({
         status: 'completed',
-        ads: updatedAnalysis?.ads ?? [],
+        ads: freshAds,
         seoData,
         postingPlan,
         tasks: statusResult.tasks ?? [],
