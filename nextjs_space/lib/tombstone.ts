@@ -190,9 +190,9 @@ export async function getWorkflowResults(workflowIds: string[]) {
         if (dept.includes('research') && !researchData) {
           researchData = { taskId: task.id };
         }
-        // Marketing task has strategy data
+        // Marketing task has strategy + SEO audit data
         if (dept.includes('marketing') && !marketingData) {
-          marketingData = { taskId: task.id };
+          marketingData = { taskId: task.id, output: null as any };
         }
         // Creative strategy has copy data
         if (dept.includes('creative strategy') && !creativeData) {
@@ -275,11 +275,26 @@ export async function getWorkflowResults(workflowIds: string[]) {
       }
     }
 
+    // Get marketing/SEO audit outputs from Zig Ziglar
+    let marketingOutput: any = null;
+    if (marketingData?.taskId) {
+      const outputs = await getTaskOutputs(marketingData.taskId);
+      for (const out of outputs) {
+        try {
+          const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+          if (parsed?.audit || parsed?.task_type === 'marketing_strategy') {
+            marketingOutput = parsed;
+            break;
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
     return {
       success: true,
       ads: enrichedAds,
       research: researchOutput,
-      marketing: marketingData,
+      marketing: marketingOutput,
       creative: creativeOutput,
     };
   } catch (err: any) {

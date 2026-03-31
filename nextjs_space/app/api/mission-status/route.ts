@@ -49,8 +49,8 @@ export async function GET(request: NextRequest) {
       // Fetch full results
       const results = await getWorkflowResults(workflowIds);
 
-      // Build SEO data from research output + live audit
-      const seoData = await buildSeoData(results.research, results.creative, analysis.websiteUrl);
+      // Build SEO data from Zig's audit (or fallback to live audit)
+      const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl);
       const postingPlan = buildPostingPlan(results.research, results.creative);
 
       // Create ad records in DB
@@ -129,16 +129,21 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Build SEO data from research output + live website audit.
+ * Build SEO data from Zig's pipeline audit (preferred) or fallback to live audit.
  */
-async function buildSeoData(research: any, creative: any, websiteUrl: string) {
-  // Run live SEO audit against the website
-  let audit = null;
-  try {
-    audit = await runSeoAudit(websiteUrl);
-    console.log(`[seo-audit] ${websiteUrl}: score=${audit.score} grade=${audit.grade}`);
-  } catch (err: any) {
-    console.error('[seo-audit] Error:', err?.message);
+async function buildSeoData(research: any, creative: any, marketing: any, websiteUrl: string) {
+  // Prefer Zig's SEO audit from the pipeline (already ran in parallel with creative)
+  let audit = marketing?.audit ?? null;
+  if (audit) {
+    console.log(`[seo-audit] Using Zig pipeline audit: score=${audit.score} grade=${audit.grade}`);
+  } else {
+    // Fallback: run live SEO audit (adds latency at completion time)
+    try {
+      audit = await runSeoAudit(websiteUrl);
+      console.log(`[seo-audit] Fallback live audit ${websiteUrl}: score=${audit.score} grade=${audit.grade}`);
+    } catch (err: any) {
+      console.error('[seo-audit] Error:', err?.message);
+    }
   }
 
   const biz = research?.business_summary ?? {};
