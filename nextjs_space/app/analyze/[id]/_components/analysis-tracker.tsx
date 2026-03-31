@@ -284,6 +284,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
                   imageUrl={ad?.imageUrl ?? ad?.watermarkedUrl ?? null}
                   index={i}
                   angle={i === 0 ? 'Awareness' : i === 1 ? 'Conversion' : 'Trust'}
+                  editable={ads.length > 0}
                 />
               ))}
             </div>
