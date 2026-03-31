@@ -38,6 +38,8 @@ export async function POST(request: NextRequest) {
       'Generate a professional ad image that incorporates the user\'s request while maintaining ad quality.',
     ].join('\n');
 
+    const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
+
     const res = await fetch(ABACUS_API, {
       method: 'POST',
       headers: {
@@ -45,17 +47,11 @@ export async function POST(request: NextRequest) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-5.1',
+        model: 'gpt_image15',
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
+          { role: 'user', content: fullPrompt },
         ],
         modalities: ['image'],
-        image_config: {
-          aspect_ratio: '1:1',
-          quality: 'high',
-          num_images: 1,
-        },
       }),
     });
 
@@ -66,17 +62,26 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await res.json();
-    const images = data?.choices?.[0]?.message?.images;
+    // Try multiple possible response shapes
+    const images = data?.choices?.[0]?.message?.images
+      ?? data?.data
+      ?? [];
 
-    if (!images || images.length === 0) {
-      console.error('No images in response:', JSON.stringify(data).slice(0, 500));
-      return NextResponse.json({ error: 'No image was generated' }, { status: 500 });
+    let imageUrl: string | null = null;
+    if (images.length > 0) {
+      const img = images[0];
+      if (img?.image_url?.url) {
+        imageUrl = img.image_url.url;
+      } else if (img?.url) {
+        imageUrl = img.url;
+      } else if (img?.b64_json) {
+        imageUrl = `data:image/png;base64,${img.b64_json}`;
+      }
     }
 
-    // Return the data URL of the generated image
-    const imageUrl = images[0]?.image_url?.url ?? images[0]?.url ?? null;
     if (!imageUrl) {
-      return NextResponse.json({ error: 'Could not extract image URL' }, { status: 500 });
+      console.error('No images in response:', JSON.stringify(data).slice(0, 800));
+      return NextResponse.json({ error: 'No image was generated' }, { status: 500 });
     }
 
     return NextResponse.json({ imageUrl });
