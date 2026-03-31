@@ -99,9 +99,28 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // Extract error reason from failed tasks if any
+    let errorReason: string | null = null;
+    if (mappedStatus === 'error') {
+      const failedTask = (statusResult.tasks ?? []).find((t: any) => t.status === 'error' && t.lastError);
+      if (failedTask?.lastError) {
+        // Clean up internal error messages for user display
+        const raw = failedTask.lastError as string;
+        if (raw.includes('terms violation')) {
+          errorReason = 'This website could not be analyzed. It may be too large or have access restrictions. Please try a different URL.';
+        } else if (raw.includes('timeout') || raw.includes('Timeout')) {
+          errorReason = 'The website took too long to respond. Please try again.';
+        } else {
+          errorReason = 'Ad generation encountered an issue. Please try again.';
+        }
+        console.log(`[mission-status] Error reason: ${raw}`);
+      }
+    }
+
     return NextResponse.json({
       status: mappedStatus,
       tasks: statusResult.tasks ?? [],
+      ...(errorReason ? { errorReason } : {}),
     });
   } catch (err: any) {
     console.error('Mission status error:', err);

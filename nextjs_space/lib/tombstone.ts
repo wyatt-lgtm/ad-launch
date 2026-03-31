@@ -120,6 +120,7 @@ export async function getMultiWorkflowStatus(workflowIds: string[]) {
         description,
         status: uiStatus,
         rawStatus: t?.status,
+        lastError: t?.last_error ?? null,
       };
     }).sort((a: any, b: any) => (a.id ?? 0) - (b.id ?? 0));
 

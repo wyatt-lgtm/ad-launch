@@ -110,7 +110,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         if (data?.seoData) setSeoData(data.seoData);
         if (data?.postingPlan) setPostingPlan(data.postingPlan);
       } else if (s === 'error') {
-        setError('Analysis failed. Please try again.');
+        setError(data?.errorReason ?? 'Analysis failed. Please try again.');
       }
     } catch (err: any) {
       console.error('Poll error:', err);
