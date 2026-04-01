@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
 
       // Build SEO data from Zig's audit (or fallback to live audit)
       const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl);
-      const postingPlan = buildPostingPlan(results.research, results.creative);
+      const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
 
       // Create ad records in DB — store R2 keys, not presigned URLs
       for (const ad of results.ads) {
@@ -299,13 +299,38 @@ function getUpcomingEvents(): { name: string; date: string; week: number; ideas:
 /**
  * Build a 90-day posting plan from research data with calendar-aware events.
  */
-function buildPostingPlan(research: any, creative: any) {
-  if (!research) return null;
+function buildPostingPlan(research: any, creative: any, marketing?: any, websiteUrl?: string) {
+  // Extract business info from research, marketing content, or creative — whichever is available
   const biz = research?.business_summary ?? {};
   const topics = research?.messaging_constraints?.allowed_topics ?? [];
-  const businessName = biz?.name ?? 'Your Business';
-  const coreOffer = biz?.core_offer ?? 'your products/services';
-  const targetCustomer = biz?.target_customer ?? 'your target audience';
+
+  // Fallback: try to extract a business name from marketing content or website URL
+  let businessName = biz?.name ?? '';
+  let coreOffer = biz?.core_offer ?? '';
+  let targetCustomer = biz?.target_customer ?? '';
+
+  if (!businessName && marketing?.content) {
+    // Try to extract from marketing content header (e.g. "3 Minimal Facebook Ad Concepts for SimNet Wireless")
+    const headerMatch = marketing.content.match(/(?:for|For)\s+([A-Z][A-Za-z0-9\s&'.-]+?)(?:\n|$)/);
+    if (headerMatch) businessName = headerMatch[1].trim();
+  }
+  if (!businessName && websiteUrl) {
+    try {
+      const host = new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`).hostname.replace(/^www\./, '');
+      businessName = host.split('.')[0].charAt(0).toUpperCase() + host.split('.')[0].slice(1);
+    } catch { /* ignore */ }
+  }
+  if (!businessName) businessName = 'Your Business';
+
+  // Fallback: extract topics from creative ads headlines/captions
+  if (topics.length === 0 && creative?.ads?.length) {
+    for (const ad of creative.ads) {
+      if (ad?.headline) topics.push(ad.headline);
+    }
+  }
+
+  if (!coreOffer) coreOffer = 'your products/services';
+  if (!targetCustomer) targetCustomer = 'your target audience';
 
   const upcomingEvents = getUpcomingEvents();
   const phase1Events = upcomingEvents.filter(e => e.week <= 4);
