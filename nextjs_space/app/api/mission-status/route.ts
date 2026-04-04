@@ -58,11 +58,15 @@ export async function GET(request: NextRequest) {
     // If already completed with ads, return cached results with fresh image URLs
     if (analysis.status === 'completed' && (analysis.ads?.length ?? 0) > 0) {
       const freshAds = await resolveAdImages(analysis.ads ?? []);
+      const cachedResults = (analysis.results ?? {}) as any;
       return NextResponse.json({
         status: 'completed',
         ads: freshAds,
         seoData: analysis.seoData ?? null,
         postingPlan: analysis.postingPlan ?? null,
+        googleAdsData: cachedResults.googleAds ?? null,
+        websiteConceptData: cachedResults.websiteConcept ?? null,
+        budgetData: cachedResults.budget ?? null,
         tasks: [], // No need to poll tasks anymore
       });
     }
@@ -87,6 +91,9 @@ export async function GET(request: NextRequest) {
       // Build SEO data from Zig's audit (or fallback to live audit)
       const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl);
       const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
+      const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl);
+      const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl);
+      const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
 
       // Create ad records in DB — store R2 keys, not presigned URLs
       for (const ad of results.ads) {
@@ -115,7 +122,7 @@ export async function GET(request: NextRequest) {
         where: { id: analysisId },
         data: {
           status: 'completed',
-          results: results as any,
+          results: { ...results as any, googleAds: googleAdsData, websiteConcept: websiteConceptData, budget: budgetData } as any,
           seoData: seoData as any,
           postingPlan: postingPlan as any,
         },
@@ -133,6 +140,9 @@ export async function GET(request: NextRequest) {
         ads: freshAds,
         seoData,
         postingPlan,
+        googleAdsData,
+        websiteConceptData,
+        budgetData,
         tasks: statusResult.tasks ?? [],
       });
     }
@@ -419,5 +429,203 @@ function buildPostingPlan(research: any, creative: any, marketing?: any, website
       { metric: 'Conversion Rate', target: '2-5% of social traffic', description: 'Social visitors who become customers' },
     ],
     ctaMessage: `Ready to execute this plan? Our team can manage your entire social media presence \u2014 content creation, scheduling, community management, and performance reporting \u2014 so you can focus on running ${businessName}.`,
+  };
+}
+
+
+/**
+ * Build Google Search Ad copy from research and creative data.
+ */
+function buildGoogleAds(research: any, creative: any, websiteUrl: string) {
+  const biz = research?.business_summary ?? {};
+  const voice = research?.brand_voice ?? {};
+  const constraints = research?.messaging_constraints ?? {};
+  const ads = creative?.ads ?? [];
+
+  const businessName = biz?.name ?? 'Your Business';
+  const coreOffer = biz?.core_offer ?? 'our services';
+  const targetCustomer = biz?.target_customer ?? 'customers';
+  const category = biz?.category ?? 'business';
+  const geo = biz?.geo ?? '';
+
+  // Build display URL
+  let displayUrl = websiteUrl;
+  try {
+    const parsed = new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`);
+    displayUrl = parsed.hostname.replace(/^www\./, '');
+  } catch { /* keep as-is */ }
+
+  // Generate headlines from ad copy
+  const headlines: string[] = [];
+  if (ads[0]?.headline) headlines.push(ads[0].headline.slice(0, 30));
+  headlines.push(`${businessName} | ${category}`.slice(0, 30));
+  headlines.push(`Top ${category} ${geo ? 'in ' + geo : 'Near You'}`.slice(0, 30));
+  if (coreOffer !== 'our services') headlines.push(`Get ${coreOffer}`.slice(0, 30));
+  headlines.push(`Trusted ${category} Services`.slice(0, 30));
+  if (ads[1]?.headline) headlines.push(ads[1].headline.slice(0, 30));
+  // Ensure at least 5 unique headlines
+  const uniqueHeadlines = [...new Set(headlines)].slice(0, 6);
+
+  // Generate descriptions
+  const descriptions: string[] = [];
+  if (ads[0]?.body_copy) descriptions.push(ads[0].body_copy.slice(0, 90));
+  descriptions.push(`${businessName} offers ${coreOffer} for ${targetCustomer}. Contact us today!`.slice(0, 90));
+  descriptions.push(`Looking for ${category}? ${businessName} delivers quality results. Get started now.`.slice(0, 90));
+  if (ads[1]?.body_copy) descriptions.push(ads[1].body_copy.slice(0, 90));
+  const uniqueDescriptions = [...new Set(descriptions)].slice(0, 4);
+
+  // Generate keywords
+  const keywords: string[] = [];
+  const allowedTopics = constraints?.allowed_topics ?? [];
+  keywords.push(category);
+  keywords.push(`${category} ${geo ?? 'near me'}`);
+  keywords.push(`best ${category}`);
+  keywords.push(businessName.toLowerCase());
+  if (coreOffer !== 'our services') keywords.push(coreOffer.toLowerCase());
+  for (const topic of allowedTopics.slice(0, 5)) {
+    if (typeof topic === 'string') keywords.push(topic.toLowerCase());
+  }
+  keywords.push(`${category} services`);
+  keywords.push(`local ${category}`);
+  const uniqueKeywords = [...new Set(keywords)].slice(0, 10);
+
+  // Sitelink extensions
+  const sitelinks = [
+    { title: 'Our Services', description: `View all ${category} services we offer` },
+    { title: 'About Us', description: `Learn why ${businessName} is trusted` },
+    { title: 'Contact Us', description: 'Get in touch for a free consultation' },
+    { title: 'Reviews', description: 'See what our customers say about us' },
+  ];
+
+  return {
+    businessName,
+    websiteUrl,
+    displayUrl,
+    headlines: uniqueHeadlines,
+    descriptions: uniqueDescriptions,
+    keywords: uniqueKeywords,
+    sitelinks,
+  };
+}
+
+/**
+ * Build website concept copy from research data.
+ */
+function buildWebsiteConcept(research: any, creative: any, websiteUrl: string) {
+  const biz = research?.business_summary ?? {};
+  const voice = research?.brand_voice ?? {};
+  const ads = creative?.ads ?? [];
+
+  const businessName = biz?.name ?? 'Your Business';
+  const coreOffer = biz?.core_offer ?? 'our services';
+  const targetCustomer = biz?.target_customer ?? 'customers';
+  const category = biz?.category ?? '';
+  const products = biz?.products ?? [];
+  const tone = voice?.tone ?? 'Professional and friendly';
+
+  // Hero section
+  const heroHeadline = ads[0]?.headline ?? `Welcome to ${businessName}`;
+  const heroDescription = ads[0]?.body_copy
+    ?? `We help ${targetCustomer} with ${coreOffer}. Experience the difference that comes from working with a team that genuinely cares about your success.`;
+  const heroCta = ads[0]?.cta ?? 'Get Started Today';
+
+  // About section
+  const aboutDescription = `${businessName} is dedicated to providing exceptional ${coreOffer} for ${targetCustomer}. Our ${tone.toLowerCase()} approach ensures every client receives personalized attention and outstanding results. We believe in building lasting relationships based on trust, transparency, and tangible outcomes.`;
+
+  // Services section
+  const serviceItems = products.length > 0
+    ? products.slice(0, 6).map((p: any) => typeof p === 'string' ? p : p?.name ?? '')
+    : [`${category} consultation`, `Custom ${coreOffer}`, 'Ongoing support & maintenance'];
+
+  // CTA section
+  const ctaHeadline = ads[2]?.headline ?? `Ready to Get Started with ${businessName}?`;
+  const ctaDescription = `Take the first step toward better ${coreOffer}. Contact us today for a free consultation and discover how ${businessName} can help ${targetCustomer} achieve their goals.`;
+
+  const sections = [
+    {
+      title: 'Hero Section',
+      headline: heroHeadline,
+      description: heroDescription,
+      cta: heroCta,
+    },
+    {
+      title: 'About Us',
+      headline: `About ${businessName}`,
+      description: aboutDescription,
+      cta: 'Learn More About Us',
+    },
+    {
+      title: 'Services / Offerings',
+      headline: `What We Offer`,
+      description: `Explore our comprehensive range of ${category || 'services'} designed to meet your needs.`,
+      items: serviceItems,
+      cta: 'View All Services',
+    },
+    {
+      title: 'Call to Action',
+      headline: ctaHeadline,
+      description: ctaDescription,
+      cta: 'Contact Us Now',
+    },
+  ];
+
+  // Suggested color palette based on brand voice
+  const colorPalette = [
+    { hex: '#2563EB', name: 'Primary' },
+    { hex: '#1E293B', name: 'Dark' },
+    { hex: '#F8FAFC', name: 'Light' },
+    { hex: '#0EA5E9', name: 'Accent' },
+    { hex: '#10B981', name: 'Success' },
+  ];
+
+  return {
+    businessName,
+    sections,
+    colorPalette,
+  };
+}
+
+/**
+ * Build budget recommendations.
+ */
+function buildBudgetRecommendations(research: any, websiteUrl: string) {
+  const biz = research?.business_summary ?? {};
+  const businessName = biz?.name ?? 'Your Business';
+
+  return {
+    businessName,
+    tiers: [
+      {
+        name: 'Starter',
+        range: '$500-$1,000/mo',
+        description: 'Ideal for businesses just starting with digital advertising. Focus on brand awareness and testing.',
+        expectedResults: '5K-15K impressions/mo, 100-500 clicks',
+      },
+      {
+        name: 'Growth',
+        range: '$1,000-$3,000/mo',
+        description: 'For businesses ready to scale. Balanced approach with prospecting and retargeting.',
+        expectedResults: '15K-50K impressions/mo, 500-2K clicks, 10-50 leads',
+      },
+      {
+        name: 'Scale',
+        range: '$3,000-$5,000+/mo',
+        description: 'Full-funnel strategy with aggressive prospecting, retargeting, and conversion optimization.',
+        expectedResults: '50K-150K impressions/mo, 2K-8K clicks, 50-200 leads',
+      },
+    ],
+    allocation: [
+      { category: 'Prospecting', percent: 50, description: 'Reach new potential customers with targeted ads' },
+      { category: 'Retargeting', percent: 25, description: 'Re-engage website visitors who didn\'t convert' },
+      { category: 'Brand Awareness', percent: 15, description: 'Build recognition and trust in your market' },
+      { category: 'Local Offers', percent: 10, description: 'Promote special deals to nearby customers' },
+    ],
+    tips: [
+      'Start with a smaller budget, test different audiences for 2-3 weeks, then scale what works.',
+      'Allocate at least 10% of budget to creative testing \u2014 try different images, headlines, and CTAs.',
+      'Monitor your cost-per-lead (CPL) weekly. If CPL rises above your target, pause underperforming ads.',
+      'Use lookalike audiences based on your best customers for highest-quality prospecting.',
+      'Schedule ads during peak hours for your audience \u2014 typically 7-9 AM and 6-9 PM local time.',
+    ],
   };
 }

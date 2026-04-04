@@ -23,9 +23,9 @@ function AnimatedSection({ children, className = '', delay = 0 }: { children: Re
 
 export default function LandingContent() {
   const features = [
-    { icon: Sparkles, title: '3 Facebook Ads', description: 'AI-crafted ads based on your actual business content, not generic templates.', color: 'bg-blue-100 text-blue-600' },
-    { icon: BarChart3, title: 'SEO Insights', description: 'Actionable SEO recommendations to improve your online visibility.', color: 'bg-emerald-100 text-emerald-600' },
-    { icon: CalendarDays, title: '90-Day Plan', description: 'A complete posting schedule to keep your social media consistent.', color: 'bg-purple-100 text-purple-600' },
+    { icon: Sparkles, title: '3 Facebook Ads', description: 'AI-crafted visual ads based on your actual business content, not generic templates.', color: 'bg-blue-100 text-blue-600' },
+    { icon: BarChart3, title: 'SEO Audit + Google Ads', description: 'Scored SEO report, Google Search ad copy, keywords, and website concept — all auto-generated.', color: 'bg-emerald-100 text-emerald-600' },
+    { icon: CalendarDays, title: '90-Day Plan + Budget', description: 'Complete posting schedule, content calendar, and ad budget recommendations.', color: 'bg-purple-100 text-purple-600' },
   ];
 
   const steps = [

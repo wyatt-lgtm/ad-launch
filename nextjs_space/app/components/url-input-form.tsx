@@ -1,8 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { Globe, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+
+function UrlParamReader({ onUrl }: { onUrl: (url: string) => void }) {
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const prefill = searchParams?.get('url');
+    if (prefill) onUrl(prefill);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+  return null;
+}
 
 export default function UrlInputForm() {
   const [url, setUrl] = useState('');
@@ -41,6 +51,7 @@ export default function UrlInputForm() {
 
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-2xl mx-auto">
+      <Suspense fallback={null}><UrlParamReader onUrl={setUrl} /></Suspense>
       <div className="relative flex items-center bg-white rounded-2xl shadow-lg shadow-blue-100/50 border border-gray-200 hover:border-blue-300 transition-all focus-within:border-blue-500 focus-within:shadow-blue-200/50 overflow-hidden">
         <div className="pl-5">
           <Globe className="w-5 h-5 text-gray-400" />

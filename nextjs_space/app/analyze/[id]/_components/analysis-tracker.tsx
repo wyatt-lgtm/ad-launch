@@ -9,6 +9,9 @@ import {
 import WatermarkCard from '../../../components/watermark-card';
 import SeoInsights from '../../../components/seo-insights';
 import PostingPlan from '../../../components/posting-plan';
+import GoogleAdsCopy from '../../../components/google-ads-copy';
+import WebsiteConcept from '../../../components/website-concept';
+import BudgetRecommendations from '../../../components/budget-recommendations';
 import RegistrationModal from '../../../components/registration-modal';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
@@ -87,6 +90,9 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const [ads, setAds] = useState<Ad[]>([]);
   const [seoData, setSeoData] = useState<any>(null);
   const [postingPlan, setPostingPlan] = useState<any>(null);
+  const [googleAdsData, setGoogleAdsData] = useState<any>(null);
+  const [websiteConceptData, setWebsiteConceptData] = useState<any>(null);
+  const [budgetData, setBudgetData] = useState<any>(null);
   const [error, setError] = useState('');
   const [showRegister, setShowRegister] = useState(false);
   const { data: session } = useSession() || {};
@@ -109,6 +115,9 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         if (data?.ads?.length) setAds(data.ads);
         if (data?.seoData) setSeoData(data.seoData);
         if (data?.postingPlan) setPostingPlan(data.postingPlan);
+        if (data?.googleAdsData) setGoogleAdsData(data.googleAdsData);
+        if (data?.websiteConceptData) setWebsiteConceptData(data.websiteConceptData);
+        if (data?.budgetData) setBudgetData(data.budgetData);
       } else if (s === 'error') {
         setError(data?.errorReason ?? 'Analysis failed. Please try again.');
       }
@@ -290,14 +299,29 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
             </div>
           </div>
 
+          {/* Google Search Ad Copy */}
+          <div className="mb-12">
+            <GoogleAdsCopy data={googleAdsData} locked={false} />
+          </div>
+
           {/* SEO Insights */}
           <div className="mb-12">
             <SeoInsights data={seoData} locked={false} />
           </div>
 
+          {/* Website Concept */}
+          <div className="mb-12">
+            <WebsiteConcept data={websiteConceptData} locked={false} />
+          </div>
+
           {/* 90-Day Posting Plan */}
           <div className="mb-12">
             <PostingPlan data={postingPlan} locked={false} />
+          </div>
+
+          {/* Budget Recommendations */}
+          <div className="mb-12">
+            <BudgetRecommendations data={budgetData} locked={false} />
           </div>
 
           {/* Register CTA */}

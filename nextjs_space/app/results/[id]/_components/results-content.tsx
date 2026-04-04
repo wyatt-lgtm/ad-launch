@@ -7,6 +7,9 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import SeoInsights from '../../../components/seo-insights';
 import PostingPlan from '../../../components/posting-plan';
+import GoogleAdsCopy from '../../../components/google-ads-copy';
+import WebsiteConcept from '../../../components/website-concept';
+import BudgetRecommendations from '../../../components/budget-recommendations';
 
 interface Ad {
   id: string;
@@ -67,6 +70,10 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
   const ads: Ad[] = analysis?.ads ?? [];
   const seoData = analysis?.seoData ?? null;
   const postingPlan = analysis?.postingPlan ?? null;
+  const cachedResults = analysis?.results ?? {};
+  const googleAdsData = (cachedResults as any)?.googleAds ?? null;
+  const websiteConceptData = (cachedResults as any)?.websiteConcept ?? null;
+  const budgetData = (cachedResults as any)?.budget ?? null;
   const angleLabels = ['Awareness', 'Conversion', 'Trust'];
   const angleColors = ['bg-blue-500', 'bg-orange-500', 'bg-green-500'];
 
@@ -136,14 +143,29 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
         )}
       </div>
 
+      {/* Google Search Ad Copy */}
+      <div className="mb-8">
+        <GoogleAdsCopy data={googleAdsData} locked={false} />
+      </div>
+
       {/* SEO Insights */}
       <div className="mb-8">
         <SeoInsights data={seoData} locked={false} />
       </div>
 
+      {/* Website Concept */}
+      <div className="mb-8">
+        <WebsiteConcept data={websiteConceptData} locked={false} />
+      </div>
+
       {/* 90-Day Posting Plan */}
-      <div className="mb-12">
+      <div className="mb-8">
         <PostingPlan data={postingPlan} locked={false} />
+      </div>
+
+      {/* Budget Recommendations */}
+      <div className="mb-12">
+        <BudgetRecommendations data={budgetData} locked={false} />
       </div>
 
       {/* Generate More CTA */}

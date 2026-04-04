@@ -2,7 +2,7 @@
 
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
-import { Rocket, LogOut, LayoutDashboard, LogIn } from 'lucide-react';
+import { Rocket, LogOut, LayoutDashboard, LogIn, Search } from 'lucide-react';
 import { useState } from 'react';
 
 export default function Header() {
@@ -20,6 +20,9 @@ export default function Header() {
         </Link>
 
         <nav className="hidden md:flex items-center gap-2">
+          <Link href="/search" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
+            <Search className="w-4 h-4" /> Find Businesses
+          </Link>
           {status === 'authenticated' ? (
             <>
               <Link href="/dashboard" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
@@ -45,6 +48,9 @@ export default function Header() {
 
       {menuOpen && (
         <div className="md:hidden bg-white border-t border-gray-100 px-4 py-3 space-y-2">
+          <Link href="/search" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>
+            <Search className="w-4 h-4" /> Find Businesses
+          </Link>
           {status === 'authenticated' ? (
             <>
               <Link href="/dashboard" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>

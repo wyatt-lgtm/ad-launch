@@ -121,6 +121,36 @@ export default function SeoInsights({ data, locked = false }: SeoInsightsProps) 
               </div>
             </div>
 
+            {/* Category Score Cards */}
+            {(() => {
+              const catScores: Record<string, { pass: number; total: number }> = {};
+              for (const item of audit.items ?? []) {
+                const cat = item.category ?? 'Other';
+                if (!catScores[cat]) catScores[cat] = { pass: 0, total: 0 };
+                catScores[cat].total += 1;
+                if (item.status === 'pass') catScores[cat].pass += 1;
+              }
+              const catList = Object.entries(catScores).map(([name, { pass, total }]) => ({
+                name,
+                score: total > 0 ? Math.round((pass / total) * 100) : 0,
+              }));
+              return catList.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
+                  {catList.map((cat) => {
+                    const color = cat.score >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : cat.score >= 50 ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-red-600 bg-red-50 border-red-200';
+                    const CatIcon = CATEGORY_ICONS[cat.name] ?? Globe;
+                    return (
+                      <div key={cat.name} className={`rounded-xl p-3 border ${color} text-center`}>
+                        <CatIcon className="w-5 h-5 mx-auto mb-1 opacity-70" />
+                        <div className="text-2xl font-black">{cat.score}</div>
+                        <div className="text-xs font-medium opacity-80 mt-0.5">{cat.name}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null;
+            })()}
+
             {/* Issues First (fail), then Warnings, then Passes */}
             {Object.entries(groupedItems).map(([category, items]) => {
               const Icon = CATEGORY_ICONS[category] ?? Globe;
