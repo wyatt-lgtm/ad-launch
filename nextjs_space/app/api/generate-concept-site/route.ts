@@ -1,12 +1,8 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 
-const client = new OpenAI({
-  apiKey: process.env.ABACUSAI_API_KEY ?? '',
-  baseURL: 'https://api.abacus.ai/v1',
-});
+const LLM_URL = 'https://apps.abacus.ai/v1/chat/completions';
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,14 +48,28 @@ Requirements:
 
 Return ONLY the complete HTML code. No markdown, no explanation, no code fences. Start with <!DOCTYPE html> and end with </html>.`;
 
-    const completion = await client.chat.completions.create({
-      model: 'claude-3-5-sonnet',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-      max_tokens: 8000,
+    const llmRes = await fetch(LLM_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.ABACUSAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        max_tokens: 8000,
+      }),
     });
 
-    let html = completion.choices?.[0]?.message?.content ?? '';
+    if (!llmRes.ok) {
+      const errText = await llmRes.text().catch(() => '');
+      console.error('[generate-concept-site] LLM error:', llmRes.status, errText.slice(0, 200));
+      return NextResponse.json({ error: 'AI generation failed' }, { status: 500 });
+    }
+
+    const llmData = await llmRes.json();
+    let html = llmData?.choices?.[0]?.message?.content ?? '';
 
     // Strip markdown code fences if present
     html = html.replace(/^```html\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '');

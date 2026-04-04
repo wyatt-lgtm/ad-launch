@@ -1,12 +1,8 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 
-const client = new OpenAI({
-  apiKey: process.env.ABACUSAI_API_KEY ?? '',
-  baseURL: 'https://api.abacus.ai/v1',
-});
+const LLM_URL = 'https://apps.abacus.ai/v1/chat/completions';
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,19 +22,32 @@ export async function POST(request: NextRequest) {
 
 Return ONLY a valid JSON array of objects with those exact keys. No markdown, no explanation, just the JSON array. Make the businesses realistic and varied — include both well-known local businesses and smaller independent ones. Use realistic addresses for the ${location} area.`;
 
-    const completion = await client.chat.completions.create({
-      model: 'claude-3-5-sonnet',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-      max_tokens: 2000,
+    const llmRes = await fetch(LLM_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.ABACUSAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4.1-mini',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7,
+        max_tokens: 2000,
+      }),
     });
 
-    const text = completion.choices?.[0]?.message?.content ?? '';
+    if (!llmRes.ok) {
+      const errText = await llmRes.text().catch(() => '');
+      console.error('[search-businesses] LLM error:', llmRes.status, errText.slice(0, 200));
+      return NextResponse.json({ error: 'Search failed' }, { status: 500 });
+    }
+
+    const llmData = await llmRes.json();
+    const text = llmData?.choices?.[0]?.message?.content ?? '';
 
     // Parse JSON from response
     let businesses = [];
     try {
-      // Try to extract JSON array from response
       const jsonMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
       if (jsonMatch) {
         businesses = JSON.parse(jsonMatch[0]);
