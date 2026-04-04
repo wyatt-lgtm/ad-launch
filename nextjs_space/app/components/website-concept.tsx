@@ -1,6 +1,6 @@
 'use client';
 
-import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check } from 'lucide-react';
+import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
 
 interface WebsiteConceptProps {
@@ -71,6 +71,40 @@ function SectionCard({ section, icon: Icon, color }: { section: any; icon: any; 
 }
 
 export default function WebsiteConcept({ data, locked = false }: WebsiteConceptProps) {
+  const [generating, setGenerating] = useState(false);
+  const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
+  const [genError, setGenError] = useState('');
+
+  const handleGenerate = async () => {
+    if (!data?.sections?.length || generating) return;
+    setGenerating(true);
+    setGenError('');
+    setGeneratedUrl(null);
+    try {
+      const res = await fetch('/api/generate-concept-site', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sections: data.sections,
+          colorPalette: data.colorPalette,
+          businessName: data.businessName,
+        }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (res.ok && result.html) {
+        const blob = new Blob([result.html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        setGeneratedUrl(url);
+        window.open(url, '_blank');
+      } else {
+        setGenError(result.error ?? 'Failed to generate website');
+      }
+    } catch {
+      setGenError('Something went wrong. Please try again.');
+    }
+    setGenerating(false);
+  };
+
   if (!data) {
     return (
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
@@ -130,6 +164,43 @@ export default function WebsiteConcept({ data, locked = false }: WebsiteConceptP
             </div>
           </div>
         )}
+
+        {/* Generate Concept Website Button */}
+        <div className="mt-8 bg-gradient-to-r from-violet-50 to-fuchsia-50 rounded-xl p-6 border border-violet-100 text-center">
+          <Sparkles className="w-8 h-8 text-violet-500 mx-auto mb-3" />
+          <h4 className="text-lg font-bold text-gray-900 mb-2">See It Come to Life</h4>
+          <p className="text-sm text-gray-600 mb-4">
+            Generate a fully designed concept website using the copy and colors above.
+          </p>
+          <button
+            onClick={handleGenerate}
+            disabled={generating || locked}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-violet-600 to-fuchsia-500 text-white rounded-xl font-semibold hover:from-violet-700 hover:to-fuchsia-600 transition-all disabled:opacity-50 shadow-lg shadow-violet-200"
+          >
+            {generating ? (
+              <><Loader2 className="w-5 h-5 animate-spin" /> Generating Website...</>
+            ) : (
+              <><Sparkles className="w-5 h-5" /> Generate Concept Website</>
+            )}
+          </button>
+
+          {genError && (
+            <p className="text-red-500 text-sm mt-3">{genError}</p>
+          )}
+
+          {generatedUrl && !generating && (
+            <div className="mt-4">
+              <a
+                href={generatedUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-600 hover:text-violet-800 transition-colors"
+              >
+                <ExternalLink className="w-4 h-4" /> Open Generated Website Again
+              </a>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
