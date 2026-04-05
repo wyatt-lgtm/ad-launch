@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Download, Sparkles, Image as ImageIcon, Loader2, AlertCircle } from 'lucide-react';
+import { Download, Sparkles, Image as ImageIcon, Loader2, AlertCircle, Globe, ThumbsUp, MessageCircle, Share2, MoreHorizontal } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import SeoInsights from '../../../components/seo-insights';
@@ -77,6 +77,11 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
   const angleLabels = ['Awareness', 'Conversion', 'Trust'];
   const angleColors = ['bg-blue-500', 'bg-orange-500', 'bg-green-500'];
 
+  const businessName = seoData?.businessName ?? 'Your Business';
+  const websiteUrl = analysis?.websiteUrl ?? '';
+  const displayDomain = (() => { try { return new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`).hostname.replace(/^www\./, ''); } catch { return ''; } })();
+  const initials = businessName.split(' ').slice(0, 2).map((w: string) => w[0]?.toUpperCase() ?? '').join('');
+
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-12">
       <div className="text-center mb-10">
@@ -92,51 +97,85 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
-            className="bg-white rounded-xl shadow-md hover:shadow-lg transition-all overflow-hidden border border-gray-100"
+            className="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200 max-w-[400px] mx-auto"
           >
-            <div className="relative aspect-[4/3] bg-gradient-to-br from-blue-50 to-indigo-50">
+            {/* FB Header */}
+            <div className="flex items-center gap-3 px-4 py-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                {initials || 'BZ'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-[13px] text-gray-900 truncate">{businessName}</div>
+                <div className="flex items-center gap-1 text-[11px] text-gray-500">
+                  <span>Sponsored</span><span>&middot;</span><Globe className="w-3 h-3" />
+                </div>
+              </div>
+              <MoreHorizontal className="w-5 h-5 text-gray-400 shrink-0" />
+            </div>
+            {/* Caption */}
+            <div className="px-4 pb-2">
+              <p className="text-[13px] text-gray-800 leading-snug line-clamp-2">{ad?.caption ?? 'Ad copy here.'}</p>
+            </div>
+            {/* Ad Image */}
+            <div className="relative aspect-[4/5] bg-gradient-to-br from-gray-100 to-gray-200">
               {ad?.imageUrl ? (
                 <img src={ad.imageUrl} alt={ad?.headline ?? `Ad ${i + 1}`} className="w-full h-full object-cover" onError={(e: any) => { e.target.style.display = 'none'; }} />
               ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center text-blue-300">
+                <div className="w-full h-full flex flex-col items-center justify-center text-gray-300">
                   <ImageIcon className="w-16 h-16 mb-2" />
                   <span className="text-sm">Ad {i + 1}</span>
                 </div>
               )}
               <div className="absolute top-3 left-3">
-                <span className={`${angleColors[i] ?? 'bg-gray-500'} text-white text-xs px-2.5 py-1 rounded-full font-medium`}>
+                <span className={`${angleColors[i] ?? 'bg-gray-500'} text-white text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wide shadow-sm`}>
                   {angleLabels[i] ?? `Ad ${i + 1}`}
                 </span>
               </div>
             </div>
-            <div className="p-4">
-              <h3 className="font-semibold text-gray-900 mb-2 text-sm">{ad?.headline ?? `Facebook Ad ${i + 1}`}</h3>
-              <p className="text-gray-600 text-sm mb-4 line-clamp-3">{ad?.caption ?? 'Ad copy here.'}</p>
+            {/* Link preview */}
+            {displayDomain && (
+              <div className="mx-4 mt-2 mb-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+                <div className="text-[10px] text-gray-500 uppercase tracking-wide">{displayDomain}</div>
+                <div className="text-[13px] font-semibold text-gray-900 truncate">{ad?.headline || `Facebook Ad ${i + 1}`}</div>
+              </div>
+            )}
+            {/* Engagement bar */}
+            <div className="flex items-center justify-around border-t border-gray-200 px-2 py-2">
+              <span className="flex items-center gap-1.5 px-3 py-1.5 text-gray-500"><ThumbsUp className="w-4 h-4" /><span className="text-xs font-medium">Like</span></span>
+              <span className="flex items-center gap-1.5 px-3 py-1.5 text-gray-500"><MessageCircle className="w-4 h-4" /><span className="text-xs font-medium">Comment</span></span>
+              <span className="flex items-center gap-1.5 px-3 py-1.5 text-gray-500"><Share2 className="w-4 h-4" /><span className="text-xs font-medium">Share</span></span>
+            </div>
+            {/* Download */}
+            <div className="px-4 py-3 border-t border-gray-100">
               <button
                 onClick={() => {
                   if (ad?.imageUrl) {
                     const a = document.createElement('a');
                     a.href = ad.imageUrl;
-                    a.download = `ad-${i + 1}.jpg`;
+                    a.download = `ad-${i + 1}.png`;
                     a.target = '_blank';
                     a.click();
                   }
                 }}
                 className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
               >
-                <Download className="w-4 h-4" /> Download
+                <Download className="w-4 h-4" /> Download Ad
               </button>
             </div>
           </motion.div>
         )) : (
           [0, 1, 2].map((i) => (
-            <div key={i} className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100">
-              <div className="aspect-[4/3] bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center text-blue-300">
+            <div key={i} className="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200 max-w-[400px] mx-auto">
+              <div className="flex items-center gap-3 px-4 py-3">
+                <div className="w-10 h-10 rounded-full bg-gray-200" />
+                <div className="flex-1"><div className="h-3 bg-gray-200 rounded w-24 mb-1.5" /><div className="h-2 bg-gray-100 rounded w-16" /></div>
+              </div>
+              <div className="aspect-[4/5] bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center text-gray-300">
                 <ImageIcon className="w-16 h-16" />
               </div>
               <div className="p-4">
-                <h3 className="font-semibold text-gray-900 mb-2 text-sm">Facebook Ad {i + 1}</h3>
-                <p className="text-gray-600 text-sm">Your ad content is being prepared.</p>
+                <div className="h-3 bg-gray-200 rounded w-32 mb-2" />
+                <div className="h-2 bg-gray-100 rounded w-full" />
               </div>
             </div>
           ))

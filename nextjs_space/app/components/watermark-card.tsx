@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Lock, Image as ImageIcon, Pencil, Loader2, ArrowRight, Check, Sparkles } from 'lucide-react';
+import { Lock, Image as ImageIcon, Pencil, Loader2, Check, Sparkles, ThumbsUp, MessageCircle, Share2, Globe, MoreHorizontal } from 'lucide-react';
 
 interface WatermarkCardProps {
   caption: string | null;
@@ -9,6 +9,8 @@ interface WatermarkCardProps {
   imageUrl: string | null;
   index: number;
   angle?: string;
+  businessName?: string;
+  websiteUrl?: string;
   /** Enable 1-round edit mode */
   editable?: boolean;
   /** Callback when an edit is completed — passes the new image data URL */
@@ -16,12 +18,18 @@ interface WatermarkCardProps {
 }
 
 export default function WatermarkCard({
-  caption, headline, imageUrl, index, angle, editable, onEdited,
+  caption, headline, imageUrl, index, angle, businessName, websiteUrl, editable, onEdited,
 }: WatermarkCardProps) {
   const angleLabels = ['Awareness', 'Conversion', 'Trust'];
   const angleColors = ['bg-blue-500', 'bg-orange-500', 'bg-green-500'];
   const displayAngle = angle ?? angleLabels[index] ?? '';
   const badgeColor = angleColors[index] ?? 'bg-gray-500';
+
+  const displayName = businessName || 'Your Business';
+  const displayDomain = websiteUrl
+    ? (() => { try { return new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`).hostname.replace(/^www\./, ''); } catch { return ''; } })()
+    : '';
+  const initials = displayName.split(' ').slice(0, 2).map(w => w[0]?.toUpperCase() ?? '').join('');
 
   const [editMode, setEditMode] = useState(false);
   const [editPrompt, setEditPrompt] = useState('');
@@ -62,10 +70,96 @@ export default function WatermarkCard({
     }
   };
 
-  // Before/After comparison view
+  const renderFbHeader = () => (
+    <div className="flex items-center gap-3 px-4 py-3">
+      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white text-xs font-bold shrink-0">
+        {initials || 'BZ'}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold text-[13px] text-gray-900 truncate">{displayName}</div>
+        <div className="flex items-center gap-1 text-[11px] text-gray-500">
+          <span>Sponsored</span>
+          <span>·</span>
+          <Globe className="w-3 h-3" />
+        </div>
+      </div>
+      <MoreHorizontal className="w-5 h-5 text-gray-400 shrink-0" />
+    </div>
+  );
+
+  const renderFbCaption = () => (
+    <div className="px-4 pb-2">
+      <p className="text-[13px] text-gray-800 leading-snug line-clamp-2">
+        {caption || 'Your professionally crafted ad copy will appear here.'}
+      </p>
+    </div>
+  );
+
+  const renderFbFooter = () => (
+    <>
+      {/* Link preview bar */}
+      {displayDomain && (
+        <div className="mx-4 mb-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide">{displayDomain}</div>
+          <div className="text-[13px] font-semibold text-gray-900 truncate">{headline || `Facebook Ad ${index + 1}`}</div>
+        </div>
+      )}
+      {/* Engagement bar */}
+      <div className="flex items-center justify-around border-t border-gray-200 px-2 py-2">
+        <button className="flex items-center gap-1.5 px-4 py-1.5 rounded-md hover:bg-gray-100 transition-colors text-gray-500">
+          <ThumbsUp className="w-4 h-4" />
+          <span className="text-xs font-medium">Like</span>
+        </button>
+        <button className="flex items-center gap-1.5 px-4 py-1.5 rounded-md hover:bg-gray-100 transition-colors text-gray-500">
+          <MessageCircle className="w-4 h-4" />
+          <span className="text-xs font-medium">Comment</span>
+        </button>
+        <button className="flex items-center gap-1.5 px-4 py-1.5 rounded-md hover:bg-gray-100 transition-colors text-gray-500">
+          <Share2 className="w-4 h-4" />
+          <span className="text-xs font-medium">Share</span>
+        </button>
+      </div>
+    </>
+  );
+
+  const renderImage = (src: string | null, alt: string, showWatermark: boolean) => (
+    <div className="relative aspect-[4/5] bg-gradient-to-br from-gray-100 to-gray-200 overflow-hidden">
+      {src ? (
+        <img
+          src={src}
+          alt={alt}
+          className="w-full h-full object-cover"
+          onError={(e: any) => { e.target.style.display = 'none'; }}
+        />
+      ) : (
+        <div className="w-full h-full flex flex-col items-center justify-center text-gray-300">
+          <ImageIcon className="w-16 h-16 mb-2" />
+          <span className="text-sm font-medium">Ad {index + 1}</span>
+        </div>
+      )}
+      {showWatermark && (
+        <div className="watermark-overlay">
+          <span className="watermark-text">Ad Launch</span>
+        </div>
+      )}
+      {/* Angle badge */}
+      <div className="absolute top-3 left-3">
+        <span className={`${badgeColor} text-white text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wide shadow-sm`}>
+          {displayAngle}
+        </span>
+      </div>
+      {showWatermark && (
+        <div className="absolute top-3 right-3 bg-black/50 text-white text-[10px] px-2 py-1 rounded-full flex items-center gap-1">
+          <Lock className="w-3 h-3" /> Preview
+        </div>
+      )}
+    </div>
+  );
+
+  // === Edited state: Before/After toggle ===
   if (editedImageUrl) {
     return (
-      <div className="bg-white rounded-xl shadow-md hover:shadow-lg transition-all overflow-hidden border border-gray-100">
+      <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200 max-w-[400px] mx-auto">
         {/* Toggle */}
         <div className="flex border-b border-gray-100">
           <button
@@ -85,98 +179,42 @@ export default function WatermarkCard({
             <span className="inline-flex items-center gap-1"><Sparkles className="w-3 h-3" /> After</span>
           </button>
         </div>
-
-        <div className="relative aspect-[4/3] bg-gradient-to-br from-blue-100 to-indigo-100 overflow-hidden">
-          {showAfter ? (
-            <img
-              src={editedImageUrl}
-              alt={`Edited - ${headline ?? `Ad ${index + 1}`}`}
-              className="w-full h-full object-cover"
-              onError={(e: any) => { e.target.style.display = 'none'; }}
-            />
-          ) : (
-            <>
-              {imageUrl ? (
-                <img
-                  src={imageUrl}
-                  alt={headline ?? `Ad ${index + 1}`}
-                  className="w-full h-full object-cover"
-                  onError={(e: any) => { e.target.style.display = 'none'; }}
-                />
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center text-blue-300">
-                  <ImageIcon className="w-16 h-16 mb-2" />
-                  <span className="text-sm font-medium">Original</span>
-                </div>
-              )}
-              <div className="watermark-overlay">
-                <span className="watermark-text">Ad Launch</span>
-              </div>
-            </>
+        {renderFbHeader()}
+        {renderFbCaption()}
+        <div className="relative">
+          {renderImage(
+            showAfter ? editedImageUrl : imageUrl,
+            showAfter ? `Edited - ${headline ?? `Ad ${index + 1}`}` : (headline ?? `Ad ${index + 1}`),
+            !showAfter,
           )}
-          {/* Angle badge */}
-          <div className="absolute top-3 left-3 flex items-center gap-1.5">
-            <span className={`${badgeColor} text-white text-xs px-2.5 py-1 rounded-full font-medium`}>
-              {displayAngle}
-            </span>
-            {showAfter && (
-              <span className="bg-emerald-500 text-white text-xs px-2 py-1 rounded-full font-medium flex items-center gap-0.5">
+          {showAfter && (
+            <div className="absolute top-3 right-3">
+              <span className="bg-emerald-500 text-white text-[10px] px-2 py-1 rounded-full font-medium flex items-center gap-0.5 shadow-sm">
                 <Check className="w-3 h-3" /> Edited
               </span>
-            )}
-          </div>
-          {!showAfter && (
-            <div className="absolute top-3 right-3 bg-black/50 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
-              <Lock className="w-3 h-3" /> Preview
             </div>
           )}
         </div>
-
-        <div className="p-4">
-          <h3 className="font-semibold text-gray-900 mb-2 text-sm">{headline ?? `Facebook Ad ${index + 1}`}</h3>
-          <p className="text-gray-600 text-sm line-clamp-3">{caption ?? 'Your professionally crafted ad copy will appear here.'}</p>
-          <div className="mt-3 text-xs text-gray-400 italic">
-            Edit: &ldquo;{editPrompt}&rdquo;
-          </div>
+        {renderFbFooter()}
+        <div className="px-4 py-2 border-t border-gray-100">
+          <p className="text-[10px] text-gray-400 italic truncate">Edit: &ldquo;{editPrompt}&rdquo;</p>
         </div>
       </div>
     );
   }
 
+  // === Default state: Facebook post mockup ===
   return (
-    <div className="bg-white rounded-xl shadow-md hover:shadow-lg transition-all overflow-hidden border border-gray-100 group">
-      <div className="relative aspect-[4/3] bg-gradient-to-br from-blue-100 to-indigo-100 overflow-hidden">
-        {imageUrl ? (
-          <img
-            src={imageUrl}
-            alt={headline ?? `Ad ${index + 1}`}
-            className="w-full h-full object-cover"
-            onError={(e: any) => { e.target.style.display = 'none'; }}
-          />
-        ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center text-blue-300">
-            <ImageIcon className="w-16 h-16 mb-2" />
-            <span className="text-sm font-medium">Ad {index + 1}</span>
-          </div>
-        )}
-        {/* Watermark */}
-        <div className="watermark-overlay">
-          <span className="watermark-text">Ad Launch</span>
+    <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200 max-w-[400px] mx-auto group">
+      {renderFbHeader()}
+      {renderFbCaption()}
+      {renderImage(imageUrl, headline ?? `Ad ${index + 1}`, true)}
+      {!displayDomain && (
+        <div className="px-4 pt-3">
+          <h3 className="font-semibold text-gray-900 text-[13px]">{headline ?? `Facebook Ad ${index + 1}`}</h3>
         </div>
-        {/* Badges */}
-        <div className="absolute top-3 left-3">
-          <span className={`${badgeColor} text-white text-xs px-2.5 py-1 rounded-full font-medium`}>
-            {displayAngle}
-          </span>
-        </div>
-        <div className="absolute top-3 right-3 bg-black/50 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
-          <Lock className="w-3 h-3" /> Preview
-        </div>
-      </div>
-      <div className="p-4">
-        <h3 className="font-semibold text-gray-900 mb-2 text-sm">{headline ?? `Facebook Ad ${index + 1}`}</h3>
-        <p className="text-gray-600 text-sm line-clamp-3">{caption ?? 'Your professionally crafted ad copy will appear here.'}</p>
-      </div>
+      )}
+      {renderFbFooter()}
 
       {/* Edit section — only when editable and not yet used */}
       {editable && !editUsed && (
