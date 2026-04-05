@@ -19,26 +19,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Build a rich prompt combining the ad context with user's edit request
-    const systemPrompt = [
-      'You are an expert Facebook ad designer.',
-      'Generate a professional, eye-catching Facebook ad image.',
-      'The image should be clean, high-quality, and suitable for a social media ad.',
-      'Do NOT include any text overlays, watermarks, or logos in the image.',
-      'Focus on compelling visual imagery that supports the ad message.',
-    ].join(' ');
-
-    const userPrompt = [
-      `Create a Facebook ad image for the following ad:`,
-      `Marketing Angle: ${angle ?? 'General'}`,
-      `Headline: ${headline ?? 'Ad'}`,
-      `Caption: ${caption ?? ''}`,
+    const fullPrompt = [
+      `You are a senior graphic designer. Modify this Facebook ad creative based on the user's request.`,
       '',
-      `User's specific request for this image: ${prompt}`,
+      `CURRENT AD CONTEXT:`,
+      `- Marketing Angle: ${angle ?? 'General'}`,
+      `- Headline: ${headline ?? 'Ad'}`,
+      `- Caption: ${caption ?? ''}`,
       '',
-      'Generate a professional ad image that incorporates the user\'s request while maintaining ad quality.',
+      `USER'S EDIT REQUEST: ${prompt}`,
+      '',
+      'DESIGN RULES:',
+      '- Create a polished, multi-layered ad composition (NOT just a photo with text)',
+      '- Use distinct visual zones: branded header, copy area, lifestyle imagery, CTA bar',
+      '- Typography should be bold, modern, and highly legible',
+      '- This should look like a real professionally designed Facebook sponsored post',
+      '- Incorporate the user\'s specific request while maintaining professional ad quality',
     ].join('\n');
-
-    const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
 
     const res = await fetch(ABACUS_API, {
       method: 'POST',
@@ -47,11 +44,12 @@ export async function POST(request: NextRequest) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt_image15',
+        model: 'gpt-5.1',
         messages: [
           { role: 'user', content: fullPrompt },
         ],
         modalities: ['image'],
+        image_config: { image_size: '1024x1536', quality: 'high' },
       }),
     });
 

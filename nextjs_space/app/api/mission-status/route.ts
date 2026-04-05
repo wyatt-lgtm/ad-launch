@@ -6,9 +6,19 @@ import { getMultiWorkflowStatus, getWorkflowResults } from '@/lib/tombstone';
 
 const TOMBSTONE_API = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
-/** Resolve an R2 key (or stale presigned URL) to a fresh presigned URL. */
+/** Resolve an R2 key (or stale presigned URL) to a fresh presigned URL.
+ *  S3 public URLs (from GPT-5.1 generation) are passed through directly.
+ *  Data URLs are also passed through.
+ */
 async function resolveImageUrl(keyOrUrl: string | null): Promise<string | null> {
   if (!keyOrUrl) return null;
+
+  // Pass through data URLs
+  if (keyOrUrl.startsWith('data:')) return keyOrUrl;
+
+  // Pass through S3 public URLs (our GPT-5.1 generated images)
+  if (keyOrUrl.includes('.s3.') && keyOrUrl.includes('amazonaws.com')) return keyOrUrl;
+
   let r2Key = keyOrUrl;
   if (r2Key.startsWith('http')) {
     try {
@@ -38,6 +48,7 @@ async function resolveAdImages(ads: any[]): Promise<any[]> {
   );
 }
 import { runSeoAudit } from '@/lib/seo-audit';
+import { generateAllAdImages } from '@/lib/generate-ad-image';
 
 export async function GET(request: NextRequest) {
   try {
@@ -95,11 +106,31 @@ export async function GET(request: NextRequest) {
       const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl);
       const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
 
-      // Create ad records in DB — store R2 keys, not presigned URLs
-      for (const ad of results.ads) {
-        let imageKey = ad?.imageUrl ?? null;
-        // Extract R2 key from presigned URL so it doesn't expire
-        if (imageKey && imageKey.startsWith('http')) {
+      // Generate high-quality GPT-5.1 ad images to replace FAL images
+      console.log(`[mission-status] Generating GPT-5.1 ad images for ${results.ads.length} ads...`);
+      let gpt5Images: { imageUrl: string | null; angle: string }[] = [];
+      try {
+        gpt5Images = await generateAllAdImages(
+          results.research,
+          results.creative,
+          results.ads,
+          analysis.websiteUrl,
+        );
+        console.log(`[mission-status] GPT-5.1 generation complete: ${gpt5Images.filter(i => i.imageUrl).length}/${gpt5Images.length} succeeded`);
+      } catch (err: any) {
+        console.error('[mission-status] GPT-5.1 generation failed, using Tombstone images:', err?.message);
+      }
+
+      // Create ad records in DB
+      for (let i = 0; i < results.ads.length; i++) {
+        const ad = results.ads[i];
+        const gpt5Image = gpt5Images[i];
+
+        // Prefer GPT-5.1 image (S3 public URL), fall back to Tombstone R2 key
+        let imageKey = gpt5Image?.imageUrl ?? ad?.imageUrl ?? null;
+
+        // If falling back to Tombstone image, extract R2 key from presigned URL
+        if (imageKey && !gpt5Image?.imageUrl && imageKey.startsWith('http')) {
           try {
             const parsed = new URL(imageKey);
             let path = parsed.pathname.replace(/^\/+/, '');
@@ -107,6 +138,7 @@ export async function GET(request: NextRequest) {
             imageKey = path;
           } catch {}
         }
+
         await prisma.ad.create({
           data: {
             analysisId: analysis.id,

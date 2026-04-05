@@ -38,11 +38,17 @@ function extractR2Key(input: string): string {
  */
 export async function GET(request: NextRequest) {
   const rawKey = request.nextUrl.searchParams.get('key') ?? '';
-  const r2Key = extractR2Key(rawKey);
 
-  if (!r2Key) {
+  if (!rawKey) {
     return NextResponse.json({ error: 'Missing key parameter' }, { status: 400 });
   }
+
+  // Pass through S3 public URLs (GPT-5.1 generated images) — no resolution needed
+  if (rawKey.includes('.s3.') && rawKey.includes('amazonaws.com')) {
+    return NextResponse.json({ url: rawKey });
+  }
+
+  const r2Key = extractR2Key(rawKey);
 
   try {
     const res = await fetch(

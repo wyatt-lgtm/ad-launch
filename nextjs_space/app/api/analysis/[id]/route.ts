@@ -11,6 +11,12 @@ const TOMBSTONE_API = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xj
 async function resolveImageUrl(keyOrUrl: string | null): Promise<string | null> {
   if (!keyOrUrl) return null;
 
+  // Pass through data URLs
+  if (keyOrUrl.startsWith('data:')) return keyOrUrl;
+
+  // Pass through S3 public URLs (GPT-5.1 generated images)
+  if (keyOrUrl.includes('.s3.') && keyOrUrl.includes('amazonaws.com')) return keyOrUrl;
+
   // Extract R2 key if it's a full URL
   let r2Key = keyOrUrl;
   if (r2Key.startsWith('http')) {
