@@ -123,7 +123,7 @@ export default function WatermarkCard({
   );
 
   const renderImage = (src: string | null, alt: string, showWatermark: boolean) => (
-    <div className="relative bg-gray-100 overflow-hidden">
+    <div className="relative bg-gray-100">
       {src ? (
         <img
           src={src}
