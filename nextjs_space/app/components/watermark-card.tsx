@@ -123,16 +123,16 @@ export default function WatermarkCard({
   );
 
   const renderImage = (src: string | null, alt: string, showWatermark: boolean) => (
-    <div className="relative aspect-[4/5] bg-gradient-to-br from-gray-100 to-gray-200 overflow-hidden">
+    <div className="relative bg-gray-100 overflow-hidden">
       {src ? (
         <img
           src={src}
           alt={alt}
-          className="w-full h-full object-cover"
+          className="w-full h-auto block"
           onError={(e: any) => { e.target.style.display = 'none'; }}
         />
       ) : (
-        <div className="w-full h-full flex flex-col items-center justify-center text-gray-300">
+        <div className="w-full aspect-[4/5] flex flex-col items-center justify-center text-gray-300">
           <ImageIcon className="w-16 h-16 mb-2" />
           <span className="text-sm font-medium">Ad {index + 1}</span>
         </div>

@@ -117,11 +117,11 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
               <p className="text-[13px] text-gray-800 leading-snug line-clamp-2">{ad?.caption ?? 'Ad copy here.'}</p>
             </div>
             {/* Ad Image */}
-            <div className="relative aspect-[4/5] bg-gradient-to-br from-gray-100 to-gray-200">
+            <div className="relative bg-gray-100">
               {ad?.imageUrl ? (
-                <img src={ad.imageUrl} alt={ad?.headline ?? `Ad ${i + 1}`} className="w-full h-full object-cover" onError={(e: any) => { e.target.style.display = 'none'; }} />
+                <img src={ad.imageUrl} alt={ad?.headline ?? `Ad ${i + 1}`} className="w-full h-auto block" onError={(e: any) => { e.target.style.display = 'none'; }} />
               ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center text-gray-300">
+                <div className="w-full aspect-[4/5] flex flex-col items-center justify-center text-gray-300">
                   <ImageIcon className="w-16 h-16 mb-2" />
                   <span className="text-sm">Ad {i + 1}</span>
                 </div>
