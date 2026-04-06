@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
     }
 
     // If already completed with ads, return cached results with fresh image URLs
-    if (analysis.status === 'completed' && (analysis.ads?.length ?? 0) > 0) {
+    if ((analysis.status === 'completed' || analysis.status === 'completing') && (analysis.ads?.length ?? 0) > 0) {
       const freshAds = await resolveAdImages(analysis.ads ?? []);
       const cachedResults = (analysis.results ?? {}) as any;
       return NextResponse.json({
@@ -96,92 +96,137 @@ export async function GET(request: NextRequest) {
     console.log(`[mission-status] analysisId=${analysisId} workflows=${workflowIds.length} overallStatus=${overallStatus} tasks=${statusResult.tasks?.length ?? 0}`);
 
     if (overallStatus === 'completed') {
-      // Fetch full results
-      const results = await getWorkflowResults(workflowIds);
+      // Guard: prevent duplicate ad creation from concurrent poll requests.
+      // Use an atomic status update — only proceed if we successfully transition from non-completed to 'completed'.
+      const lockResult = await prisma.analysis.updateMany({
+        where: { id: analysisId, status: { not: 'completed' } },
+        data: { status: 'completing' },
+      });
 
-      // Build SEO data from Zig's audit (or fallback to live audit)
-      const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl);
-      const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
-      const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl);
-      const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl);
-      const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
-
-      // Generate high-quality GPT-5.1 ad images to replace FAL images
-      console.log(`[mission-status] Generating GPT-5.1 ad images for ${results.ads.length} ads...`);
-      let gpt5Images: { imageUrl: string | null; angle: string }[] = [];
-      try {
-        gpt5Images = await generateAllAdImages(
-          results.research,
-          results.creative,
-          results.ads,
-          analysis.websiteUrl,
-        );
-        console.log(`[mission-status] GPT-5.1 generation complete: ${gpt5Images.filter(i => i.imageUrl).length}/${gpt5Images.length} succeeded`);
-      } catch (err: any) {
-        console.error('[mission-status] GPT-5.1 generation failed, using Tombstone images:', err?.message);
+      if (lockResult.count === 0) {
+        // Another request already started completion — wait briefly then return cached results
+        console.log(`[mission-status] analysisId=${analysisId} completion already in progress, returning pending`);
+        // Re-fetch in case it finished
+        const refetched = await prisma.analysis.findUnique({
+          where: { id: analysisId },
+          include: { ads: true },
+        });
+        if (refetched?.status === 'completed' && (refetched.ads?.length ?? 0) > 0) {
+          const freshAds = await resolveAdImages(refetched.ads ?? []);
+          const cachedResults = (refetched.results ?? {}) as any;
+          return NextResponse.json({
+            status: 'completed',
+            ads: freshAds,
+            seoData: refetched.seoData ?? null,
+            postingPlan: refetched.postingPlan ?? null,
+            googleAdsData: cachedResults.googleAds ?? null,
+            websiteConceptData: cachedResults.websiteConcept ?? null,
+            budgetData: cachedResults.budget ?? null,
+            tasks: [],
+          });
+        }
+        // Still completing — tell frontend to keep polling
+        return NextResponse.json({ status: 'processing', tasks: statusResult.tasks ?? [] });
       }
 
-      // Create ad records in DB
-      for (let i = 0; i < results.ads.length; i++) {
-        const ad = results.ads[i];
-        const gpt5Image = gpt5Images[i];
+      // We won the lock — proceed with ad creation
+      try {
+        // Fetch full results
+        const results = await getWorkflowResults(workflowIds);
 
-        // Prefer GPT-5.1 image (S3 public URL), fall back to Tombstone R2 key
-        let imageKey = gpt5Image?.imageUrl ?? ad?.imageUrl ?? null;
+        // Build SEO data from Zig's audit (or fallback to live audit)
+        const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl);
+        const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
+        const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl);
+        const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl);
+        const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
 
-        // If falling back to Tombstone image, extract R2 key from presigned URL
-        if (imageKey && !gpt5Image?.imageUrl && imageKey.startsWith('http')) {
-          try {
-            const parsed = new URL(imageKey);
-            let path = parsed.pathname.replace(/^\/+/, '');
-            if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length);
-            imageKey = path;
-          } catch {}
+        // Generate high-quality GPT-5.1 ad images to replace FAL images
+        console.log(`[mission-status] Generating GPT-5.1 ad images for ${results.ads.length} ads...`);
+        let gpt5Images: { imageUrl: string | null; angle: string }[] = [];
+        try {
+          gpt5Images = await generateAllAdImages(
+            results.research,
+            results.creative,
+            results.ads,
+            analysis.websiteUrl,
+          );
+          console.log(`[mission-status] GPT-5.1 generation complete: ${gpt5Images.filter(i => i.imageUrl).length}/${gpt5Images.length} succeeded`);
+        } catch (err: any) {
+          console.error('[mission-status] GPT-5.1 generation failed, using Tombstone images:', err?.message);
         }
 
-        await prisma.ad.create({
+        // Create ad records in DB (limit to 3 ads max to prevent bloat)
+        const adsToCreate = results.ads.slice(0, 3);
+        for (let i = 0; i < adsToCreate.length; i++) {
+          const ad = adsToCreate[i];
+          const gpt5Image = gpt5Images[i];
+
+          // Prefer GPT-5.1 image (S3 public URL), fall back to Tombstone R2 key
+          let imageKey = gpt5Image?.imageUrl ?? ad?.imageUrl ?? null;
+
+          // If falling back to Tombstone image, extract R2 key from presigned URL
+          if (imageKey && !gpt5Image?.imageUrl && imageKey.startsWith('http')) {
+            try {
+              const parsed = new URL(imageKey);
+              let path = parsed.pathname.replace(/^\/+/, '');
+              if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length);
+              imageKey = path;
+            } catch {}
+          }
+
+          await prisma.ad.create({
+            data: {
+              analysisId: analysis.id,
+              imageUrl: imageKey,
+              caption: ad?.caption ?? '',
+              headline: ad?.headline ?? 'Ad',
+              watermarked: true,
+            },
+          });
+        }
+
+        await prisma.analysis.update({
+          where: { id: analysisId },
           data: {
-            analysisId: analysis.id,
-            imageUrl: imageKey,
-            caption: ad?.caption ?? '',
-            headline: ad?.headline ?? 'Ad',
-            watermarked: true,
+            status: 'completed',
+            results: { ...results as any, googleAds: googleAdsData, websiteConcept: websiteConceptData, budget: budgetData } as any,
+            seoData: seoData as any,
+            postingPlan: postingPlan as any,
           },
         });
-      }
 
-      await prisma.analysis.update({
-        where: { id: analysisId },
-        data: {
+        const updatedAnalysis = await prisma.analysis.findUnique({
+          where: { id: analysisId },
+          include: { ads: true },
+        });
+
+        // Resolve fresh presigned URLs for ads just stored
+        const freshAds = await resolveAdImages(updatedAnalysis?.ads ?? []);
+        return NextResponse.json({
           status: 'completed',
-          results: { ...results as any, googleAds: googleAdsData, websiteConcept: websiteConceptData, budget: budgetData } as any,
-          seoData: seoData as any,
-          postingPlan: postingPlan as any,
-        },
-      });
-
-      const updatedAnalysis = await prisma.analysis.findUnique({
-        where: { id: analysisId },
-        include: { ads: true },
-      });
-
-      // Resolve fresh presigned URLs for ads just stored
-      const freshAds = await resolveAdImages(updatedAnalysis?.ads ?? []);
-      return NextResponse.json({
-        status: 'completed',
-        ads: freshAds,
-        seoData,
-        postingPlan,
-        googleAdsData,
-        websiteConceptData,
-        budgetData,
-        tasks: statusResult.tasks ?? [],
-      });
+          ads: freshAds,
+          seoData,
+          postingPlan,
+          googleAdsData,
+          websiteConceptData,
+          budgetData,
+          tasks: statusResult.tasks ?? [],
+        });
+      } catch (err: any) {
+        // If completion fails, reset status so it can be retried
+        console.error('[mission-status] Completion failed, resetting status:', err?.message);
+        await prisma.analysis.update({
+          where: { id: analysisId },
+          data: { status: 'processing' },
+        });
+        return NextResponse.json({ error: 'Failed to process results', tasks: [] }, { status: 500 });
+      }
     }
 
-    // Update status in DB if changed
+    // Update status in DB if changed (never overwrite 'completing' or 'completed')
     const mappedStatus = overallStatus === 'error' ? 'error' : overallStatus === 'generating' ? 'generating' : 'processing';
-    if (analysis.status !== mappedStatus) {
+    if (analysis.status !== mappedStatus && analysis.status !== 'completing' && analysis.status !== 'completed') {
       await prisma.analysis.update({
         where: { id: analysisId },
         data: { status: mappedStatus },
