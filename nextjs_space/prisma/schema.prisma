@@ -175,6 +175,9 @@ model RssFeed {
 
   // Discovery metadata
   discoveredBy      String?            // "manual", "google_search", "sitemap_crawl", "opml_import"
+  discoveryMethod   String?            // "html_link", "path_probe", "curated", "sitemap"
+  feedFormat        String?            // "rss2", "atom", "rss1", "unknown"
+  pilotState        String?            // State code for pilot discovery (e.g. "CO", "TX")
   discoveredAt      DateTime  @default(now())
   verifiedBy        String?            // Admin user ID who verified
   verifiedAt        DateTime?

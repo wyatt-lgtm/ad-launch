@@ -74,6 +74,7 @@
     "autoprefixer": "10.4.15",
     "bcryptjs": "2.4.3",
     "chart.js": "4.4.9",
+    "cheerio": "^1.2.0",
     "class-variance-authority": "0.7.0",
     "clsx": "2.1.1",
     "cmdk": "1.0.0",
