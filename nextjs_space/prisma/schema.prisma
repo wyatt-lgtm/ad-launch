@@ -32,6 +32,17 @@ model Analysis {
   results    Json?    @db.JsonB
   seoData    Json?    @db.JsonB
   postingPlan Json?   @db.JsonB
+
+  // Business location — auto-extracted during audit, user-confirmed
+  businessName  String?
+  businessAddr  String?           // Full street address
+  businessCity  String?
+  businessState String?           // 2-letter state code (e.g. "CO")
+  businessZip   String?           // 5-digit ZIP
+  businessPhone String?
+  geoConfirmed  Boolean  @default(false)  // User has confirmed/corrected
+  geoSource     String?           // "schema_org", "footer_parse", "contact_page", "user_input", "research_pipeline"
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   user       User?    @relation(fields: [userId], references: [id])
@@ -39,6 +50,8 @@ model Analysis {
 
   @@index([userId])
   @@index([missionId])
+  @@index([businessZip])
+  @@index([businessState])
 }
 
 model Ad {

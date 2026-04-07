@@ -48,6 +48,7 @@ async function resolveAdImages(ads: any[]): Promise<any[]> {
   );
 }
 import { runSeoAudit } from '@/lib/seo-audit';
+import { extractBusinessAddress, parseGeoString, type ExtractedAddress } from '@/lib/address-extractor';
 import { generateAllAdImages } from '@/lib/generate-ad-image';
 
 export async function GET(request: NextRequest) {
@@ -70,10 +71,24 @@ export async function GET(request: NextRequest) {
     if ((analysis.status === 'completed' || analysis.status === 'completing') && (analysis.ads?.length ?? 0) > 0) {
       const freshAds = await resolveAdImages(analysis.ads ?? []);
       const cachedResults = (analysis.results ?? {}) as any;
+      // Inject live location data from DB (may have been confirmed/edited by user)
+      const seoData = analysis.seoData as any ?? {};
+      if (analysis.businessCity || analysis.businessState || analysis.businessZip) {
+        seoData.location = {
+          address: analysis.businessAddr ?? '',
+          city: analysis.businessCity ?? '',
+          state: analysis.businessState ?? '',
+          zip: analysis.businessZip ?? '',
+          phone: analysis.businessPhone ?? '',
+          source: analysis.geoSource ?? 'none',
+          confidence: 1,
+          confirmed: analysis.geoConfirmed ?? false,
+        };
+      }
       return NextResponse.json({
         status: 'completed',
         ads: freshAds,
-        seoData: analysis.seoData ?? null,
+        seoData,
         postingPlan: analysis.postingPlan ?? null,
         googleAdsData: cachedResults.googleAds ?? null,
         websiteConceptData: cachedResults.websiteConcept ?? null,
@@ -135,7 +150,7 @@ export async function GET(request: NextRequest) {
         const results = await getWorkflowResults(workflowIds);
 
         // Build SEO data from Zig's audit (or fallback to live audit)
-        const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl);
+        const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl, analysisId);
         const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
         const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl);
         const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl);
@@ -265,9 +280,10 @@ export async function GET(request: NextRequest) {
 /**
  * Build SEO data from Zig's pipeline audit (preferred) or fallback to live audit.
  */
-async function buildSeoData(research: any, creative: any, marketing: any, websiteUrl: string) {
+async function buildSeoData(research: any, creative: any, marketing: any, websiteUrl: string, analysisId?: string) {
   // Prefer Zig's SEO audit from the pipeline (already ran in parallel with creative)
   let audit = marketing?.audit ?? null;
+  let auditHtml = '';
   if (audit) {
     console.log(`[seo-audit] Using Zig pipeline audit: score=${audit.score} grade=${audit.grade}`);
   } else {
@@ -280,9 +296,94 @@ async function buildSeoData(research: any, creative: any, marketing: any, websit
     }
   }
 
+  // --- Address extraction ---
+  // Try to fetch HTML for address extraction (reuse if audit already has it)
+  let location: ExtractedAddress | null = null;
+  try {
+    const baseUrl = websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(baseUrl, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: { 'User-Agent': 'AdLaunch-SEO-Audit/1.0' },
+        cache: 'no-store',
+      });
+      auditHtml = await res.text().catch(() => '');
+    } finally {
+      clearTimeout(timer);
+    }
+    if (auditHtml) {
+      location = extractBusinessAddress(auditHtml);
+      console.log(`[address-extractor] source=${location.source} confidence=${location.confidence} city=${location.city} state=${location.state} zip=${location.zip}`);
+    }
+  } catch (err: any) {
+    console.error('[address-extractor] Fetch error:', err?.message);
+  }
+
   const biz = research?.business_summary ?? {};
   const voice = research?.brand_voice ?? {};
   const constraints = research?.messaging_constraints ?? {};
+  const geoString = biz?.geo ?? '';
+
+  // Merge: HTML extraction wins, research pipeline geo is fallback
+  if ((!location || location.source === 'none') && geoString) {
+    const parsed = parseGeoString(geoString);
+    if (parsed.state) {
+      location = {
+        businessName: biz?.name ?? '',
+        address: '',
+        city: parsed.city,
+        state: parsed.state,
+        zip: parsed.zip,
+        phone: '',
+        source: 'none', // will be recorded as 'research_pipeline' in DB
+        confidence: 0.3,
+      };
+      console.log(`[address-extractor] Using research pipeline geo: "${geoString}" → city=${parsed.city} state=${parsed.state}`);
+    }
+  }
+
+  // Store extracted location in Analysis record
+  if (analysisId && location && location.source !== 'none') {
+    try {
+      await prisma.analysis.update({
+        where: { id: analysisId },
+        data: {
+          businessName: location.businessName || biz?.name || null,
+          businessAddr: location.address || null,
+          businessCity: location.city || null,
+          businessState: location.state || null,
+          businessZip: location.zip || null,
+          businessPhone: location.phone || null,
+          geoSource: location.source,
+          geoConfirmed: false,
+        },
+      });
+      console.log(`[address-extractor] Saved to Analysis ${analysisId}`);
+    } catch (err: any) {
+      console.error('[address-extractor] DB save error:', err?.message);
+    }
+  } else if (analysisId && geoString) {
+    // Even if extraction failed, save the raw geo from research pipeline
+    const parsed = parseGeoString(geoString);
+    try {
+      await prisma.analysis.update({
+        where: { id: analysisId },
+        data: {
+          businessName: biz?.name || null,
+          businessCity: parsed.city || null,
+          businessState: parsed.state || null,
+          businessZip: parsed.zip || null,
+          geoSource: 'research_pipeline',
+          geoConfirmed: false,
+        },
+      });
+    } catch (err: any) {
+      console.error('[address-extractor] DB fallback save error:', err?.message);
+    }
+  }
 
   return {
     businessName: biz?.name ?? 'Unknown',
@@ -290,7 +391,17 @@ async function buildSeoData(research: any, creative: any, marketing: any, websit
     coreOffer: biz?.core_offer ?? '',
     targetCustomer: biz?.target_customer ?? '',
     products: biz?.products ?? [],
-    geo: biz?.geo ?? '',
+    geo: geoString,
+    location: location ? {
+      address: location.address,
+      city: location.city,
+      state: location.state,
+      zip: location.zip,
+      phone: location.phone,
+      source: location.source,
+      confidence: location.confidence,
+      confirmed: false,
+    } : null,
     brandVoice: {
       tone: voice?.tone ?? '',
       style: voice?.style ?? '',

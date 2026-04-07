@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, CheckCircle, AlertCircle, Search, Sparkles, FileCheck,
-  Lock, Clock, CircleDot, XCircle,
+  Lock, Clock, CircleDot, XCircle, MapPin, Edit3,
 } from 'lucide-react';
 import WatermarkCard from '../../../components/watermark-card';
 import SeoInsights from '../../../components/seo-insights';
@@ -80,6 +80,149 @@ function TaskRow({ task, index }: { task: TaskItem; index: number }) {
       {task.status === 'active' && (
         <span className="text-xs text-blue-500 font-medium animate-pulse">Working...</span>
       )}
+    </motion.div>
+  );
+}
+
+/* ── Location Confirm Card ──────────────────────────────────── */
+function LocationConfirmCard({
+  analysisId,
+  location,
+  onConfirmed,
+}: {
+  analysisId: string;
+  location: { address: string; city: string; state: string; zip: string; phone: string; source: string; confidence: number; confirmed: boolean };
+  onConfirmed: (loc: any) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [city, setCity] = useState(location.city);
+  const [state, setState] = useState(location.state);
+  const [zip, setZip] = useState(location.zip);
+  const [saving, setSaving] = useState(false);
+  const [confirmed, setConfirmed] = useState(location.confirmed);
+
+  useEffect(() => {
+    setCity(location.city);
+    setState(location.state);
+    setZip(location.zip);
+    setConfirmed(location.confirmed);
+  }, [location]);
+
+  const handleConfirm = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/analysis/${analysisId}/confirm-location`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ city, state, zip }),
+      });
+      const data = await res.json();
+      if (data?.success) {
+        setConfirmed(true);
+        setEditing(false);
+        onConfirmed(data.location);
+      }
+    } catch (err) {
+      console.error('Confirm location error:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sourceLabel: Record<string, string> = {
+    schema_org: 'Schema.org structured data',
+    address_tag: 'HTML address tag',
+    footer_parse: 'Website footer',
+    regex_fallback: 'Page content scan',
+    research_pipeline: 'AI research',
+    user_input: 'Your input',
+    none: 'Not detected',
+  };
+
+  if (confirmed && !editing) {
+    return (
+      <div className="flex items-center gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-xl">
+        <CheckCircle className="w-5 h-5 text-green-600 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium text-green-800">
+            Location confirmed: {city}{state ? `, ${state}` : ''} {zip}
+          </span>
+        </div>
+        <button
+          onClick={() => setEditing(true)}
+          className="text-xs text-green-600 hover:text-green-800 underline"
+        >
+          Edit
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-white border border-blue-200 rounded-xl p-5 shadow-sm"
+    >
+      <div className="flex items-start gap-3 mb-3">
+        <MapPin className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+        <div>
+          <h4 className="text-sm font-semibold text-gray-900">Business Location</h4>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {location.source !== 'none'
+              ? `Auto-detected from ${sourceLabel[location.source] ?? location.source}. Please confirm or correct.`
+              : 'We couldn\'t detect your location automatically. Please enter it below.'}
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
+          <input
+            type="text"
+            value={city}
+            onChange={(e) => { setCity(e.target.value); setEditing(true); }}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none transition-all"
+            placeholder="Denver"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">State</label>
+          <input
+            type="text"
+            value={state}
+            onChange={(e) => { setState(e.target.value.toUpperCase().slice(0, 2)); setEditing(true); }}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none transition-all"
+            placeholder="CO"
+            maxLength={2}
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">ZIP Code</label>
+          <input
+            type="text"
+            value={zip}
+            onChange={(e) => { setZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10)); setEditing(true); }}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none transition-all"
+            placeholder="80202"
+            maxLength={10}
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={handleConfirm}
+        disabled={saving || (!city && !state && !zip)}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+      >
+        {saving ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <CheckCircle className="w-4 h-4" />
+        )}
+        {saving ? 'Saving...' : 'Confirm Location'}
+      </button>
     </motion.div>
   );
 }
@@ -300,6 +443,22 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
               ))}
             </div>
           </div>
+
+          {/* Location Confirmation */}
+          {seoData?.location && (
+            <div className="mb-8 max-w-lg mx-auto">
+              <LocationConfirmCard
+                analysisId={analysisId}
+                location={seoData.location}
+                onConfirmed={(loc) => {
+                  setSeoData((prev: any) => ({
+                    ...prev,
+                    location: { ...prev?.location, ...loc, confirmed: true },
+                  }));
+                }}
+              />
+            </div>
+          )}
 
           {/* Google Search Ad Copy */}
           <div className="mb-12">
