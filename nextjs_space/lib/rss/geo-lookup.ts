@@ -1,0 +1,271 @@
+/**
+ * Phase 2: Geography Lookup & Trade Area Queries
+ *
+ * Provides functions the Tombstone agent (and future RSS feed discovery)
+ * can use to resolve trade areas into ZIP code lists.
+ *
+ * Trade area patterns:
+ *   1. Radius from a ZIP centroid (e.g., "all ZIPs within 25 mi of 80903")
+ *   2. Explicit ZIP list (e.g., a franchise's known service area)
+ *   3. County-level (e.g., "El Paso County, CO")
+ *   4. State-level (e.g., "all ZIPs in Montana")
+ *   5. City-level (e.g., "Colorado Springs, CO")
+ */
+import { prisma } from '@/lib/db';
+
+// ── Haversine distance (miles) ────────────────────────────────────────────
+const R_MILES = 3958.8;
+
+function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R_MILES * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────
+export interface GeoZipResult {
+  id: string;
+  code: string;
+  latitude: number | null;
+  longitude: number | null;
+  distanceMiles?: number; // only for radius queries
+  city?: string;
+  county?: string;
+  state?: string;
+}
+
+export interface TradeAreaSummary {
+  zipCount: number;
+  zips: GeoZipResult[];
+  centerZip?: string;
+  radiusMiles?: number;
+  queryType: 'radius' | 'zip_list' | 'county' | 'state' | 'city';
+}
+
+// ── 1. Radius query ───────────────────────────────────────────────────────
+/**
+ * Find all delivery-point ZIPs within `radiusMiles` of a center ZIP.
+ * Uses a bounding-box pre-filter then Haversine refinement.
+ */
+export async function getZipsByRadius(
+  centerZipCode: string,
+  radiusMiles: number = 25
+): Promise<TradeAreaSummary> {
+  const center = await prisma.geoZip.findUnique({ where: { code: centerZipCode } });
+  if (!center || center.latitude == null || center.longitude == null) {
+    return { zipCount: 0, zips: [], centerZip: centerZipCode, radiusMiles, queryType: 'radius' };
+  }
+
+  // Bounding box (rough filter) — 1 degree lat ≈ 69 mi, 1 degree lon varies
+  const latDelta = radiusMiles / 69;
+  const lonDelta = radiusMiles / (69 * Math.cos((center.latitude * Math.PI) / 180));
+
+  const candidates = await prisma.geoZip.findMany({
+    where: {
+      latitude: { gte: center.latitude - latDelta, lte: center.latitude + latDelta },
+      longitude: { gte: center.longitude - lonDelta, lte: center.longitude + lonDelta },
+    },
+  });
+
+  const results: GeoZipResult[] = [];
+  for (const z of candidates) {
+    if (z.latitude == null || z.longitude == null) continue;
+    const dist = haversine(center.latitude, center.longitude, z.latitude, z.longitude);
+    if (dist <= radiusMiles) {
+      results.push({
+        id: z.id,
+        code: z.code,
+        latitude: z.latitude,
+        longitude: z.longitude,
+        distanceMiles: Math.round(dist * 10) / 10,
+      });
+    }
+  }
+
+  results.sort((a, b) => (a.distanceMiles ?? 0) - (b.distanceMiles ?? 0));
+
+  return {
+    zipCount: results.length,
+    zips: results,
+    centerZip: centerZipCode,
+    radiusMiles,
+    queryType: 'radius',
+  };
+}
+
+// ── 2. Explicit ZIP list ──────────────────────────────────────────────────
+export async function getZipsByList(zipCodes: string[]): Promise<TradeAreaSummary> {
+  const padded = zipCodes.map(z => z.padStart(5, '0'));
+  const zips = await prisma.geoZip.findMany({ where: { code: { in: padded } } });
+
+  return {
+    zipCount: zips.length,
+    zips: zips.map(z => ({ id: z.id, code: z.code, latitude: z.latitude, longitude: z.longitude })),
+    queryType: 'zip_list',
+  };
+}
+
+// ── 3. County lookup ──────────────────────────────────────────────────────
+/**
+ * Get all ZIPs in a county. Accepts county name + state code or FIPS.
+ */
+export async function getZipsByCounty(
+  countyName: string,
+  stateCode: string
+): Promise<TradeAreaSummary> {
+  const state = await prisma.geoState.findUnique({ where: { code: stateCode.toUpperCase() } });
+  if (!state) return { zipCount: 0, zips: [], queryType: 'county' };
+
+  const county = await prisma.geoCounty.findFirst({
+    where: { name: countyName.toUpperCase(), stateId: state.id },
+  });
+  if (!county) return { zipCount: 0, zips: [], queryType: 'county' };
+
+  const cities = await prisma.geoCity.findMany({
+    where: { countyId: county.id },
+    include: { cityZips: { include: { zip: true } } },
+  });
+
+  const seen = new Set<string>();
+  const results: GeoZipResult[] = [];
+  for (const city of cities) {
+    for (const cz of city.cityZips) {
+      if (seen.has(cz.zip.code)) continue;
+      seen.add(cz.zip.code);
+      results.push({
+        id: cz.zip.id,
+        code: cz.zip.code,
+        latitude: cz.zip.latitude,
+        longitude: cz.zip.longitude,
+        city: city.name,
+        county: county.name,
+        state: stateCode.toUpperCase(),
+      });
+    }
+  }
+
+  return { zipCount: results.length, zips: results, queryType: 'county' };
+}
+
+// ── 4. State lookup ───────────────────────────────────────────────────────
+export async function getZipsByState(stateCode: string): Promise<TradeAreaSummary> {
+  const state = await prisma.geoState.findUnique({ where: { code: stateCode.toUpperCase() } });
+  if (!state) return { zipCount: 0, zips: [], queryType: 'state' };
+
+  const counties = await prisma.geoCounty.findMany({ where: { stateId: state.id }, select: { id: true } });
+  const countyIds = counties.map(c => c.id);
+
+  const cities = await prisma.geoCity.findMany({
+    where: { countyId: { in: countyIds } },
+    include: { cityZips: { include: { zip: true } } },
+  });
+
+  const seen = new Set<string>();
+  const results: GeoZipResult[] = [];
+  for (const city of cities) {
+    for (const cz of city.cityZips) {
+      if (seen.has(cz.zip.code)) continue;
+      seen.add(cz.zip.code);
+      results.push({
+        id: cz.zip.id,
+        code: cz.zip.code,
+        latitude: cz.zip.latitude,
+        longitude: cz.zip.longitude,
+      });
+    }
+  }
+
+  return { zipCount: results.length, zips: results, queryType: 'state' };
+}
+
+// ── 5. City lookup ────────────────────────────────────────────────────────
+export async function getZipsByCity(
+  cityName: string,
+  stateCode: string
+): Promise<TradeAreaSummary> {
+  const state = await prisma.geoState.findUnique({ where: { code: stateCode.toUpperCase() } });
+  if (!state) return { zipCount: 0, zips: [], queryType: 'city' };
+
+  const counties = await prisma.geoCounty.findMany({ where: { stateId: state.id }, select: { id: true } });
+  const countyIds = counties.map(c => c.id);
+
+  const cities = await prisma.geoCity.findMany({
+    where: { name: cityName.toUpperCase(), countyId: { in: countyIds } },
+    include: { cityZips: { include: { zip: true } } },
+  });
+
+  const seen = new Set<string>();
+  const results: GeoZipResult[] = [];
+  for (const city of cities) {
+    for (const cz of city.cityZips) {
+      if (seen.has(cz.zip.code)) continue;
+      seen.add(cz.zip.code);
+      results.push({
+        id: cz.zip.id,
+        code: cz.zip.code,
+        latitude: cz.zip.latitude,
+        longitude: cz.zip.longitude,
+        city: city.name,
+      });
+    }
+  }
+
+  return { zipCount: results.length, zips: results, queryType: 'city' };
+}
+
+// ── 6. Get ZIP details with full hierarchy ────────────────────────────────
+export async function getZipDetails(zipCode: string) {
+  const zip = await prisma.geoZip.findUnique({
+    where: { code: zipCode.padStart(5, '0') },
+    include: {
+      cityZips: {
+        include: {
+          city: {
+            include: {
+              county: {
+                include: { state: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!zip) return null;
+
+  const primaryLink = zip.cityZips.find(cz => cz.isPrimary) || zip.cityZips[0];
+  return {
+    zip: zip.code,
+    latitude: zip.latitude,
+    longitude: zip.longitude,
+    primaryCity: primaryLink?.city.name ?? null,
+    county: primaryLink?.city.county.name ?? null,
+    countyFips: primaryLink?.city.county.fipsCode ?? null,
+    state: primaryLink?.city.county.state.code ?? null,
+    stateName: primaryLink?.city.county.state.name ?? null,
+    allCities: zip.cityZips.map(cz => ({
+      name: cz.city.name,
+      isPrimary: cz.isPrimary,
+    })),
+  };
+}
+
+// ── 7. Nearby ZIPs (convenience wrapper) ──────────────────────────────────
+export async function getNearbyZips(
+  zipCode: string,
+  radiusMiles: number = 10,
+  limit: number = 50
+): Promise<GeoZipResult[]> {
+  const result = await getZipsByRadius(zipCode, radiusMiles);
+  return result.zips.slice(0, limit);
+}
+
+// ── 8. Validate ZIP exists in our delivery-point list ─────────────────────
+export async function isValidDeliveryZip(zipCode: string): Promise<boolean> {
+  const count = await prisma.geoZip.count({ where: { code: zipCode.padStart(5, '0') } });
+  return count > 0;
+}
