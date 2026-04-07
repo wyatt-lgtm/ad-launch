@@ -17,6 +17,7 @@ model User {
   confirmationToken String?    @unique
   freeAdsUsed       Int        @default(0)
   paidAdsCount      Int        @default(0)
+  role              String     @default("user") // "user", "admin"
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
   analyses          Analysis[]
@@ -52,4 +53,255 @@ model Ad {
   analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
   @@index([analysisId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RSS INTELLIGENCE SYSTEM — Content Policy
+// ═══════════════════════════════════════════════════════════════
+
+model ContentPolicy {
+  id          String   @id @default(cuid())
+  category    String   @unique  // e.g. "sexual_adult", "political_opinion", "violence_graphic"
+  action      String             // "hard_block", "soft_filter", "allow"
+  label       String?            // Human-readable label: "Sexual / Adult Content"
+  description String?  @db.Text  // Detailed description of what this policy covers
+  keywords    String[] @default([]) // Keyword patterns for fast matching
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RSS INTELLIGENCE SYSTEM — Geography Hierarchy
+// State → County → City ↔ ZIP (many-to-many via GeoCityZip)
+// PostGIS-ready: lat/lng stored as Float, geometry column deferred
+// ═══════════════════════════════════════════════════════════════
+
+model GeoState {
+  id        String      @id @default(cuid())
+  code      String      @unique  // "CO", "TX", "DC"
+  name      String               // "Colorado", "Texas"
+  fipsCode  String?     @unique  // "08", "48"
+  counties  GeoCounty[]
+  createdAt DateTime    @default(now())
+}
+
+model GeoCounty {
+  id        String    @id @default(cuid())
+  name      String             // "El Paso County"
+  fipsCode  String?   @unique  // "08041"
+  stateId   String
+  state     GeoState  @relation(fields: [stateId], references: [id])
+  cities    GeoCity[]
+  createdAt DateTime  @default(now())
+
+  @@index([stateId])
+  @@index([name, stateId])
+}
+
+model GeoCity {
+  id         String       @id @default(cuid())
+  name       String                // "Colorado Springs"
+  countyId   String
+  county     GeoCounty    @relation(fields: [countyId], references: [id])
+  latitude   Float?                // PostGIS-ready centroid
+  longitude  Float?                // PostGIS-ready centroid
+  population Int?                  // For prioritization / coverage targets
+  cityZips   GeoCityZip[]
+  createdAt  DateTime     @default(now())
+
+  @@index([countyId])
+  @@index([name, countyId])
+}
+
+model GeoZip {
+  id        String       @id @default(cuid())
+  code      String       @unique  // "80903"
+  latitude  Float?
+  longitude Float?
+  cityZips  GeoCityZip[]
+  feedGeos  FeedGeo[]
+  createdAt DateTime     @default(now())
+
+  @@index([code])
+}
+
+// Many-to-many: a ZIP can span multiple cities, a city has multiple ZIPs
+model GeoCityZip {
+  id        String  @id @default(cuid())
+  cityId    String
+  zipId     String
+  isPrimary Boolean @default(false) // Is this the "main" city for this ZIP?
+  city      GeoCity @relation(fields: [cityId], references: [id])
+  zip       GeoZip  @relation(fields: [zipId], references: [id])
+
+  @@unique([cityId, zipId])
+  @@index([zipId])
+  @@index([cityId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RSS INTELLIGENCE SYSTEM — Feeds
+// ═══════════════════════════════════════════════════════════════
+
+model RssFeed {
+  id                String    @id @default(cuid())
+  url               String    @unique
+  title             String?
+  description       String?   @db.Text
+  siteUrl           String?            // Homepage of the source
+  language          String?            // "en", "es" — ISO 639-1
+  sourceType        String    @default("unknown")
+    // local_news, gov_meeting, event, weather, school, community,
+    // chamber_of_commerce, police_blotter, sports_local, lifestyle,
+    // church, library, parks_rec, real_estate, local_business, unknown
+  sourceQuality     String    @default("unverified")
+    // official, trusted, community, aggregator, unverified
+  status            String    @default("pending")
+    // pending, active, stale, broken, blocked, retired
+
+  // Scoring
+  freshnessScore    Float?             // 0-100
+  qualityScore      Float?             // 0-100
+  lastFetchedAt     DateTime?
+  lastItemDate      DateTime?          // Most recent item publish date
+  fetchErrorCount   Int       @default(0)
+  consecutiveErrors Int       @default(0)
+  avgItemsPerWeek   Float?             // Publishing frequency
+
+  // Deduplication
+  contentHash       String?            // Hash of feed metadata
+  canonicalUrl      String?            // Resolved URL after redirects
+
+  // Discovery metadata
+  discoveredBy      String?            // "manual", "google_search", "sitemap_crawl", "opml_import"
+  discoveredAt      DateTime  @default(now())
+  verifiedBy        String?            // Admin user ID who verified
+  verifiedAt        DateTime?
+
+  // Tombstone integration — agent that last processed this feed
+  lastAgentRun      String?            // e.g. "tombstone_rss_refresh_2026-04-07"
+  lastAgentRunAt    DateTime?
+
+  notes             String?   @db.Text
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  items             RssItem[]
+  feedGeos          FeedGeo[]
+  feedAudits        FeedAudit[]
+
+  @@index([status])
+  @@index([sourceType])
+  @@index([sourceQuality])
+  @@index([freshnessScore])
+  @@index([lastItemDate])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RSS INTELLIGENCE SYSTEM — Feed ↔ Geography (many-to-many)
+// Separate confirmed vs inferred coverage with confidence scores
+// ═══════════════════════════════════════════════════════════════
+
+model FeedGeo {
+  id           String   @id @default(cuid())
+  feedId       String
+  zipId        String
+  coverageType String   // "confirmed" or "inferred"
+  confidence   Float    @default(0.5) // 0.0–1.0
+  source       String?  // How determined: "manual", "domain_geo", "content_nlp", "about_page"
+  feed         RssFeed  @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  zip          GeoZip   @relation(fields: [zipId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([feedId, zipId])
+  @@index([zipId])
+  @@index([feedId])
+  @@index([coverageType])
+  @@index([confidence])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RSS INTELLIGENCE SYSTEM — Items (individual articles/entries)
+// ═══════════════════════════════════════════════════════════════
+
+model RssItem {
+  id              String   @id @default(cuid())
+  feedId          String
+  guid            String            // RSS guid or link — dedupe key
+  title           String?
+  description     String?  @db.Text
+  link            String?
+  pubDate         DateTime?
+  author          String?
+  imageUrl        String?           // Extracted media/enclosure image
+
+  // Content classification
+  contentHash     String?           // Hash for cross-feed dedupe
+  categories      String[] @default([]) // Tags from RSS + our classification
+
+  // Filtering
+  filterStatus    String   @default("pending")
+    // pending, approved, blocked, manual_review
+  filterReason    String?  @db.Text  // Why blocked/approved
+  blockedCategory String?            // Which policy category triggered block
+
+  // Relevance
+  relevanceScore  Float?             // 0-100, local relevance
+
+  // Tombstone integration — flag for agent consumption
+  usedInPost      Boolean  @default(false) // Has Tombstone creative workflow used this?
+  usedAt          DateTime?                // When it was consumed
+  postReference   String?                  // Reference ID back to generated social post
+
+  fetchedAt       DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  feed            RssFeed    @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  itemAudits      ItemAudit[]
+
+  @@unique([feedId, guid])
+  @@index([feedId])
+  @@index([pubDate])
+  @@index([filterStatus])
+  @@index([contentHash])
+  @@index([usedInPost])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RSS INTELLIGENCE SYSTEM — Audit Trail
+// Every content decision and feed change is logged
+// ═══════════════════════════════════════════════════════════════
+
+model FeedAudit {
+  id          String   @id @default(cuid())
+  feedId      String
+  action      String   // "status_change", "geo_assigned", "geo_removed", "quality_recalc", "manual_override", "agent_processed"
+  oldValue    String?  @db.Text
+  newValue    String?  @db.Text
+  reason      String?  @db.Text
+  performedBy String?  // User ID, "system", or "tombstone:<agent_name>"
+  createdAt   DateTime @default(now())
+  feed        RssFeed  @relation(fields: [feedId], references: [id], onDelete: Cascade)
+
+  @@index([feedId])
+  @@index([createdAt])
+  @@index([action])
+}
+
+model ItemAudit {
+  id          String   @id @default(cuid())
+  itemId      String
+  action      String   // "auto_blocked", "auto_approved", "manual_approved", "manual_blocked", "reclassified", "used_in_post"
+  category    String?  // Content policy category that triggered action
+  confidence  Float?   // Model confidence for auto-decisions
+  reason      String?  @db.Text
+  performedBy String?  // User ID, "system", or "tombstone:<agent_name>"
+  createdAt   DateTime @default(now())
+  item        RssItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@index([createdAt])
+  @@index([action])
 }
