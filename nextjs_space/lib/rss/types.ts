@@ -39,6 +39,14 @@ export const SOURCE_QUALITY_LEVELS = [
 ] as const;
 export type SourceQuality = (typeof SOURCE_QUALITY_LEVELS)[number];
 
+export const GEO_SCOPES = [
+  'local',      // ZIP-level via FeedGeo table
+  'state',      // all ZIPs in pilotState
+  'national',   // included in ALL trade area queries
+  'weather',    // state-level weather; matches pilotState
+] as const;
+export type GeoScope = (typeof GEO_SCOPES)[number];
+
 export const FEED_STATUSES = [
   'pending',   // discovered, not yet validated
   'active',    // validated + fresh

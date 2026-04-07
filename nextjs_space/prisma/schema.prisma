@@ -182,6 +182,13 @@ model RssFeed {
   verifiedBy        String?            // Admin user ID who verified
   verifiedAt        DateTime?
 
+  // Geo scope — how this feed maps to geography at query time
+  geoScope          String    @default("local")
+    // local    → uses FeedGeo join (ZIP-level)
+    // state    → matches by pilotState (all ZIPs in that state)
+    // national → included in ALL trade area queries
+    // weather  → state-level weather; matches pilotState
+
   // Tombstone integration — agent that last processed this feed
   lastAgentRun      String?            // e.g. "tombstone_rss_refresh_2026-04-07"
   lastAgentRunAt    DateTime?
@@ -199,6 +206,8 @@ model RssFeed {
   @@index([sourceQuality])
   @@index([freshnessScore])
   @@index([lastItemDate])
+  @@index([geoScope])
+  @@index([geoScope, status])
 }
 
 // ═══════════════════════════════════════════════════════════════
