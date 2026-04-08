@@ -143,19 +143,37 @@ export default function SocialDashboard() {
     setScoutError(null);
     setScoutResult(null);
     try {
-      const linkedPlatforms = accounts.filter(a => a.isActive).map(a => a.platform);
-      const res = await fetch('/api/rss/clark-kent', {
+      // Step 1: Clark Kent gathers local intelligence (scout only — no post creation)
+      const scoutRes = await fetch('/api/rss/clark-kent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const scoutData = await scoutRes.json();
+      if (!scoutRes.ok) throw new Error(scoutData.error || 'Scout failed');
+
+      setScoutResult({
+        message: `Scout brief gathered: ${scoutData.meta?.rssItemCount ?? 0} local news items, ${scoutData.meta?.eventCount ?? 0} upcoming events. Tombstone creative workflow will generate posts with artwork.`,
+        meta: scoutData.meta,
+      });
+
+      // Step 2: Send scout brief to Tombstone for creative processing
+      // This creates a social mission that Zig Ziglar → Ogilvy → Don → Andy → Claude will process
+      const tombstoneRes = await fetch('/api/social/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          platforms: linkedPlatforms.length > 0 ? linkedPlatforms : ['facebook', 'instagram'],
-          postCount: 3,
+          scoutBrief: scoutData.brief,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Scout failed');
-      setScoutResult(data);
-      await fetchPosts();
+      const tombstoneData = await tombstoneRes.json();
+      if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
+
+      setScoutResult({
+        message: `Scout brief sent to creative team. ${tombstoneData.taskCount ?? 0} tasks queued — posts with artwork will appear when complete.`,
+        meta: scoutData.meta,
+        socialMissionId: tombstoneData.socialMissionId,
+      });
     } catch (e: any) {
       console.error('Scout error:', e);
       setScoutError(e.message);
@@ -291,11 +309,18 @@ export default function SocialDashboard() {
             <Sparkles className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
             <div>
               <p className="font-medium text-green-800">
-                {scoutResult.posts?.length || 0} new posts created!
+                {scoutResult.message || 'Scout brief sent to creative team!'}
               </p>
-              <p className="text-sm text-green-600 mt-0.5">
-                {scoutResult.lanes ? `📡 ${scoutResult.lanes.rss} local news • 🌐 ${scoutResult.lanes.website} website • 🎉 ${scoutResult.lanes.holiday} holiday` : `${scoutResult.posts?.length || 0} posts`}
-              </p>
+              {scoutResult.meta && (
+                <p className="text-sm text-green-600 mt-0.5">
+                  📡 {scoutResult.meta.rssItemCount ?? 0} local news items • 🎉 {scoutResult.meta.eventCount ?? 0} upcoming events • 🏢 {scoutResult.meta.businessName || 'Business'}
+                </p>
+              )}
+              {scoutResult.socialMissionId && (
+                <p className="text-xs text-green-500 mt-1">
+                  Creative workflow started — posts with artwork will appear when the team finishes.
+                </p>
+              )}
             </div>
             <button onClick={() => setScoutResult(null)} className="ml-auto text-green-400 hover:text-green-600">
               <XCircle className="w-4 h-4" />
@@ -494,6 +519,18 @@ export default function SocialDashboard() {
                         </div>
                       ) : (
                         <p className="text-sm text-gray-800 leading-relaxed mb-3 whitespace-pre-wrap">{post.caption}</p>
+                      )}
+
+                      {/* Post image (from Tombstone creative workflow) */}
+                      {post.imageUrl && (
+                        <div className="relative w-full aspect-video bg-gray-100 rounded-lg overflow-hidden mb-3">
+                          <img
+                            src={post.imageUrl}
+                            alt={post.newsAngle || 'Social post image'}
+                            className="w-full h-full object-cover"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        </div>
                       )}
 
                       {/* Hashtags */}

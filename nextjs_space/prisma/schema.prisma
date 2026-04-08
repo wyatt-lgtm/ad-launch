@@ -29,8 +29,9 @@ model Analysis {
   id         String   @id @default(cuid())
   userId     String?
   websiteUrl String
-  missionId  String?
-  status     String   @default("pending")
+  missionId        String?
+  socialMissionId  String?   // Tombstone workflow ID for social content (Clark Kent scout → Zig → creative chain)
+  status           String   @default("pending")
   results    Json?    @db.JsonB
   seoData    Json?    @db.JsonB
   postingPlan Json?   @db.JsonB
@@ -53,6 +54,7 @@ model Analysis {
 
   @@index([userId])
   @@index([missionId])
+  @@index([socialMissionId])
   @@index([businessZip])
   @@index([businessState])
 }

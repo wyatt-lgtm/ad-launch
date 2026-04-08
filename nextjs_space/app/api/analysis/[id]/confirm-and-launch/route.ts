@@ -2,12 +2,17 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { createMissions } from '@/lib/tombstone';
+import { createMissions, createSocialMissions } from '@/lib/tombstone';
 
 /**
  * POST /api/analysis/[id]/confirm-and-launch
- * Step 2: User confirms location, then Tombstone launches.
- * Also fires Clark Kent social scout in the background.
+ * Step 2: User confirms location, then:
+ *   1. Clark Kent scouts local intel (RSS + events + business context)
+ *   2. Scout brief is sent to Tombstone as a social content mission
+ *   3. Tombstone ad generation launches in parallel
+ *
+ * Clark Kent is SCOUT ONLY — Tombstone's creative chain
+ * (Zig → Ogilvy → Don → Andy → Claude) produces the actual posts.
  */
 export async function POST(
   request: NextRequest,
@@ -51,27 +56,65 @@ export async function POST(
 
     console.log(`[confirm-and-launch] Location confirmed for ${analysisId}: ${name} in ${city}, ${state} ${zip}`);
 
-    // Fire Clark Kent social scout BEFORE Tombstone (so local news is ready when ads finish)
+    // ── Clark Kent Scout → Tombstone Social Mission ─────────────────
+    // Fire scout + social mission in background (don't block ad launch)
     const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
     if (analysis.userId && zip) {
-      console.log(`[confirm-and-launch] Firing Clark Kent for ${analysisId} (ZIP: ${zip})`);
-      fetch(`${baseUrl}/api/rss/clark-kent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          analysisId,
-          zip,
-          _internalUserId: analysis.userId,
-        }),
-      }).catch((err) => {
-        console.error('[confirm-and-launch] Clark Kent trigger failed:', err?.message);
-      });
+      console.log(`[confirm-and-launch] Firing Clark Kent scout for ${analysisId} (ZIP: ${zip})`);
+
+      // Run scout in background, then send brief to Tombstone
+      (async () => {
+        try {
+          // Step 1: Clark Kent gathers intelligence
+          const scoutRes = await fetch(`${baseUrl}/api/rss/clark-kent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              analysisId,
+              zip,
+              _internalUserId: analysis.userId,
+            }),
+          });
+
+          if (!scoutRes.ok) {
+            console.error(`[confirm-and-launch] Clark Kent scout failed: ${scoutRes.status}`);
+            return;
+          }
+
+          const scoutData = await scoutRes.json();
+          const scoutSummary = scoutData?.brief?.scoutSummary;
+
+          if (!scoutSummary) {
+            console.error('[confirm-and-launch] Clark Kent returned no scout summary');
+            return;
+          }
+
+          console.log(`[confirm-and-launch] Scout brief ready (${scoutData.meta?.rssItemCount} RSS items, ${scoutData.meta?.eventCount} events)`);
+
+          // Step 2: Send scout brief to Tombstone as social content mission
+          const websiteUrl = analysis.websiteUrl;
+          const socialResult = await createSocialMissions(websiteUrl, scoutSummary);
+
+          if (socialResult.success) {
+            const socialMissionId = socialResult.workflowIds.join(',');
+            await prisma.analysis.update({
+              where: { id: analysisId },
+              data: { socialMissionId },
+            });
+            console.log(`[confirm-and-launch] Social mission created: ${socialMissionId} (${socialResult.allTaskIds.length} tasks)`);
+          } else {
+            console.error('[confirm-and-launch] Tombstone social mission creation failed');
+          }
+        } catch (err: any) {
+          console.error('[confirm-and-launch] Scout → social pipeline error:', err?.message);
+        }
+      })();
     }
 
-    // Launch Tombstone ad generation
-    console.log(`[confirm-and-launch] Launching Tombstone for: ${analysis.websiteUrl}`);
+    // ── Launch Tombstone ad generation (parallel) ───────────────────
+    console.log(`[confirm-and-launch] Launching Tombstone ads for: ${analysis.websiteUrl}`);
     const result = await createMissions(analysis.websiteUrl);
-    console.log(`[confirm-and-launch] Missions created:`, {
+    console.log(`[confirm-and-launch] Ad missions created:`, {
       success: result.success,
       workflowIds: result.workflowIds,
       taskCount: result.allTaskIds.length,

@@ -54,6 +54,54 @@ export async function createMissions(websiteUrl: string) {
   };
 }
 
+/**
+ * Create a social content mission that sends Clark Kent's scout brief to Tombstone.
+ * Zig Ziglar receives the local intel and creates marketing angles,
+ * then the full creative chain produces social posts with artwork.
+ *
+ * The scout brief is embedded in the command text so Wyatt can route it
+ * to Zig with full local context.
+ */
+export async function createSocialMissions(
+  websiteUrl: string,
+  scoutSummary: string,
+  options: { postCount?: number; platforms?: string[] } = {},
+) {
+  const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+  const postCount = options.postCount || 9;
+  const platforms = options.platforms || ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'];
+
+  // Build the Tombstone command with scout intel embedded
+  const command = [
+    `Create ${postCount} social media posts for ${normalizedUrl} targeting these platforms: ${platforms.join(', ')}.`,
+    `Use the following local intelligence from Clark Kent's scout report to inform the content strategy:`,
+    ``,
+    `--- SCOUT BRIEF ---`,
+    scoutSummary,
+    `--- END SCOUT BRIEF ---`,
+    ``,
+    `Create 3 lanes of content:`,
+    `  Lane 1 (Local News): 3 posts leveraging the local RSS headlines above — community news a business owner would share`,
+    `  Lane 2 (Business): 3 promotional posts about the business — who they are, what they offer, why choose them`,
+    `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
+    ``,
+    `Each post needs: caption, hashtags, an image/artwork, and the target platforms.`,
+    `Posts should feel authentic — like a real small business owner wrote them.`,
+  ].join('\n');
+
+  console.log(`[tombstone] Creating social content mission for: ${normalizedUrl} (${postCount} posts)`);
+
+  const result = await sendCommand(command);
+
+  return {
+    success: !!result.workflowId,
+    workflowIds: result.workflowId ? [result.workflowId] : [],
+    allTaskIds: result.taskIds,
+    postCount,
+    platforms,
+  };
+}
+
 // Legacy single-mission creator (kept for backward compat)
 export async function createMission(websiteUrl: string) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -336,7 +384,104 @@ export async function getTaskOutputs(taskId: number): Promise<any[]> {
   } catch { return []; }
 }
 
-// Legacy exports for backward compatibility
+/**
+ * Get social content results from a completed social workflow.
+ * Parses Tombstone task outputs to extract social posts with captions,
+ * hashtags, images, and metadata for SocialPost storage.
+ */
+export async function getSocialWorkflowResults(workflowIds: string[]) {
+  try {
+    const res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store' });
+    const allTasks = await res.json().catch(() => []);
+    if (!Array.isArray(allTasks)) return { success: false, posts: [], status: 'error' };
+
+    const wfSet = new Set(workflowIds);
+    const ourTasks = allTasks.filter((t: any) => wfSet.has(t?.workflow_id));
+
+    if (ourTasks.length === 0) return { success: false, posts: [], status: 'unknown' };
+
+    // Check overall status
+    const statuses = ourTasks.map((t: any) => (t?.status ?? '').toLowerCase());
+    const allComplete = statuses.every((s: string) => s === 'complete' || s === 'completed');
+    const anyFailed = statuses.some((s: string) => s === 'failed' || s === 'error');
+    const anyActive = statuses.some((s: string) =>
+      ['in progress', 'in_progress', 'running', 'claimed', 'ready for pickup'].includes(s)
+    );
+
+    let overallStatus = 'processing';
+    if (allComplete) overallStatus = 'completed';
+    else if (anyFailed && !anyActive) overallStatus = 'error';
+    else if (anyActive) overallStatus = 'generating';
+
+    if (overallStatus !== 'completed') {
+      return { success: true, posts: [], status: overallStatus };
+    }
+
+    // Extract social posts from completed tasks
+    const posts: any[] = [];
+
+    for (const task of ourTasks) {
+      const dept = (task?.department ?? '').toLowerCase();
+      const taskStatus = (task?.status ?? '').toLowerCase();
+      if (taskStatus !== 'complete' && taskStatus !== 'completed') continue;
+
+      // Conversion Assembly produces final social post assets
+      if (dept.includes('conversion') || dept.includes('assembly')) {
+        const outputs = await getTaskOutputs(task.id);
+        for (const out of outputs) {
+          try {
+            const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+
+            // Multi-asset mode: assets array with individual posts
+            const assets = parsed?.assets || parsed?.posts || [];
+            if (Array.isArray(assets) && assets.length > 0) {
+              for (const asset of assets) {
+                const artifactPath = asset?.artifact_path ?? asset?.image_path ?? '';
+                const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : null;
+                posts.push({
+                  caption: asset?.caption ?? asset?.body_copy ?? asset?.body ?? '',
+                  hashtags: asset?.hashtags ?? [],
+                  imageUrl,
+                  imagePrompt: asset?.image_prompt ?? asset?.render_prompt ?? null,
+                  postType: asset?.post_type ?? asset?.lane ?? 'general',
+                  sourceType: asset?.source_type ?? asset?.lane ?? null,
+                  newsAngle: asset?.news_angle ?? asset?.angle ?? null,
+                  patternType: asset?.pattern_type ?? asset?.lane ?? null,
+                  rssItemTitle: asset?.rss_item_title ?? null,
+                  rssItemLink: asset?.rss_item_link ?? null,
+                  platforms: asset?.platforms ?? ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
+                });
+              }
+            } else if (parsed?.caption || parsed?.body_copy) {
+              // Single-post fallback
+              const artifactPath = parsed?.artifact_path ?? '';
+              const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(task.id);
+              posts.push({
+                caption: parsed.caption ?? parsed.body_copy ?? '',
+                hashtags: parsed.hashtags ?? [],
+                imageUrl,
+                imagePrompt: parsed.image_prompt ?? null,
+                postType: parsed.post_type ?? 'general',
+                sourceType: parsed.source_type ?? null,
+                newsAngle: parsed.news_angle ?? null,
+                patternType: parsed.pattern_type ?? null,
+                rssItemTitle: null,
+                rssItemLink: null,
+                platforms: parsed.platforms ?? ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
+              });
+            }
+          } catch { /* skip unparseable outputs */ }
+        }
+      }
+    }
+
+    return { success: true, posts, status: 'completed' };
+  } catch (err: any) {
+    console.error('Social workflow results error:', err?.message);
+    return { success: false, posts: [], status: 'error' };
+  }
+}
+
 export function extractAdsFromResults(tasks: any[]) {
   return { ads: [], seoData: null, postingPlan: null };
 }

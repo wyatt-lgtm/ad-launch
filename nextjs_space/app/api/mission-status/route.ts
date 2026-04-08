@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getMultiWorkflowStatus, getWorkflowResults } from '@/lib/tombstone';
+import { getMultiWorkflowStatus, getWorkflowResults, getSocialWorkflowResults } from '@/lib/tombstone';
 
 const TOMBSTONE_API = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
@@ -85,6 +85,45 @@ export async function GET(request: NextRequest) {
           confirmed: analysis.geoConfirmed ?? false,
         };
       }
+      // Check if social workflow is still running
+      let socialStatus = 'completed';
+      if (analysis.socialMissionId) {
+        const socialWfIds = analysis.socialMissionId.split(',').filter(Boolean);
+        try {
+          const sr = await getSocialWorkflowResults(socialWfIds);
+          socialStatus = sr.status;
+          // Store posts if they just completed and haven't been stored yet
+          if (sr.status === 'completed' && sr.posts.length > 0 && analysis.userId) {
+            const existingCount = await prisma.socialPost.count({ where: { analysisId: analysis.id } });
+            if (existingCount === 0) {
+              const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'];
+              for (const post of sr.posts) {
+                await prisma.socialPost.create({
+                  data: {
+                    userId: analysis.userId,
+                    analysisId: analysis.id,
+                    caption: post.caption || '',
+                    hashtags: post.hashtags || [],
+                    imageUrl: post.imageUrl || null,
+                    imagePrompt: post.imagePrompt || null,
+                    sourceType: post.sourceType || null,
+                    newsAngle: post.newsAngle || null,
+                    platforms: post.platforms || ALL_PLATFORMS,
+                    postType: post.postType || 'general',
+                    status: 'pending_approval',
+                    tradeAreaZip: analysis.businessZip || null,
+                    patternType: post.patternType || null,
+                    rssItemTitle: post.rssItemTitle || null,
+                    rssItemLink: post.rssItemLink || null,
+                  },
+                });
+              }
+              console.log(`[mission-status] Late-stored ${sr.posts.length} social posts`);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
       return NextResponse.json({
         status: 'completed',
         ads: freshAds,
@@ -93,6 +132,7 @@ export async function GET(request: NextRequest) {
         googleAdsData: cachedResults.googleAds ?? null,
         websiteConceptData: cachedResults.websiteConcept ?? null,
         budgetData: cachedResults.budget ?? null,
+        socialStatus,
         tasks: [], // No need to poll tasks anymore
       });
     }
@@ -228,8 +268,44 @@ export async function GET(request: NextRequest) {
           console.error('[mission-status] Failed to trigger image upgrade:', err?.message);
         });
 
-        // Note: Clark Kent social scout now fires from /api/analysis/[id]/confirm-and-launch
-        // BEFORE Tombstone starts, so local news posts are ready when ads finish.
+        // Check social workflow progress (runs in parallel with ads)
+        let socialStatus = 'pending';
+        if (analysis.socialMissionId) {
+          const socialWorkflowIds = analysis.socialMissionId.split(',').filter(Boolean);
+          try {
+            const socialResult = await getSocialWorkflowResults(socialWorkflowIds);
+            socialStatus = socialResult.status;
+
+            if (socialResult.status === 'completed' && socialResult.posts.length > 0) {
+              // Store Tombstone-generated social posts
+              const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'];
+              for (const post of socialResult.posts) {
+                await prisma.socialPost.create({
+                  data: {
+                    userId: analysis.userId!,
+                    analysisId: analysis.id,
+                    caption: post.caption || '',
+                    hashtags: post.hashtags || [],
+                    imageUrl: post.imageUrl || null,
+                    imagePrompt: post.imagePrompt || null,
+                    sourceType: post.sourceType || null,
+                    newsAngle: post.newsAngle || null,
+                    platforms: post.platforms || ALL_PLATFORMS,
+                    postType: post.postType || 'general',
+                    status: 'pending_approval',
+                    tradeAreaZip: analysis.businessZip || null,
+                    patternType: post.patternType || null,
+                    rssItemTitle: post.rssItemTitle || null,
+                    rssItemLink: post.rssItemLink || null,
+                  },
+                });
+              }
+              console.log(`[mission-status] Stored ${socialResult.posts.length} social posts from Tombstone`);
+            }
+          } catch (err: any) {
+            console.error('[mission-status] Social workflow check failed:', err?.message);
+          }
+        }
 
         return NextResponse.json({
           status: 'completed',
@@ -239,6 +315,7 @@ export async function GET(request: NextRequest) {
           googleAdsData,
           websiteConceptData,
           budgetData,
+          socialStatus,
           tasks: statusResult.tasks ?? [],
         });
       } catch (err: any) {

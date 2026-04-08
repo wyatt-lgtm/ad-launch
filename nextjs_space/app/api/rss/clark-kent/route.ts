@@ -6,32 +6,50 @@ import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { generateContentBrief } from '@/lib/rss/trade-area-feed';
 import type { ContentBrief } from '@/lib/rss/trade-area-feed';
-import { getUpcomingEvents } from '@/lib/social/upcoming-events';
-
-const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'];
-
-const LLM_URL = 'https://apps.abacus.ai/v1/chat/completions';
+import { getUpcomingEvents, type UpcomingEvent } from '@/lib/social/upcoming-events';
 
 /**
- * Clark Kent — Social Post Scout (3-Lane Orchestrator)
+ * Clark Kent — Social Scout (Intelligence Gathering ONLY)
  *
  * POST /api/rss/clark-kent
  * Body: { analysisId?, zip?, radius? }
  *
- * Generates 9 posts across 3 lanes:
- *   Lane 1 (Clark Kent):  3 posts from RSS feeds (local news)
- *   Lane 2 (Creative):    3 posts from business website/analysis
- *   Lane 3 (Calendar):    3 posts from upcoming holidays & events
+ * Gathers local intelligence and returns a structured scout brief.
+ * Does NOT generate social posts — that's Tombstone's creative workflow
+ * (Zig Ziglar → Ogilvy → Don Draper → Andy Warhol → Claude Hopkins).
  *
- * Every post targets ALL 6 platforms.
+ * Returns:
+ *   - rssBrief: ContentBrief from trade area RSS feeds
+ *   - upcomingEvents: Holidays/events in the next 90 days
+ *   - businessContext: Name, URL, location, industry, value props
+ *   - scoutSummary: Human-readable briefing text for Tombstone agents
  */
+
+export interface ScoutBrief {
+  generatedAt: string;
+  businessContext: {
+    businessName: string;
+    websiteUrl: string;
+    businessCity: string;
+    businessState: string;
+    businessZip: string;
+    industry: string;
+    coreOffer: string;
+    targetCustomer: string;
+    valuePropositions: string[];
+  };
+  rssBrief: ContentBrief | null;
+  upcomingEvents: UpcomingEvent[];
+  scoutSummary: string; // Human-readable briefing for Tombstone command
+}
+
 export async function POST(req: NextRequest) {
   const start = Date.now();
   try {
     const body = await req.json();
     const { analysisId, zip: directZip, radius = 25, _internalUserId } = body;
 
-    // Auth: allow internal server-to-server calls with _internalUserId, otherwise require session
+    // Auth: allow internal server-to-server calls with _internalUserId
     let userId: string;
     if (_internalUserId) {
       userId = _internalUserId;
@@ -100,75 +118,64 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const bizContext = {
+    // ── Extract business intel from analysis results ───────────────────
+    const bizSummary = analysisResults?.research?.business_summary || {};
+    const industry = bizSummary.industry || bizSummary.category || '';
+    const coreOffer = bizSummary.core_offer || bizSummary.services || '';
+    const targetCustomer = bizSummary.target_customer || bizSummary.audience || '';
+    const rawValueProps = bizSummary.value_propositions || bizSummary.differentiators || [];
+    const valuePropositions = Array.isArray(rawValueProps) ? rawValueProps : [rawValueProps].filter(Boolean);
+
+    // ── Gather RSS intelligence ────────────────────────────────────────
+    let rssBrief: ContentBrief | null = null;
+    try {
+      rssBrief = await generateContentBrief(businessZip, radius, { days: 5, limit: 30 });
+      if (rssBrief.summary.totalItems === 0) rssBrief = null;
+    } catch (err) {
+      console.error('[Clark Kent] RSS brief error:', err);
+    }
+
+    // ── Gather upcoming events ─────────────────────────────────────────
+    const upcomingEvents = getUpcomingEvents();
+
+    // ── Build business context ─────────────────────────────────────────
+    const businessContext = {
       businessName: businessName || 'Local Business',
       websiteUrl: websiteUrl || '',
       businessCity: businessCity || '',
       businessState: businessState || '',
       businessZip: businessZip!,
+      industry,
+      coreOffer,
+      targetCustomer,
+      valuePropositions,
     };
 
-    // ── Run all 3 lanes in parallel ────────────────────────────────────
-    const [rssPosts, websitePosts, holidayPosts] = await Promise.all([
-      generateRssPosts(businessZip!, radius, bizContext),
-      generateWebsitePosts(bizContext, analysisResults, seoData),
-      generateHolidayPosts(bizContext),
-    ]);
+    // ── Build human-readable scout summary for Tombstone ───────────────
+    const scoutSummary = buildScoutSummary(businessContext, rssBrief, upcomingEvents);
 
-    // ── Save all 9 posts ───────────────────────────────────────────────
-    const allPosts = [
-      ...rssPosts.map(p => ({ ...p, lane: 'rss' as const })),
-      ...websitePosts.map(p => ({ ...p, lane: 'website' as const })),
-      ...holidayPosts.map(p => ({ ...p, lane: 'holiday' as const })),
-    ];
+    const brief: ScoutBrief = {
+      generatedAt: new Date().toISOString(),
+      businessContext,
+      rssBrief,
+      upcomingEvents: upcomingEvents.slice(0, 8),
+      scoutSummary,
+    };
 
-    const createdPosts = [];
-    for (const post of allPosts) {
-      const created = await prisma.socialPost.create({
-        data: {
-          userId,
-          analysisId: resolvedAnalysisId,
-          caption: post.caption,
-          hashtags: post.hashtags,
-          rssItemId: post.rssItemId || null,
-          rssItemTitle: post.rssItemTitle || null,
-          rssItemLink: post.rssItemLink || null,
-          sourceType: post.sourceType || post.lane,
-          newsAngle: post.newsAngle,
-          platforms: ALL_PLATFORMS,
-          postType: post.postType || 'general',
-          status: 'pending_approval',
-          tradeAreaZip: businessZip!,
-          briefScore: post.briefScore || null,
-          patternType: post.patternType || post.lane,
-        },
-      });
-      createdPosts.push(created);
-    }
-
-    // Mark RSS items as used
-    const usedItemIds = createdPosts
-      .map(p => p.rssItemId)
-      .filter((id): id is string => !!id);
-    if (usedItemIds.length > 0) {
-      await prisma.rssItem.updateMany({
-        where: { id: { in: usedItemIds } },
-        data: { usedInPost: true, usedAt: new Date() },
-      });
-    }
+    console.log(`[Clark Kent] Scout brief generated in ${Date.now() - start}ms — ` +
+      `RSS: ${rssBrief?.summary.totalItems ?? 0} items, ` +
+      `Events: ${upcomingEvents.length}, ` +
+      `Business: ${businessContext.businessName}`);
 
     return NextResponse.json({
-      posts: createdPosts,
-      lanes: {
-        rss: rssPosts.length,
-        website: websitePosts.length,
-        holiday: holidayPosts.length,
-      },
+      brief,
       meta: {
         businessZip,
         businessName,
         radiusMiles: radius,
         queryTimeMs: Date.now() - start,
+        rssItemCount: rssBrief?.summary.totalItems ?? 0,
+        eventCount: upcomingEvents.length,
       },
     });
   } catch (error: any) {
@@ -178,226 +185,53 @@ export async function POST(req: NextRequest) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// LANE 1: RSS Feed Posts (Clark Kent's specialty)
+// Build a concise human-readable briefing that gets embedded in the Tombstone
+// command so Zig Ziglar (and downstream agents) have local context.
 // ══════════════════════════════════════════════════════════════════════════════
 
-interface GeneratedPost {
-  caption: string;
-  hashtags: string[];
-  rssItemId?: string;
-  rssItemTitle?: string;
-  rssItemLink?: string;
-  sourceType?: string;
-  newsAngle: string;
-  postType: string;
-  patternType?: string;
-  briefScore?: number;
-}
+function buildScoutSummary(
+  biz: ScoutBrief['businessContext'],
+  rssBrief: ContentBrief | null,
+  events: UpcomingEvent[],
+): string {
+  const lines: string[] = [];
 
-async function generateRssPosts(
-  zip: string,
-  radius: number,
-  biz: { businessName: string; websiteUrl: string }
-): Promise<GeneratedPost[]> {
-  try {
-    const brief = await generateContentBrief(zip, radius, { days: 5, limit: 30 });
-    if (brief.summary.totalItems === 0) return [];
-
-    const headlineSummary = brief.headlines
-      .slice(0, 15)
-      .map((h, i) => `${i + 1}. [ID: ${h.id}] "${h.title}" — ${h.source} (${h.sourceType}, ${h.pubDate?.split('T')[0] || 'recent'})`)
-      .join('\n');
-
-    const patternSummary = brief.patterns
-      .map(p => `• ${p.type}: ${p.description}`)
-      .join('\n');
-
-    const prompt = `You are Clark Kent, a local news scout for small businesses. Pick the 3 BEST local stories and write social media posts a small business owner can share.
-
-BUSINESS: ${biz.businessName} (${biz.websiteUrl || 'local business'})
-TRADE AREA: ${brief.tradeAreaCenter} (${brief.radiusMiles}mi radius)
-
-LOCAL NEWS FEED:
-${headlineSummary}
-
-PATTERNS:
-${patternSummary || '• None'}
-
-RULES:
-- Pick 3 different stories a local business would naturally share
-- Captions: 1-3 sentences, conversational, helpful — NOT salesy
-- 3-5 hashtags each (mix local + topic)
-- Identify the angle: why this matters to local customers
-- Post types: weather_tip, community_event, trending_news, general
-- NO promotional language, NO political opinions, NO controversy
-
-Respond with raw JSON only:
-{"posts": [{"rssItemId": "ID", "rssItemTitle": "headline", "caption": "...", "hashtags": ["#..."], "newsAngle": "why it matters", "postType": "community_event", "patternType": "community_events", "sourceType": "local_news"}]}`;
-
-    const data = await callLLM(prompt);
-    const posts = (data.posts || []).slice(0, 3);
-
-    return posts.map((p: any) => {
-      const matched = brief.headlines.find(h => h.id === p.rssItemId);
-      return {
-        ...p,
-        rssItemLink: matched?.link || null,
-        briefScore: matched?.geoConfidence,
-      };
-    });
-  } catch (err) {
-    console.error('RSS lane error:', err);
-    return [];
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// LANE 2: Website / Business Posts (from analysis data)
-// ══════════════════════════════════════════════════════════════════════════════
-
-async function generateWebsitePosts(
-  biz: { businessName: string; websiteUrl: string; businessCity: string; businessState: string },
-  analysisResults: any,
-  seoData: any
-): Promise<GeneratedPost[]> {
-  try {
-    // Extract useful context from analysis
-    const ads = analysisResults?.ads || [];
-    const adCaptions = ads.slice(0, 3).map((a: any) => a.caption || a.headline || '').filter(Boolean);
-    const seoScore = seoData?.score || 'N/A';
-    const seoGrade = seoData?.grade || 'N/A';
-    const bizSummary = analysisResults?.research?.business_summary || {};
-    const coreOffer = bizSummary.core_offer || bizSummary.services || '';
-    const targetCustomer = bizSummary.target_customer || bizSummary.audience || '';
-    const valueProps = bizSummary.value_propositions || bizSummary.differentiators || [];
-    const industry = bizSummary.industry || bizSummary.category || '';
-
-    const prompt = `You are a creative social media manager for a small business. Create 3 social posts that promote the business itself — its story, what it offers, and why the community should care.
-
-BUSINESS CONTEXT:
-- Name: ${biz.businessName}
-- Website: ${biz.websiteUrl}
-- Location: ${biz.businessCity}, ${biz.businessState}
-- Industry: ${industry || 'local business'}
-- Core Offer: ${coreOffer || 'products and services'}
-- Target Customer: ${targetCustomer || 'local community'}
-- Value Propositions: ${Array.isArray(valueProps) ? valueProps.join(', ') : valueProps || 'quality local service'}
-${adCaptions.length > 0 ? `- Example Ad Copy (for tone reference): "${adCaptions[0]}"` : ''}
-
-CREATE 3 POSTS:
-1. A "who we are" post — introduce the business, its mission or story
-2. A "what we offer" post — highlight a key product/service with benefits
-3. A "why choose us" post — social proof, community connection, or a unique differentiator
-
-RULES:
-- Captions: 2-4 sentences, warm and authentic, NOT corporate
-- Should feel like a real small business owner wrote them
-- 3-5 hashtags each (mix of industry + local + brand)
-- Light CTAs are OK ("Stop by", "Check us out", "Link in bio")
-- Include the city/area name naturally
-
-Respond with raw JSON only:
-{"posts": [{"caption": "...", "hashtags": ["#..."], "newsAngle": "what makes this post compelling", "postType": "promotion", "sourceType": "website"}]}`;
-
-    const data = await callLLM(prompt);
-    return (data.posts || []).slice(0, 3).map((p: any) => ({
-      caption: p.caption,
-      hashtags: p.hashtags || [],
-      newsAngle: p.newsAngle || 'Business promotion',
-      postType: p.postType || 'promotion',
-      sourceType: 'website',
-      patternType: 'website',
-    }));
-  } catch (err) {
-    console.error('Website lane error:', err);
-    return [];
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// LANE 3: Holiday & Event Posts (next 90 days)
-// ══════════════════════════════════════════════════════════════════════════════
-
-async function generateHolidayPosts(
-  biz: { businessName: string; websiteUrl: string; businessCity: string; businessState: string }
-): Promise<GeneratedPost[]> {
-  try {
-    const events = getUpcomingEvents();
-    if (events.length === 0) return [];
-
-    const eventList = events
-      .slice(0, 8)
-      .map((e, i) => `${i + 1}. ${e.name} (${e.date}) — Ideas: ${e.ideas}`)
-      .join('\n');
-
-    const prompt = `You are a creative social media manager for a small business. Create 3 social posts tied to UPCOMING holidays or events in the next 90 days.
-
-BUSINESS CONTEXT:
-- Name: ${biz.businessName}
-- Website: ${biz.websiteUrl}
-- Location: ${biz.businessCity}, ${biz.businessState}
-
-UPCOMING EVENTS (next 90 days):
-${eventList}
-
-CREATE 3 POSTS:
-- Pick the 3 most relevant/impactful events for a local business
-- Tie the business naturally to each event (NOT forced)
-- Mix: 1 celebratory/fun, 1 promotional/seasonal offer, 1 community/gratitude
-
-RULES:
-- Captions: 2-4 sentences, festive and timely, appropriate to the holiday
-- Should feel authentic — a real business getting into the spirit
-- 3-5 hashtags each (holiday name + local + business)
-- Mention the specific date or time frame
-- Light CTAs are OK for the promotional one
-
-Respond with raw JSON only:
-{"posts": [{"caption": "...", "hashtags": ["#..."], "newsAngle": "why this event matters for the business", "postType": "seasonal", "sourceType": "holiday", "eventName": "the holiday name"}]}`;
-
-    const data = await callLLM(prompt);
-    return (data.posts || []).slice(0, 3).map((p: any) => ({
-      caption: p.caption,
-      hashtags: p.hashtags || [],
-      newsAngle: p.newsAngle || 'Seasonal content',
-      postType: p.postType || 'seasonal',
-      sourceType: 'holiday',
-      patternType: 'holiday',
-      rssItemTitle: p.eventName || null,
-    }));
-  } catch (err) {
-    console.error('Holiday lane error:', err);
-    return [];
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Shared LLM caller
-// ══════════════════════════════════════════════════════════════════════════════
-
-async function callLLM(prompt: string): Promise<any> {
-  const response = await fetch(LLM_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.ABACUSAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4.1-mini',
-      messages: [{ role: 'user', content: prompt }],
-      response_format: { type: 'json_object' },
-      max_tokens: 2000,
-      temperature: 0.7,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`LLM API error: ${response.status} — ${errText}`);
+  lines.push(`BUSINESS: ${biz.businessName} (${biz.websiteUrl || 'local business'})`);
+  lines.push(`LOCATION: ${biz.businessCity}, ${biz.businessState} ${biz.businessZip}`);
+  if (biz.industry) lines.push(`INDUSTRY: ${biz.industry}`);
+  if (biz.coreOffer) lines.push(`CORE OFFER: ${biz.coreOffer}`);
+  if (biz.targetCustomer) lines.push(`TARGET CUSTOMER: ${biz.targetCustomer}`);
+  if (biz.valuePropositions.length > 0) {
+    lines.push(`VALUE PROPS: ${biz.valuePropositions.join('; ')}`);
   }
 
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error('LLM returned empty content');
-  return JSON.parse(content);
+  // RSS headlines
+  if (rssBrief && rssBrief.headlines.length > 0) {
+    lines.push('');
+    lines.push(`LOCAL NEWS (${rssBrief.summary.totalItems} items from ${rssBrief.summary.feedsMatched} feeds, ${rssBrief.radiusMiles}mi radius):`);
+    for (const h of rssBrief.headlines.slice(0, 12)) {
+      lines.push(`  • [${h.sourceType}] "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})`);
+    }
+    // Patterns
+    if (rssBrief.patterns.length > 0) {
+      lines.push('PATTERNS:');
+      for (const p of rssBrief.patterns) {
+        lines.push(`  • ${p.type}: ${p.description}`);
+      }
+    }
+  } else {
+    lines.push('');
+    lines.push('LOCAL NEWS: No RSS items found in trade area.');
+  }
+
+  // Upcoming events
+  if (events.length > 0) {
+    lines.push('');
+    lines.push('UPCOMING EVENTS (next 90 days):');
+    for (const e of events.slice(0, 6)) {
+      lines.push(`  • ${e.name} (${e.date}) — Ideas: ${e.ideas}`);
+    }
+  }
+
+  return lines.join('\n');
 }
