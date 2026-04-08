@@ -49,7 +49,7 @@ async function resolveAdImages(ads: any[]): Promise<any[]> {
 }
 import { runSeoAudit } from '@/lib/seo-audit';
 import { extractBusinessAddress, parseGeoString, type ExtractedAddress } from '@/lib/address-extractor';
-import { generateAllAdImages } from '@/lib/generate-ad-image';
+// GPT-5.1 image generation moved to /api/upgrade-ad-images (async, fire-and-forget)
 
 export async function GET(request: NextRequest) {
   try {
@@ -119,13 +119,12 @@ export async function GET(request: NextRequest) {
       });
 
       if (lockResult.count === 0) {
-        // Another request already started completion — wait briefly then return cached results
-        console.log(`[mission-status] analysisId=${analysisId} completion already in progress, returning pending`);
-        // Re-fetch in case it finished
+        // Another request already started completion — check if it finished or timed out
         const refetched = await prisma.analysis.findUnique({
           where: { id: analysisId },
           include: { ads: true },
         });
+
         if (refetched?.status === 'completed' && (refetched.ads?.length ?? 0) > 0) {
           const freshAds = await resolveAdImages(refetched.ads ?? []);
           const cachedResults = (refetched.results ?? {}) as any;
@@ -140,11 +139,26 @@ export async function GET(request: NextRequest) {
             tasks: [],
           });
         }
+
+        // Timeout recovery: if stuck in 'completing' for > 5 minutes, reset to allow retry
+        if (refetched?.status === 'completing' && refetched.updatedAt) {
+          const stuckMs = Date.now() - new Date(refetched.updatedAt).getTime();
+          if (stuckMs > 5 * 60 * 1000) {
+            console.warn(`[mission-status] analysisId=${analysisId} stuck in 'completing' for ${Math.round(stuckMs / 1000)}s — resetting to processing`);
+            await prisma.analysis.update({
+              where: { id: analysisId },
+              data: { status: 'processing' },
+            });
+            // Next poll will re-attempt the lock
+          }
+        }
+
         // Still completing — tell frontend to keep polling
+        console.log(`[mission-status] analysisId=${analysisId} completion in progress, returning pending`);
         return NextResponse.json({ status: 'processing', tasks: statusResult.tasks ?? [] });
       }
 
-      // We won the lock — proceed with ad creation
+      // We won the lock — proceed with ad creation (FAST path: use Tombstone images first)
       try {
         // Fetch full results
         const results = await getWorkflowResults(workflowIds);
@@ -156,32 +170,15 @@ export async function GET(request: NextRequest) {
         const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl);
         const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
 
-        // Generate high-quality GPT-5.1 ad images to replace FAL images
-        console.log(`[mission-status] Generating GPT-5.1 ad images for ${results.ads.length} ads...`);
-        let gpt5Images: { imageUrl: string | null; angle: string }[] = [];
-        try {
-          gpt5Images = await generateAllAdImages(
-            results.research,
-            results.creative,
-            results.ads,
-            analysis.websiteUrl,
-          );
-          console.log(`[mission-status] GPT-5.1 generation complete: ${gpt5Images.filter(i => i.imageUrl).length}/${gpt5Images.length} succeeded`);
-        } catch (err: any) {
-          console.error('[mission-status] GPT-5.1 generation failed, using Tombstone images:', err?.message);
-        }
-
-        // Create ad records in DB (limit to 3 ads max to prevent bloat)
+        // Create ad records IMMEDIATELY with Tombstone images (fast — no GPT-5.1 blocking)
         const adsToCreate = results.ads.slice(0, 3);
+        console.log(`[mission-status] Creating ${adsToCreate.length} ads with Tombstone images (fast path)`);
         for (let i = 0; i < adsToCreate.length; i++) {
           const ad = adsToCreate[i];
-          const gpt5Image = gpt5Images[i];
+          let imageKey = ad?.imageUrl ?? null;
 
-          // Prefer GPT-5.1 image (S3 public URL), fall back to Tombstone R2 key
-          let imageKey = gpt5Image?.imageUrl ?? ad?.imageUrl ?? null;
-
-          // If falling back to Tombstone image, extract R2 key from presigned URL
-          if (imageKey && !gpt5Image?.imageUrl && imageKey.startsWith('http')) {
+          // Extract R2 key from presigned URL
+          if (imageKey && imageKey.startsWith('http') && !imageKey.includes('.s3.')) {
             try {
               const parsed = new URL(imageKey);
               let path = parsed.pathname.replace(/^\/+/, '');
@@ -218,6 +215,18 @@ export async function GET(request: NextRequest) {
 
         // Resolve fresh presigned URLs for ads just stored
         const freshAds = await resolveAdImages(updatedAnalysis?.ads ?? []);
+
+        // Fire-and-forget: upgrade Tombstone images to GPT-5.1 in background
+        const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+        console.log(`[mission-status] Firing background GPT-5.1 upgrade for analysisId=${analysisId}`);
+        fetch(`${baseUrl}/api/upgrade-ad-images`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ analysisId }),
+        }).catch((err) => {
+          console.error('[mission-status] Failed to trigger image upgrade:', err?.message);
+        });
+
         return NextResponse.json({
           status: 'completed',
           ads: freshAds,
