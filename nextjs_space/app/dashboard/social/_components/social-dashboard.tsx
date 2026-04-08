@@ -313,7 +313,7 @@ export default function SocialDashboard() {
               </p>
               {scoutResult.meta && (
                 <p className="text-sm text-green-600 mt-0.5">
-                  📡 {scoutResult.meta.rssItemCount ?? 0} local news items • 🎉 {scoutResult.meta.eventCount ?? 0} upcoming events • 🏢 {scoutResult.meta.businessName || 'Business'}
+                  📡 {scoutResult.meta.rssItemCount ?? 0} local news items • 🎉 {scoutResult.meta.eventCount ?? 0} upcoming events • 📍 {[scoutResult.meta.city, scoutResult.meta.state].filter(Boolean).join(', ') || 'Local Area'}
                 </p>
               )}
               {scoutResult.socialMissionId && (

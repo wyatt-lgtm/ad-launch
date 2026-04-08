@@ -29,20 +29,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Scout brief with scoutSummary is required' }, { status: 400 });
     }
 
-    // Resolve website URL from brief or latest analysis
-    let websiteUrl = scoutBrief.businessContext?.websiteUrl;
+    // Resolve website URL from analysis record (Clark Kent no longer carries business context)
+    let websiteUrl: string | null = null;
     let resolvedAnalysisId = analysisId || null;
 
-    if (!websiteUrl) {
-      const recentAnalysis = await prisma.analysis.findFirst({
-        where: { userId, geoConfirmed: true },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true, websiteUrl: true },
-      });
-      if (recentAnalysis) {
-        websiteUrl = recentAnalysis.websiteUrl;
-        resolvedAnalysisId = resolvedAnalysisId || recentAnalysis.id;
-      }
+    // Always resolve from analysis DB — scout brief only has local intel (RSS, events, trade area)
+    const recentAnalysis = await prisma.analysis.findFirst({
+      where: analysisId ? { id: analysisId, userId } : { userId, geoConfirmed: true },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, websiteUrl: true },
+    });
+    if (recentAnalysis) {
+      websiteUrl = recentAnalysis.websiteUrl;
+      resolvedAnalysisId = resolvedAnalysisId || recentAnalysis.id;
     }
 
     if (!websiteUrl) {

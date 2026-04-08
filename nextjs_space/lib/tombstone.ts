@@ -55,12 +55,13 @@ export async function createMissions(websiteUrl: string) {
 }
 
 /**
- * Create a social content mission that sends Clark Kent's scout brief to Tombstone.
- * Zig Ziglar receives the local intel and creates marketing angles,
- * then the full creative chain produces social posts with artwork.
+ * Create a social content mission that sends Clark Kent's LOCAL scout brief
+ * to Tombstone. Jim Bridger (Research agent, step 1 of every workflow)
+ * handles all website/business intelligence — Clark Kent only provides
+ * local context: RSS headlines, upcoming events, and trade area geography.
  *
- * The scout brief is embedded in the command text so Wyatt can route it
- * to Zig with full local context.
+ * The scout brief is embedded in the command text so Wyatt routes it
+ * through Bridger → Zig → Ogilvy → Draper → Warhol → Hopkins.
  */
 export async function createSocialMissions(
   websiteUrl: string,
@@ -71,22 +72,28 @@ export async function createSocialMissions(
   const postCount = options.postCount || 9;
   const platforms = options.platforms || ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'];
 
-  // Build the Tombstone command with scout intel embedded
+  // Build the Tombstone command with local scout intel embedded.
+  // Jim Bridger will independently scout the website for business identity,
+  // brand voice, offers, palette, etc. Clark Kent supplements with LOCAL intel only.
   const command = [
     `Create ${postCount} social media posts for ${normalizedUrl} targeting these platforms: ${platforms.join(', ')}.`,
-    `Use the following local intelligence from Clark Kent's scout report to inform the content strategy:`,
     ``,
-    `--- SCOUT BRIEF ---`,
+    `Jim Bridger will handle website recon (business identity, brand voice, offers, palette).`,
+    `Below is LOCAL intelligence from Clark Kent's scout report — RSS news, upcoming events,`,
+    `and trade area context that Bridger cannot get from the website:`,
+    ``,
+    `--- LOCAL SCOUT BRIEF ---`,
     scoutSummary,
-    `--- END SCOUT BRIEF ---`,
+    `--- END LOCAL SCOUT BRIEF ---`,
     ``,
     `Create 3 lanes of content:`,
     `  Lane 1 (Local News): 3 posts leveraging the local RSS headlines above — community news a business owner would share`,
-    `  Lane 2 (Business): 3 promotional posts about the business — who they are, what they offer, why choose them`,
+    `  Lane 2 (Business): 3 promotional posts using Bridger's website recon — who they are, what they offer, why choose them`,
     `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
     ``,
     `Each post needs: caption, hashtags, an image/artwork, and the target platforms.`,
     `Posts should feel authentic — like a real small business owner wrote them.`,
+    `Use Bridger's brand palette and voice for visual and tonal consistency.`,
   ].join('\n');
 
   console.log(`[tombstone] Creating social content mission for: ${normalizedUrl} (${postCount} posts)`);

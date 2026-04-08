@@ -9,34 +9,32 @@ import type { ContentBrief } from '@/lib/rss/trade-area-feed';
 import { getUpcomingEvents, type UpcomingEvent } from '@/lib/social/upcoming-events';
 
 /**
- * Clark Kent — Social Scout (Intelligence Gathering ONLY)
+ * Clark Kent — Social Scout (Local Intelligence ONLY)
  *
  * POST /api/rss/clark-kent
  * Body: { analysisId?, zip?, radius? }
  *
- * Gathers local intelligence and returns a structured scout brief.
- * Does NOT generate social posts — that's Tombstone's creative workflow
- * (Zig Ziglar → Ogilvy → Don Draper → Andy Warhol → Claude Hopkins).
+ * Gathers LOCAL intelligence that Jim Bridger does NOT have:
+ *   1. RSS local news from the business's trade area
+ *   2. Upcoming holidays & events from the calendar
+ *   3. Geographic context (ZIP, city, state, radius)
  *
- * Returns:
- *   - rssBrief: ContentBrief from trade area RSS feeds
- *   - upcomingEvents: Holidays/events in the next 90 days
- *   - businessContext: Name, URL, location, industry, value props
- *   - scoutSummary: Human-readable briefing text for Tombstone agents
+ * Does NOT gather business/website intel — that's Jim Bridger's job.
+ * Jim Bridger already provides: business_summary, brand_voice,
+ * messaging_constraints, semantic_truth, offers, brand_palette
+ * to Zig Ziglar and the creative chain.
+ *
+ * Clark Kent's output is a supplement to Bridger's recon,
+ * giving the creative team LOCAL context they can't get from the website.
  */
 
 export interface ScoutBrief {
   generatedAt: string;
-  businessContext: {
-    businessName: string;
-    websiteUrl: string;
-    businessCity: string;
-    businessState: string;
-    businessZip: string;
-    industry: string;
-    coreOffer: string;
-    targetCustomer: string;
-    valuePropositions: string[];
+  tradeArea: {
+    zip: string;
+    city: string;
+    state: string;
+    radiusMiles: number;
   };
   rssBrief: ContentBrief | null;
   upcomingEvents: UpcomingEvent[];
@@ -61,32 +59,20 @@ export async function POST(req: NextRequest) {
       userId = (session.user as any).id;
     }
 
-    // ── Resolve business context ───────────────────────────────────────
+    // ── Resolve geographic context (ZIP, city, state) ────────────────
     let businessZip: string | null = directZip || null;
-    let businessName: string | null = null;
-    let websiteUrl: string | null = null;
     let businessCity: string | null = null;
     let businessState: string | null = null;
-    let resolvedAnalysisId: string | null = analysisId || null;
-    let analysisResults: any = null;
-    let seoData: any = null;
 
     if (analysisId) {
       const analysis = await prisma.analysis.findUnique({
         where: { id: analysisId },
-        select: {
-          businessZip: true, businessName: true, websiteUrl: true,
-          businessCity: true, businessState: true, results: true, seoData: true,
-        },
+        select: { businessZip: true, businessCity: true, businessState: true },
       });
       if (analysis) {
         businessZip = analysis.businessZip || businessZip;
-        businessName = analysis.businessName;
-        websiteUrl = analysis.websiteUrl;
         businessCity = analysis.businessCity;
         businessState = analysis.businessState;
-        analysisResults = analysis.results;
-        seoData = analysis.seoData;
       }
     }
 
@@ -94,20 +80,12 @@ export async function POST(req: NextRequest) {
       const recentAnalysis = await prisma.analysis.findFirst({
         where: { userId, businessZip: { not: null }, geoConfirmed: true },
         orderBy: { createdAt: 'desc' },
-        select: {
-          id: true, businessZip: true, businessName: true, websiteUrl: true,
-          businessCity: true, businessState: true, results: true, seoData: true,
-        },
+        select: { id: true, businessZip: true, businessCity: true, businessState: true },
       });
       if (recentAnalysis) {
         businessZip = recentAnalysis.businessZip;
-        businessName = recentAnalysis.businessName;
-        websiteUrl = recentAnalysis.websiteUrl;
         businessCity = recentAnalysis.businessCity;
         businessState = recentAnalysis.businessState;
-        analysisResults = recentAnalysis.results;
-        seoData = recentAnalysis.seoData;
-        resolvedAnalysisId = resolvedAnalysisId || recentAnalysis.id;
       }
     }
 
@@ -117,14 +95,6 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-
-    // ── Extract business intel from analysis results ───────────────────
-    const bizSummary = analysisResults?.research?.business_summary || {};
-    const industry = bizSummary.industry || bizSummary.category || '';
-    const coreOffer = bizSummary.core_offer || bizSummary.services || '';
-    const targetCustomer = bizSummary.target_customer || bizSummary.audience || '';
-    const rawValueProps = bizSummary.value_propositions || bizSummary.differentiators || [];
-    const valuePropositions = Array.isArray(rawValueProps) ? rawValueProps : [rawValueProps].filter(Boolean);
 
     // ── Gather RSS intelligence ────────────────────────────────────────
     let rssBrief: ContentBrief | null = null;
@@ -138,25 +108,20 @@ export async function POST(req: NextRequest) {
     // ── Gather upcoming events ─────────────────────────────────────────
     const upcomingEvents = getUpcomingEvents();
 
-    // ── Build business context ─────────────────────────────────────────
-    const businessContext = {
-      businessName: businessName || 'Local Business',
-      websiteUrl: websiteUrl || '',
-      businessCity: businessCity || '',
-      businessState: businessState || '',
-      businessZip: businessZip!,
-      industry,
-      coreOffer,
-      targetCustomer,
-      valuePropositions,
+    // ── Build trade area context (geographic only) ───────────────────
+    const tradeArea = {
+      zip: businessZip!,
+      city: businessCity || '',
+      state: businessState || '',
+      radiusMiles: radius,
     };
 
     // ── Build human-readable scout summary for Tombstone ───────────────
-    const scoutSummary = buildScoutSummary(businessContext, rssBrief, upcomingEvents);
+    const scoutSummary = buildScoutSummary(tradeArea, rssBrief, upcomingEvents);
 
     const brief: ScoutBrief = {
       generatedAt: new Date().toISOString(),
-      businessContext,
+      tradeArea,
       rssBrief,
       upcomingEvents: upcomingEvents.slice(0, 8),
       scoutSummary,
@@ -165,13 +130,14 @@ export async function POST(req: NextRequest) {
     console.log(`[Clark Kent] Scout brief generated in ${Date.now() - start}ms — ` +
       `RSS: ${rssBrief?.summary.totalItems ?? 0} items, ` +
       `Events: ${upcomingEvents.length}, ` +
-      `Business: ${businessContext.businessName}`);
+      `Trade area: ${tradeArea.city}, ${tradeArea.state} ${tradeArea.zip}`);
 
     return NextResponse.json({
       brief,
       meta: {
-        businessZip,
-        businessName,
+        zip: tradeArea.zip,
+        city: tradeArea.city,
+        state: tradeArea.state,
         radiusMiles: radius,
         queryTimeMs: Date.now() - start,
         rssItemCount: rssBrief?.summary.totalItems ?? 0,
@@ -185,36 +151,36 @@ export async function POST(req: NextRequest) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Build a concise human-readable briefing that gets embedded in the Tombstone
-// command so Zig Ziglar (and downstream agents) have local context.
+// Build scout summary: LOCAL intel only. No business data.
+// Jim Bridger handles all website/business reconnaissance.
 // ══════════════════════════════════════════════════════════════════════════════
 
 function buildScoutSummary(
-  biz: ScoutBrief['businessContext'],
+  tradeArea: ScoutBrief['tradeArea'],
   rssBrief: ContentBrief | null,
   events: UpcomingEvent[],
 ): string {
   const lines: string[] = [];
 
-  lines.push(`BUSINESS: ${biz.businessName} (${biz.websiteUrl || 'local business'})`);
-  lines.push(`LOCATION: ${biz.businessCity}, ${biz.businessState} ${biz.businessZip}`);
-  if (biz.industry) lines.push(`INDUSTRY: ${biz.industry}`);
-  if (biz.coreOffer) lines.push(`CORE OFFER: ${biz.coreOffer}`);
-  if (biz.targetCustomer) lines.push(`TARGET CUSTOMER: ${biz.targetCustomer}`);
-  if (biz.valuePropositions.length > 0) {
-    lines.push(`VALUE PROPS: ${biz.valuePropositions.join('; ')}`);
-  }
+  // Geographic context only
+  lines.push(`TRADE AREA: ${tradeArea.city}${tradeArea.state ? ', ' + tradeArea.state : ''} ${tradeArea.zip} (${tradeArea.radiusMiles}mi radius)`);
 
   // RSS headlines
   if (rssBrief && rssBrief.headlines.length > 0) {
     lines.push('');
-    lines.push(`LOCAL NEWS (${rssBrief.summary.totalItems} items from ${rssBrief.summary.feedsMatched} feeds, ${rssBrief.radiusMiles}mi radius):`);
+    lines.push(`LOCAL NEWS (${rssBrief.summary.totalItems} items from ${rssBrief.summary.feedsMatched} feeds):`);
     for (const h of rssBrief.headlines.slice(0, 12)) {
       lines.push(`  • [${h.sourceType}] "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})`);
     }
+    // Source type breakdown
+    if (rssBrief.summary.topCategories.length > 0) {
+      lines.push('');
+      lines.push('SOURCE TYPES: ' + rssBrief.summary.topCategories.map(c => `${c.type}(${c.count})`).join(', '));
+    }
     // Patterns
     if (rssBrief.patterns.length > 0) {
-      lines.push('PATTERNS:');
+      lines.push('');
+      lines.push('PATTERNS DETECTED:');
       for (const p of rssBrief.patterns) {
         lines.push(`  • ${p.type}: ${p.description}`);
       }

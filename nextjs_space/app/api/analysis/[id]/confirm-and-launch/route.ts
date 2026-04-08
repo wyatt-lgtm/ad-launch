@@ -7,12 +7,13 @@ import { createMissions, createSocialMissions } from '@/lib/tombstone';
 /**
  * POST /api/analysis/[id]/confirm-and-launch
  * Step 2: User confirms location, then:
- *   1. Clark Kent scouts local intel (RSS + events + business context)
+ *   1. Clark Kent scouts LOCAL intel only (RSS + events + trade area)
  *   2. Scout brief is sent to Tombstone as a social content mission
  *   3. Tombstone ad generation launches in parallel
  *
- * Clark Kent is SCOUT ONLY — Tombstone's creative chain
- * (Zig → Ogilvy → Don → Andy → Claude) produces the actual posts.
+ * Clark Kent is SCOUT ONLY — provides local context that Jim Bridger
+ * (website recon) can't get. Tombstone's creative chain
+ * (Bridger → Zig → Ogilvy → Draper → Warhol → Hopkins) produces the actual posts.
  */
 export async function POST(
   request: NextRequest,
