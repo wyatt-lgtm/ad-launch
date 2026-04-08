@@ -239,7 +239,288 @@ function LocationConfirmCard({
   );
 }
 
+/* ── Google Places Location Confirmation (Step 2) ──────────── */
+interface PlaceCandidate {
+  placeId: string;
+  name: string;
+  formattedAddress: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  website: string;
+  googleMapsUrl: string;
+  rating: number | null;
+  userRatingCount: number | null;
+}
+
+function LocationStep({
+  analysisId,
+  onLaunched,
+}: {
+  analysisId: string;
+  onLaunched: () => void;
+}) {
+  const [places, setPlaces] = useState<PlaceCandidate[]>([]);
+  const [selected, setSelected] = useState<PlaceCandidate | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [launching, setLaunching] = useState(false);
+  const [error, setError] = useState('');
+  // Manual entry fields
+  const [manualName, setManualName] = useState('');
+  const [manualCity, setManualCity] = useState('');
+  const [manualState, setManualState] = useState('');
+  const [manualZip, setManualZip] = useState('');
+  const [showManual, setShowManual] = useState(false);
+
+  useEffect(() => {
+    // Fetch analysis data to get pre-loaded places
+    const fetchAnalysis = async () => {
+      try {
+        const res = await fetch(`/api/analysis/${analysisId}`);
+        const data = await res.json().catch(() => ({}));
+
+        if (data?.status && data.status !== 'pending_location') {
+          // Already launched — skip to tracking
+          onLaunched();
+          return;
+        }
+
+        // If places were passed from the analyze endpoint response, they're in sessionStorage
+        const cached = sessionStorage.getItem(`places_${analysisId}`);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setPlaces(parsed);
+          if (parsed.length > 0) setSelected(parsed[0]);
+          // Pre-fill manual from top result
+          if (parsed[0]) {
+            setManualName(parsed[0].name);
+            setManualCity(parsed[0].city);
+            setManualState(parsed[0].state);
+            setManualZip(parsed[0].zip);
+          }
+        } else if (data?.businessName) {
+          // Pre-fill from analysis record
+          setManualName(data.businessName ?? '');
+          setManualCity(data.businessCity ?? '');
+          setManualState(data.businessState ?? '');
+          setManualZip(data.businessZip ?? '');
+        }
+      } catch (err) {
+        console.error('Failed to fetch analysis:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAnalysis();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisId]);
+
+  const handleLaunch = async () => {
+    setLaunching(true);
+    setError('');
+    try {
+      const payload = selected
+        ? {
+            name: selected.name,
+            address: selected.formattedAddress,
+            city: selected.city,
+            state: selected.state,
+            zip: selected.zip,
+            phone: selected.phone,
+            placeId: selected.placeId,
+            googleMapsUrl: selected.googleMapsUrl,
+          }
+        : {
+            name: manualName,
+            city: manualCity,
+            state: manualState,
+            zip: manualZip,
+          };
+
+      const res = await fetch(`/api/analysis/${analysisId}/confirm-and-launch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setError(data?.error ?? 'Failed to launch. Please try again.');
+        setLaunching(false);
+        return;
+      }
+
+      onLaunched();
+    } catch (err) {
+      console.error('Launch error:', err);
+      setError('Something went wrong. Please try again.');
+      setLaunching(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="max-w-[700px] mx-auto px-4 py-20 text-center">
+        <Loader2 className="w-10 h-10 text-blue-500 animate-spin mx-auto mb-4" />
+        <p className="text-gray-500">Looking up your business on Google Maps...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-[700px] mx-auto px-4 py-12">
+      <div className="text-center mb-8">
+        <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <MapPin className="w-7 h-7 text-blue-600" />
+        </div>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Confirm Your Business Location</h1>
+        <p className="text-gray-500 mt-2 text-sm">
+          We'll use this to find local news and events for your social media posts
+        </p>
+      </div>
+
+      {/* Google Places Results */}
+      {places.length > 0 && !showManual && (
+        <div className="space-y-3 mb-6">
+          {places.map((place) => (
+            <button
+              key={place.placeId}
+              onClick={() => setSelected(place)}
+              className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
+                selected?.placeId === place.placeId
+                  ? 'border-blue-500 bg-blue-50 shadow-md'
+                  : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="font-semibold text-gray-900">{place.name}</div>
+                  <div className="text-sm text-gray-500 mt-1">{place.formattedAddress}</div>
+                  <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
+                    {place.phone && <span>📞 {place.phone}</span>}
+                    {place.rating && (
+                      <span>⭐ {place.rating} ({place.userRatingCount ?? 0} reviews)</span>
+                    )}
+                    {place.googleMapsUrl && (
+                      <a
+                        href={place.googleMapsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View on Maps →
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${
+                  selected?.placeId === place.placeId ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+                }`}>
+                  {selected?.placeId === place.placeId && (
+                    <CheckCircle className="w-4 h-4 text-white" />
+                  )}
+                </div>
+              </div>
+            </button>
+          ))}
+
+          <button
+            onClick={() => { setShowManual(true); setSelected(null); }}
+            className="w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium py-2"
+          >
+            My business isn't listed — enter manually
+          </button>
+        </div>
+      )}
+
+      {/* Manual Entry (no Google results or user chose manual) */}
+      {(places.length === 0 || showManual) && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 space-y-4">
+          {places.length > 0 && (
+            <button
+              onClick={() => { setShowManual(false); if (places[0]) setSelected(places[0]); }}
+              className="text-sm text-blue-600 hover:text-blue-700 font-medium mb-2"
+            >
+              ← Back to Google results
+            </button>
+          )}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Business Name</label>
+            <input
+              type="text"
+              value={manualName}
+              onChange={(e) => setManualName(e.target.value)}
+              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+              placeholder="Sunshine Tire & Auto"
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
+              <input
+                type="text"
+                value={manualCity}
+                onChange={(e) => setManualCity(e.target.value)}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                placeholder="Katy"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">State</label>
+              <input
+                type="text"
+                value={manualState}
+                onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                placeholder="TX"
+                maxLength={2}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">ZIP Code</label>
+              <input
+                type="text"
+                value={manualZip}
+                onChange={(e) => setManualZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10))}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                placeholder="77494"
+                maxLength={10}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-4 flex items-center gap-2 text-red-500 text-sm justify-center">
+          <AlertCircle className="w-4 h-4" /> {error}
+        </div>
+      )}
+
+      <button
+        onClick={handleLaunch}
+        disabled={launching || (!selected && !manualZip)}
+        className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-blue-600 text-white text-base font-bold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-200"
+      >
+        {launching ? (
+          <Loader2 className="w-5 h-5 animate-spin" />
+        ) : (
+          <Sparkles className="w-5 h-5" />
+        )}
+        {launching ? 'Launching Ad Creation...' : 'Confirm Location & Create Ads'}
+      </button>
+
+      <p className="text-center text-xs text-gray-400 mt-3">
+        This helps us find local news, events, and community content for your social posts
+      </p>
+    </div>
+  );
+}
+
 export default function AnalysisTracker({ analysisId }: { analysisId: string }) {
+  const [phase, setPhase] = useState<'location' | 'tracking'>('location');
   const [status, setStatus] = useState('processing');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [ads, setAds] = useState<Ad[]>([]);
@@ -259,6 +540,10 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       const res = await fetch(`/api/mission-status?analysisId=${analysisId}`);
       const data = await res.json().catch(() => ({}));
       const s = data?.status ?? 'processing';
+
+      // If still pending_location, stay in location phase
+      if (s === 'pending_location') return;
+
       setStatus(s);
 
       // Update live task list
@@ -284,7 +569,9 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const statusRef = React.useRef(status);
   statusRef.current = status;
 
+  // Only start polling when in tracking phase
   useEffect(() => {
+    if (phase !== 'tracking') return;
     pollStatus();
     const interval = setInterval(() => {
       if (statusRef.current !== 'completed' && statusRef.current !== 'error') {
@@ -293,6 +580,20 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     }, 4000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisId, phase]);
+
+  // Check initial state — if analysis is already past pending_location, skip to tracking
+  useEffect(() => {
+    const checkState = async () => {
+      try {
+        const res = await fetch(`/api/analysis/${analysisId}`);
+        const data = await res.json().catch(() => ({}));
+        if (data?.status && data.status !== 'pending_location') {
+          setPhase('tracking');
+        }
+      } catch {}
+    };
+    checkState();
   }, [analysisId]);
 
   // If user is confirmed and analysis is complete, redirect to results
@@ -339,6 +640,11 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     const complete = displayTasks.filter(t => t.status === 'complete').length;
     return Math.round((complete / displayTasks.length) * 100);
   }, [displayTasks]);
+
+  // Phase 1: Location confirmation
+  if (phase === 'location') {
+    return <LocationStep analysisId={analysisId} onLaunched={() => setPhase('tracking')} />;
+  }
 
   if (error) {
     return (
@@ -455,22 +761,6 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
               ))}
             </div>
           </div>
-
-          {/* Location Confirmation */}
-          {seoData?.location && (
-            <div className="mb-8 max-w-lg mx-auto">
-              <LocationConfirmCard
-                analysisId={analysisId}
-                location={seoData.location}
-                onConfirmed={(loc) => {
-                  setSeoData((prev: any) => ({
-                    ...prev,
-                    location: { ...prev?.location, ...loc, confirmed: true },
-                  }));
-                }}
-              />
-            </div>
-          )}
 
           {/* Google Search Ad Copy */}
           <div className="mb-12">

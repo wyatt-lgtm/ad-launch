@@ -2,9 +2,14 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { createMissions } from '@/lib/tombstone';
 import { isValidUrl } from '@/lib/email-validation';
+import { lookupBusinessByUrl } from '@/lib/google-places';
 
+/**
+ * POST /api/analyze
+ * Step 1: Create analysis record + Google Places lookup.
+ * Does NOT launch Tombstone — that happens after user confirms location via /api/analysis/[id]/confirm-and-launch.
+ */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -54,37 +59,35 @@ export async function POST(request: NextRequest) {
       }, { status: 422 });
     }
 
-    console.log(`[analyze] Starting 3-ad analysis for: ${normalizedUrl}`);
-    const result = await createMissions(normalizedUrl);
-    console.log(`[analyze] Missions created:`, {
-      success: result.success,
-      workflowIds: result.workflowIds,
-      taskCount: result.allTaskIds.length,
-      angles: result.angles,
-    });
+    // Google Places lookup — find the business location
+    console.log(`[analyze] Looking up business on Google Places: ${normalizedUrl}`);
+    const places = await lookupBusinessByUrl(normalizedUrl);
+    console.log(`[analyze] Google Places returned ${places.length} results`);
 
-    if (!result.success) {
-      console.error('[analyze] Tombstone API failed');
-      return NextResponse.json({ error: 'Failed to start ad generation. Please try again.' }, { status: 502 });
-    }
-
-    // Store all workflow IDs as comma-separated string in missionId field
-    const missionId = result.workflowIds.join(',');
-
+    // Create analysis record (no Tombstone yet — user must confirm location first)
+    const topPlace = places[0];
     const analysis = await prisma.analysis.create({
       data: {
         websiteUrl: normalizedUrl,
-        missionId,
-        status: 'processing',
+        status: 'pending_location', // New status: waiting for location confirmation
         userId: userId ?? null,
+        // Pre-fill location from Google Places if found
+        ...(topPlace ? {
+          businessName: topPlace.name,
+          businessAddr: topPlace.formattedAddress,
+          businessCity: topPlace.city,
+          businessState: topPlace.state,
+          businessZip: topPlace.zip,
+          businessPhone: topPlace.phone,
+          geoSource: 'google_places',
+        } : {}),
       },
     });
 
     return NextResponse.json({
       analysisId: analysis.id,
-      missionId,
-      workflowCount: result.workflowIds.length,
-      status: analysis.status,
+      status: 'pending_location',
+      places: places.slice(0, 5), // Return top 5 candidates
     });
   } catch (err: any) {
     console.error('Analyze error:', err);

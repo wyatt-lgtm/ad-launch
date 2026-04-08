@@ -97,8 +97,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if (!analysis.missionId) {
-      return NextResponse.json({ status: analysis.status, error: 'No mission ID', tasks: [] });
+    // If pending location confirmation or no mission ID yet, return current status
+    if (analysis.status === 'pending_location' || !analysis.missionId) {
+      return NextResponse.json({ status: analysis.status, tasks: [] });
     }
 
     // Parse workflow IDs (comma-separated)
@@ -227,17 +228,8 @@ export async function GET(request: NextRequest) {
           console.error('[mission-status] Failed to trigger image upgrade:', err?.message);
         });
 
-        // Fire-and-forget: generate 9 social posts (3 RSS + 3 website + 3 holiday)
-        if (analysis.userId) {
-          console.log(`[mission-status] Firing Clark Kent social scout for analysisId=${analysisId}`);
-          fetch(`${baseUrl}/api/rss/clark-kent`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ analysisId, _internalUserId: analysis.userId }),
-          }).catch((err) => {
-            console.error('[mission-status] Failed to trigger Clark Kent:', err?.message);
-          });
-        }
+        // Note: Clark Kent social scout now fires from /api/analysis/[id]/confirm-and-launch
+        // BEFORE Tombstone starts, so local news posts are ready when ads finish.
 
         return NextResponse.json({
           status: 'completed',

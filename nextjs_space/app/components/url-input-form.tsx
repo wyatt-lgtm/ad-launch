@@ -41,6 +41,12 @@ export default function UrlInputForm() {
         setLoading(false);
         return;
       }
+      // Store places in sessionStorage for the location step
+      if (data?.places?.length > 0) {
+        try {
+          sessionStorage.setItem(`places_${data.analysisId}`, JSON.stringify(data.places));
+        } catch {}
+      }
       router.push(`/analyze/${data?.analysisId ?? ''}`);
     } catch (err: any) {
       console.error('Submit error:', err);
