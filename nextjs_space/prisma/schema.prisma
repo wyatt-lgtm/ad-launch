@@ -21,6 +21,8 @@ model User {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
   analyses          Analysis[]
+  socialAccounts    SocialAccount[]
+  socialPosts       SocialPost[]
 }
 
 model Analysis {
@@ -45,8 +47,9 @@ model Analysis {
 
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-  user       User?    @relation(fields: [userId], references: [id])
-  ads        Ad[]
+  user        User?    @relation(fields: [userId], references: [id])
+  ads         Ad[]
+  socialPosts SocialPost[]
 
   @@index([userId])
   @@index([missionId])
@@ -329,4 +332,74 @@ model ItemAudit {
   @@index([itemId])
   @@index([createdAt])
   @@index([action])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SOCIAL POST QUEUE — Clark Kent → Creative Pipeline
+// ═══════════════════════════════════════════════════════════════
+
+model SocialAccount {
+  id          String   @id @default(cuid())
+  userId      String
+  platform    String   // "facebook", "instagram", "youtube", "tiktok", "pinterest", "snapchat"
+  handle      String   // @username or page name
+  profileUrl  String?  // Full URL to profile/page
+  displayName String?  // Friendly display name
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, platform])
+  @@index([userId])
+  @@index([platform])
+}
+
+model SocialPost {
+  id            String   @id @default(cuid())
+  userId        String
+  analysisId    String?  // Links to the business analysis (for ZIP context)
+
+  // Content
+  caption       String   @db.Text
+  hashtags      String[] @default([])
+  imageUrl      String?  // Generated post image (S3 URL)
+  imagePrompt   String?  @db.Text  // Prompt used to generate image
+
+  // Source RSS item
+  rssItemId     String?  // The RSS item that inspired this post
+  rssItemTitle  String?
+  rssItemLink   String?
+  sourceType    String?  // "local_news", "weather", "community", etc.
+  newsAngle     String?  @db.Text  // Clark Kent's spin/angle description
+
+  // Platform targeting
+  platforms     String[] @default([])  // ["facebook", "instagram"] — which platforms to post to
+  postType      String   @default("general")
+    // general, weather_tip, community_event, trending_news, seasonal, promotion
+
+  // Queue management
+  status        String   @default("draft")
+    // draft, pending_approval, approved, published, rejected, expired
+  scheduledFor  DateTime?  // Optional future scheduling
+  publishedAt   DateTime?
+  rejectedAt    DateTime?
+  rejectReason  String?
+
+  // Clark Kent metadata
+  tradeAreaZip  String?  // Business ZIP used for the scout query
+  briefScore    Float?   // Composite score from trade area ranking
+  patternType   String?  // "weather", "trending_local", "gov_meeting", "community_events"
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analysis      Analysis? @relation(fields: [analysisId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([analysisId])
+  @@index([scheduledFor])
+  @@index([createdAt])
 }
