@@ -81,11 +81,14 @@ export async function searchPlaces(query: string, maxResults = 5): Promise<Place
   }
 
   try {
+    // Include Referer header for keys with HTTP referrer restrictions
+    const appUrl = process.env.NEXTAUTH_URL ?? 'https://ad-launch-1nfyr8.abacusai.app';
     const res = await fetch(PLACES_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': apiKey,
+        'Referer': appUrl,
         'X-Goog-FieldMask': [
           'places.id',
           'places.displayName',
