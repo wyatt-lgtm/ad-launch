@@ -149,6 +149,7 @@ function domainToBusinessName(domain: string): string {
     'auto', 'tire', 'shop', 'body', 'care', 'home', 'land', 'lake',
     'cafe', 'wash', 'tech', 'team', 'zone', 'star',
     'west', 'east', 'north', 'south', 'side', 'city', 'town', 'hill', 'river',
+    'guys', 'gals', 'bros',
     'bar', 'pub', 'spa', 'gym', 'pet', 'vet', 'hub', 'pro', 'bay',
     'blue', 'red', 'sun', 'kids', 'baby', 'fast', 'best', 'top', 'first', 'plus',
     'and', 'the',
@@ -202,6 +203,7 @@ function domainToBusinessName(domain: string): string {
 /**
  * Look up a business by its website URL.
  * Extracts domain name, cleans it, and searches Google Places.
+ * Uses multiple strategies from most specific to most creative.
  */
 export async function lookupBusinessByUrl(websiteUrl: string): Promise<PlaceResult[]> {
   // Extract a useful search query from the URL
@@ -248,6 +250,28 @@ export async function lookupBusinessByUrl(websiteUrl: string): Promise<PlaceResu
     if (baseResults.length > 0) {
       console.log(`[google-places] Found ${baseResults.length} results by domain base`);
       return baseResults;
+    }
+  }
+
+  // Strategy 5: strip leading single-char fragments and try again
+  // e.g. "t tech guys" → "tech guys" (ttechguys.net → The Tech Guys)
+  if (businessName) {
+    const stripped = businessName.replace(/^\b[a-z]\b\s+/i, '').trim();
+    if (stripped && stripped !== businessName && stripped.length > 2) {
+      console.log(`[google-places] Strategy 5: searching without leading fragment "${stripped}"`);
+      const strippedResults = await searchPlaces(stripped, 5);
+      if (strippedResults.length > 0) {
+        console.log(`[google-places] Found ${strippedResults.length} results by stripped name`);
+        return strippedResults;
+      }
+      // Also try with "The" prefix (common business name pattern)
+      const withThe = `The ${stripped}`;
+      console.log(`[google-places] Strategy 5b: searching with "The" prefix "${withThe}"`);
+      const theResults = await searchPlaces(withThe, 5);
+      if (theResults.length > 0) {
+        console.log(`[google-places] Found ${theResults.length} results with "The" prefix`);
+        return theResults;
+      }
     }
   }
 

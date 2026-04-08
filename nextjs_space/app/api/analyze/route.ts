@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
 
     // Step 1: Fetch the website HTML (serves as both reachability check and address scraping)
     let htmlBody = '';
+    let siteReachable = false;
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
@@ -33,21 +34,45 @@ export async function POST(request: NextRequest) {
         signal: controller.signal,
         redirect: 'follow',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; AdLaunchBot/1.0)',
-          'Accept': 'text/html,application/xhtml+xml',
+          // Use a realistic browser UA to reduce captcha/bot blocks
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
         },
       }).catch(() => null);
       clearTimeout(timeout);
 
-      if (!res || !res.ok) {
-        console.warn(`[analyze] Website unreachable: ${normalizedUrl} (status: ${res?.status ?? 'timeout'})`);
+      if (!res) {
+        console.warn(`[analyze] Website unreachable (timeout): ${normalizedUrl}`);
         return NextResponse.json({
           error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
         }, { status: 422 });
       }
 
+      // Treat 4xx/5xx as unreachable, but 2xx/3xx means site exists
+      if (res.status >= 400) {
+        console.warn(`[analyze] Website error: ${normalizedUrl} (status: ${res.status})`);
+        return NextResponse.json({
+          error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
+        }, { status: 422 });
+      }
+
+      siteReachable = true;
       htmlBody = await res.text().catch(() => '');
-      console.log(`[analyze] Website fetched: ${normalizedUrl} (status: ${res.status}, ${htmlBody.length} bytes)`);
+
+      // Detect captcha/bot-block responses: tiny HTML, captcha headers, or meta-refresh to captcha
+      const isCaptcha =
+        res.headers.get('sg-captcha') === 'challenge' ||
+        res.headers.get('x-sucuri-id') ||
+        (htmlBody.length < 1000 && /captcha|challenge|verify.*human|cf-browser-verification/i.test(htmlBody)) ||
+        (htmlBody.length < 500 && /meta\s+http-equiv=["']refresh["'][^>]*sgcaptcha|cloudflare/i.test(htmlBody));
+
+      if (isCaptcha) {
+        console.log(`[analyze] Bot/captcha block detected for ${normalizedUrl} — site is reachable but HTML not usable`);
+        htmlBody = ''; // Clear so address extraction skips
+      } else {
+        console.log(`[analyze] Website fetched: ${normalizedUrl} (status: ${res.status}, ${htmlBody.length} bytes)`);
+      }
     } catch (fetchErr: any) {
       console.warn(`[analyze] Website fetch failed: ${normalizedUrl}`, fetchErr?.message);
       return NextResponse.json({
