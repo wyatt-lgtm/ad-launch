@@ -1,9 +1,10 @@
 /**
- * Google Places API (New) — Text Search integration
- * Uses the Places API to find businesses by URL or name+location.
+ * Google Places API (Legacy) — Text Search + Place Details integration
+ * Uses the legacy Places API endpoints which work with standard "Places API" enablement.
  */
 
-const PLACES_API_URL = 'https://places.googleapis.com/v1/places:searchText';
+const TEXT_SEARCH_URL = 'https://maps.googleapis.com/maps/api/place/textsearch/json';
+const PLACE_DETAILS_URL = 'https://maps.googleapis.com/maps/api/place/details/json';
 
 export interface PlaceResult {
   placeId: string;
@@ -31,46 +32,64 @@ function getApiKey(): string {
   );
 }
 
-/** Parse address components from Google Places response */
+/** Parse city/state/zip from address_components (legacy format) */
 function parseAddressComponents(components: any[]): { city: string; state: string; zip: string } {
   let city = '';
   let state = '';
   let zip = '';
   for (const c of components ?? []) {
     const types = c.types ?? [];
-    if (types.includes('locality')) city = c.longText ?? c.shortText ?? '';
-    if (types.includes('administrative_area_level_1')) state = c.shortText ?? '';
-    if (types.includes('postal_code')) zip = c.longText ?? c.shortText ?? '';
-    // Fallback city from sublocality
-    if (!city && types.includes('sublocality_level_1')) city = c.longText ?? c.shortText ?? '';
+    if (types.includes('locality')) city = c.long_name ?? c.short_name ?? '';
+    if (types.includes('administrative_area_level_1')) state = c.short_name ?? '';
+    if (types.includes('postal_code')) zip = c.long_name ?? c.short_name ?? '';
+    if (!city && types.includes('sublocality_level_1')) city = c.long_name ?? c.short_name ?? '';
   }
   return { city, state, zip };
 }
 
-/** Convert a Google Places result to our PlaceResult format */
-function toPlaceResult(place: any): PlaceResult {
-  const { city, state, zip } = parseAddressComponents(place.addressComponents);
+/** Convert a legacy Text Search result to our PlaceResult format */
+function toPlaceResult(place: any, details?: any): PlaceResult {
+  // Text Search gives basic info; Place Details gives phone, website, address_components
+  const comps = details?.address_components ?? [];
+  const { city, state, zip } = parseAddressComponents(comps);
   return {
-    placeId: place.id ?? '',
-    name: place.displayName?.text ?? '',
-    formattedAddress: place.formattedAddress ?? '',
+    placeId: place.place_id ?? '',
+    name: place.name ?? '',
+    formattedAddress: place.formatted_address ?? '',
     city,
     state,
     zip,
-    phone: place.nationalPhoneNumber ?? place.internationalPhoneNumber ?? '',
-    website: place.websiteUri ?? '',
-    googleMapsUrl: place.googleMapsUri ?? '',
-    lat: place.location?.latitude ?? null,
-    lng: place.location?.longitude ?? null,
+    phone: details?.formatted_phone_number ?? details?.international_phone_number ?? '',
+    website: details?.website ?? '',
+    googleMapsUrl: details?.url ?? `https://www.google.com/maps/place/?q=place_id:${place.place_id}`,
+    lat: place.geometry?.location?.lat ?? null,
+    lng: place.geometry?.location?.lng ?? null,
     rating: place.rating ?? null,
-    userRatingCount: place.userRatingCount ?? null,
-    businessStatus: place.businessStatus ?? 'OPERATIONAL',
+    userRatingCount: place.user_ratings_total ?? null,
+    businessStatus: place.business_status ?? 'OPERATIONAL',
     types: place.types ?? [],
   };
 }
 
+/** Fetch place details (phone, website, address components) for a single place_id */
+async function getPlaceDetails(placeId: string, apiKey: string): Promise<any | null> {
+  try {
+    const params = new URLSearchParams({
+      place_id: placeId,
+      fields: 'formatted_phone_number,international_phone_number,website,url,address_component',
+      key: apiKey,
+    });
+    const res = await fetch(`${PLACE_DETAILS_URL}?${params}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.result ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Search for a business on Google Places using Text Search.
+ * Search for a business on Google Places using legacy Text Search.
  * Can search by URL, name, or name+location.
  */
 export async function searchPlaces(query: string, maxResults = 5): Promise<PlaceResult[]> {
@@ -81,35 +100,8 @@ export async function searchPlaces(query: string, maxResults = 5): Promise<Place
   }
 
   try {
-    // Include Referer header for keys with HTTP referrer restrictions
-    const appUrl = process.env.NEXTAUTH_URL ?? 'https://ad-launch-1nfyr8.abacusai.app';
-    const res = await fetch(PLACES_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': apiKey,
-        'Referer': appUrl,
-        'X-Goog-FieldMask': [
-          'places.id',
-          'places.displayName',
-          'places.formattedAddress',
-          'places.addressComponents',
-          'places.nationalPhoneNumber',
-          'places.internationalPhoneNumber',
-          'places.websiteUri',
-          'places.googleMapsUri',
-          'places.location',
-          'places.rating',
-          'places.userRatingCount',
-          'places.businessStatus',
-          'places.types',
-        ].join(','),
-      },
-      body: JSON.stringify({
-        textQuery: query,
-        maxResultCount: maxResults,
-      }),
-    });
+    const params = new URLSearchParams({ query, key: apiKey });
+    const res = await fetch(`${TEXT_SEARCH_URL}?${params}`, { cache: 'no-store' });
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
@@ -118,7 +110,23 @@ export async function searchPlaces(query: string, maxResults = 5): Promise<Place
     }
 
     const data = await res.json();
-    return (data.places ?? []).map(toPlaceResult);
+    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+      console.error(`[google-places] API status: ${data.status}`, data.error_message?.slice(0, 200) ?? '');
+      return [];
+    }
+
+    const results = (data.results ?? []).slice(0, maxResults);
+    if (results.length === 0) return [];
+
+    // Enrich top results with Place Details (phone, website, address components)
+    // Only fetch details for the top few to stay within rate limits
+    const enriched: PlaceResult[] = [];
+    for (const place of results.slice(0, Math.min(maxResults, 5))) {
+      const details = place.place_id ? await getPlaceDetails(place.place_id, apiKey) : null;
+      enriched.push(toPlaceResult(place, details));
+    }
+
+    return enriched;
   } catch (err: any) {
     console.error('[google-places] Request failed:', err?.message);
     return [];
