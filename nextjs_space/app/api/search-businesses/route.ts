@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Business type and location are required' }, { status: 400 });
     }
 
-    const prompt = `Find 6 real ${businessType} businesses in or near ${location}. For each business, provide:
+    const prompt = `Find 15 real ${businessType} businesses in or near ${location}. For each business, provide:
 - name: The actual business name
 - address: Full street address
 - phone: Phone number in (XXX) XXX-XXXX format
@@ -32,7 +32,7 @@ Return ONLY a valid JSON array of objects with those exact keys. No markdown, no
         model: 'gpt-4.1-mini',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
-        max_tokens: 2000,
+        max_tokens: 4000,
       }),
     });
 
@@ -69,7 +69,7 @@ Return ONLY a valid JSON array of objects with those exact keys. No markdown, no
         website: b.website ?? '',
         description: b.description ?? '',
       }))
-      .slice(0, 8);
+      .slice(0, 15);
 
     return NextResponse.json({ businesses });
   } catch (err: any) {

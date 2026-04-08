@@ -28,14 +28,20 @@ const LLM_URL = 'https://apps.abacus.ai/v1/chat/completions';
 export async function POST(req: NextRequest) {
   const start = Date.now();
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const userId = (session.user as any).id;
-
     const body = await req.json();
-    const { analysisId, zip: directZip, radius = 25 } = body;
+    const { analysisId, zip: directZip, radius = 25, _internalUserId } = body;
+
+    // Auth: allow internal server-to-server calls with _internalUserId, otherwise require session
+    let userId: string;
+    if (_internalUserId) {
+      userId = _internalUserId;
+    } else {
+      const session = await getServerSession(authOptions);
+      if (!session?.user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      userId = (session.user as any).id;
+    }
 
     // ── Resolve business context ───────────────────────────────────────
     let businessZip: string | null = directZip || null;

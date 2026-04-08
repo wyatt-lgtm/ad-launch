@@ -227,6 +227,18 @@ export async function GET(request: NextRequest) {
           console.error('[mission-status] Failed to trigger image upgrade:', err?.message);
         });
 
+        // Fire-and-forget: generate 9 social posts (3 RSS + 3 website + 3 holiday)
+        if (analysis.userId) {
+          console.log(`[mission-status] Firing Clark Kent social scout for analysisId=${analysisId}`);
+          fetch(`${baseUrl}/api/rss/clark-kent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ analysisId, _internalUserId: analysis.userId }),
+          }).catch((err) => {
+            console.error('[mission-status] Failed to trigger Clark Kent:', err?.message);
+          });
+        }
+
         return NextResponse.json({
           status: 'completed',
           ads: freshAds,

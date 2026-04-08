@@ -18,6 +18,42 @@ export async function POST(request: NextRequest) {
 
     const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
 
+    // Pre-flight: check if the website is reachable before spending resources
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const probe = await fetch(normalizedUrl, {
+        method: 'HEAD',
+        signal: controller.signal,
+        redirect: 'follow',
+      }).catch(() => null);
+      clearTimeout(timeout);
+
+      if (!probe || !probe.ok) {
+        // Try GET as fallback (some servers reject HEAD)
+        const controller2 = new AbortController();
+        const timeout2 = setTimeout(() => controller2.abort(), 10000);
+        const probe2 = await fetch(normalizedUrl, {
+          signal: controller2.signal,
+          redirect: 'follow',
+        }).catch(() => null);
+        clearTimeout(timeout2);
+
+        if (!probe2 || !probe2.ok) {
+          console.warn(`[analyze] Website unreachable: ${normalizedUrl} (status: ${probe?.status ?? probe2?.status ?? 'timeout'})`);
+          return NextResponse.json({
+            error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
+          }, { status: 422 });
+        }
+      }
+      console.log(`[analyze] Website reachable: ${normalizedUrl} (status: ${probe?.status ?? 200})`);
+    } catch (probeErr: any) {
+      console.warn(`[analyze] Website probe failed: ${normalizedUrl}`, probeErr?.message);
+      return NextResponse.json({
+        error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
+      }, { status: 422 });
+    }
+
     console.log(`[analyze] Starting 3-ad analysis for: ${normalizedUrl}`);
     const result = await createMissions(normalizedUrl);
     console.log(`[analyze] Missions created:`, {
