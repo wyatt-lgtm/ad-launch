@@ -121,6 +121,18 @@ function LocationConfirmCard({
         setConfirmed(true);
         setEditing(false);
         onConfirmed(data.location);
+
+        // Auto-trigger Clark Kent social post scout after location confirmed
+        try {
+          await fetch('/api/rss/clark-kent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ analysisId }),
+          });
+          console.log('[clark-kent] Auto-scout triggered after location confirmation');
+        } catch (scoutErr) {
+          console.error('[clark-kent] Auto-scout error:', scoutErr);
+        }
       }
     } catch (err) {
       console.error('Confirm location error:', err);

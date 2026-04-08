@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
       // Guard: prevent duplicate ad creation from concurrent poll requests.
       // Use an atomic status update — only proceed if we successfully transition from non-completed to 'completed'.
       const lockResult = await prisma.analysis.updateMany({
-        where: { id: analysisId, status: { not: 'completed' } },
+        where: { id: analysisId, status: { notIn: ['completed', 'completing'] } },
         data: { status: 'completing' },
       });
 
