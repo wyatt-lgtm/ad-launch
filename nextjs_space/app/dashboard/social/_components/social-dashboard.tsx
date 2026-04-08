@@ -71,6 +71,12 @@ const POST_TYPE_LABELS: Record<string, string> = {
   promotion: '📣 Promotion',
 };
 
+const LANE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+  rss: { label: '📡 Local News', color: 'text-blue-700', bg: 'bg-blue-50' },
+  website: { label: '🌐 Website', color: 'text-emerald-700', bg: 'bg-emerald-50' },
+  holiday: { label: '🎉 Holiday/Event', color: 'text-purple-700', bg: 'bg-purple-50' },
+};
+
 // ── Main Component ──────────────────────────────────────────────────────────
 
 export default function SocialDashboard() {
@@ -269,7 +275,7 @@ export default function SocialDashboard() {
           className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
         >
           {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-          {scouting ? 'Scouting...' : 'Scout for Posts'}
+          {scouting ? 'Generating 9 Posts...' : 'Generate 9 Posts'}
         </button>
       </div>
 
@@ -285,11 +291,10 @@ export default function SocialDashboard() {
             <Sparkles className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
             <div>
               <p className="font-medium text-green-800">
-                Clark Kent found {scoutResult.posts?.length || 0} post{(scoutResult.posts?.length || 0) !== 1 ? 's' : ''}!
+                {scoutResult.posts?.length || 0} new posts created!
               </p>
               <p className="text-sm text-green-600 mt-0.5">
-                {scoutResult.brief?.totalItems || 0} items from {scoutResult.brief?.feedsMatched || 0} feeds
-                {scoutResult.brief?.patterns?.length > 0 && ` • Patterns: ${scoutResult.brief.patterns.join(', ')}`}
+                {scoutResult.lanes ? `📡 ${scoutResult.lanes.rss} local news • 🌐 ${scoutResult.lanes.website} website • 🎉 ${scoutResult.lanes.holiday} holiday` : `${scoutResult.posts?.length || 0} posts`}
               </p>
             </div>
             <button onClick={() => setScoutResult(null)} className="ml-auto text-green-400 hover:text-green-600">
@@ -374,14 +379,14 @@ export default function SocialDashboard() {
             <div className="text-center py-16 bg-white rounded-2xl border border-gray-100">
               <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-gray-600 mb-2">No posts yet</h3>
-              <p className="text-sm text-gray-400 mb-6">Click “Scout for Posts” to let Clark Kent find local stories for you.</p>
+              <p className="text-sm text-gray-400 mb-6">Click &ldquo;Generate 9 Posts&rdquo; to create local news, website, and holiday posts.</p>
               <button
                 onClick={scoutForPosts}
                 disabled={scouting}
                 className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
               >
                 {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                {scouting ? 'Scouting...' : 'Scout for Posts'}
+                {scouting ? 'Generating 9 Posts...' : 'Generate 9 Posts'}
               </button>
             </div>
           ) : (
@@ -407,6 +412,11 @@ export default function SocialDashboard() {
                             <StatusIcon className="w-3 h-3" />
                             {statusConf.label}
                           </span>
+                          {post.patternType && LANE_LABELS[post.patternType] && (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${LANE_LABELS[post.patternType].bg} ${LANE_LABELS[post.patternType].color}`}>
+                              {LANE_LABELS[post.patternType].label}
+                            </span>
+                          )}
                           <span className="text-xs text-gray-400">
                             {POST_TYPE_LABELS[post.postType] || post.postType}
                           </span>
