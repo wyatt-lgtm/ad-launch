@@ -66,7 +66,7 @@ export default function UrlInputForm() {
           type="text"
           value={url}
           onChange={(e) => { setUrl(e.target.value); setError(''); }}
-          placeholder="Enter your website URL (e.g., www.mybusiness.com)"
+          placeholder="Enter your website URL"
           className="flex-1 px-4 py-4 bg-transparent outline-none text-gray-800 placeholder-gray-400 text-base"
           disabled={loading}
         />

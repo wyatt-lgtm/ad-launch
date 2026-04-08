@@ -196,7 +196,7 @@ function LocationConfirmCard({
             value={city}
             onChange={(e) => { setCity(e.target.value); setEditing(true); }}
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none transition-all"
-            placeholder="Denver"
+            placeholder="City"
           />
         </div>
         <div>
@@ -206,7 +206,7 @@ function LocationConfirmCard({
             value={state}
             onChange={(e) => { setState(e.target.value.toUpperCase().slice(0, 2)); setEditing(true); }}
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none transition-all"
-            placeholder="CO"
+            placeholder="ST"
             maxLength={2}
           />
         </div>
@@ -217,7 +217,7 @@ function LocationConfirmCard({
             value={zip}
             onChange={(e) => { setZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10)); setEditing(true); }}
             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none transition-all"
-            placeholder="80202"
+            placeholder="12345"
             maxLength={10}
           />
         </div>
@@ -268,6 +268,7 @@ function LocationStep({
   const [error, setError] = useState('');
   // Manual entry fields
   const [manualName, setManualName] = useState('');
+  const [manualAddress, setManualAddress] = useState('');
   const [manualCity, setManualCity] = useState('');
   const [manualState, setManualState] = useState('');
   const [manualZip, setManualZip] = useState('');
@@ -333,6 +334,7 @@ function LocationStep({
           }
         : {
             name: manualName,
+            address: manualAddress,
             city: manualCity,
             state: manualState,
             zip: manualZip,
@@ -435,8 +437,41 @@ function LocationStep({
         </div>
       )}
 
-      {/* Manual Entry (no Google results or user chose manual) */}
-      {(places.length === 0 || showManual) && (
+      {/* No Google Maps listing — missing customers message */}
+      {places.length === 0 && !showManual && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-6">
+          <div className="flex items-start gap-3 mb-3">
+            <AlertCircle className="w-6 h-6 text-amber-500 mt-0.5 shrink-0" />
+            <div>
+              <h3 className="text-base font-semibold text-amber-800">Your business wasn't found on Google Maps</h3>
+              <p className="text-sm text-amber-700 mt-1">
+                You may be missing customers who search for businesses like yours on Google Maps.{' '}
+                <a
+                  href="https://business.google.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-700 underline font-medium"
+                >
+                  Add your business to Google Maps for free →
+                </a>
+              </p>
+              <p className="text-sm text-amber-600 mt-2">
+                In the meantime, please enter your address below so we can create your ads.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowManual(true)}
+            className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 transition-all"
+          >
+            <Edit3 className="w-4 h-4" />
+            Enter Address Manually
+          </button>
+        </div>
+      )}
+
+      {/* Manual Entry (user chose manual or clicked enter manually) */}
+      {showManual && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 space-y-4">
           {places.length > 0 && (
             <button
@@ -453,7 +488,17 @@ function LocationStep({
               value={manualName}
               onChange={(e) => setManualName(e.target.value)}
               className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-              placeholder="Sunshine Tire & Auto"
+              placeholder="Your Business Name"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Street Address</label>
+            <input
+              type="text"
+              value={manualAddress}
+              onChange={(e) => setManualAddress(e.target.value)}
+              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+              placeholder="123 Main Street"
             />
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -464,7 +509,7 @@ function LocationStep({
                 value={manualCity}
                 onChange={(e) => setManualCity(e.target.value)}
                 className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-                placeholder="Katy"
+                placeholder="City"
               />
             </div>
             <div>
@@ -474,7 +519,7 @@ function LocationStep({
                 value={manualState}
                 onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
                 className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-                placeholder="TX"
+                placeholder="ST"
                 maxLength={2}
               />
             </div>
@@ -485,7 +530,7 @@ function LocationStep({
                 value={manualZip}
                 onChange={(e) => setManualZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10))}
                 className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-                placeholder="77494"
+                placeholder="12345"
                 maxLength={10}
               />
             </div>
@@ -501,7 +546,7 @@ function LocationStep({
 
       <button
         onClick={handleLaunch}
-        disabled={launching || (!selected && !manualZip)}
+        disabled={launching || (!selected && (!manualCity || !manualState))}
         className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-blue-600 text-white text-base font-bold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-200"
       >
         {launching ? (
