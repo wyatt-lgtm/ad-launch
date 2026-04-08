@@ -266,6 +266,11 @@ function LocationStep({
   const [loading, setLoading] = useState(true);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState('');
+  // Scraped address from website
+  const [scrapedAddress, setScrapedAddress] = useState<{
+    businessName: string; address: string; city: string; state: string; zip: string; phone: string;
+    source: string; confidence: number;
+  } | null>(null);
   // Manual entry fields
   const [manualName, setManualName] = useState('');
   const [manualAddress, setManualAddress] = useState('');
@@ -275,25 +280,39 @@ function LocationStep({
   const [showManual, setShowManual] = useState(false);
 
   useEffect(() => {
-    // Fetch analysis data to get pre-loaded places
     const fetchAnalysis = async () => {
       try {
         const res = await fetch(`/api/analysis/${analysisId}`);
         const data = await res.json().catch(() => ({}));
 
         if (data?.status && data.status !== 'pending_location') {
-          // Already launched — skip to tracking
           onLaunched();
           return;
         }
 
-        // If places were passed from the analyze endpoint response, they're in sessionStorage
+        // Check for scraped address from website (highest priority)
+        const scrapedCache = sessionStorage.getItem(`scraped_${analysisId}`);
+        if (scrapedCache) {
+          const parsed = JSON.parse(scrapedCache);
+          if (parsed?.source && parsed.source !== 'none' && (parsed.city || parsed.zip)) {
+            setScrapedAddress(parsed);
+            // Pre-fill manual fields from scraped data
+            setManualName(parsed.businessName ?? '');
+            setManualAddress(parsed.address ?? '');
+            setManualCity(parsed.city ?? '');
+            setManualState(parsed.state ?? '');
+            setManualZip(parsed.zip ?? '');
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Check for Google Places results
         const cached = sessionStorage.getItem(`places_${analysisId}`);
         if (cached) {
           const parsed = JSON.parse(cached);
           setPlaces(parsed);
           if (parsed.length > 0) setSelected(parsed[0]);
-          // Pre-fill manual from top result
           if (parsed[0]) {
             setManualName(parsed[0].name);
             setManualCity(parsed[0].city);
@@ -301,11 +320,25 @@ function LocationStep({
             setManualZip(parsed[0].zip);
           }
         } else if (data?.businessName) {
-          // Pre-fill from analysis record
+          // Pre-fill from analysis record (could be scraped or Google Places)
           setManualName(data.businessName ?? '');
+          setManualAddress(data.businessAddr ?? '');
           setManualCity(data.businessCity ?? '');
           setManualState(data.businessState ?? '');
           setManualZip(data.businessZip ?? '');
+          // If the record has address data from scraping, show as scraped
+          if (data.geoSource && data.geoSource !== 'google_places' && data.geoSource !== 'none' && (data.businessCity || data.businessZip)) {
+            setScrapedAddress({
+              businessName: data.businessName ?? '',
+              address: data.businessAddr ?? '',
+              city: data.businessCity ?? '',
+              state: data.businessState ?? '',
+              zip: data.businessZip ?? '',
+              phone: data.businessPhone ?? '',
+              source: data.geoSource,
+              confidence: 0.7,
+            });
+          }
         }
       } catch (err) {
         console.error('Failed to fetch analysis:', err);
@@ -365,7 +398,7 @@ function LocationStep({
     return (
       <div className="max-w-[700px] mx-auto px-4 py-20 text-center">
         <Loader2 className="w-10 h-10 text-blue-500 animate-spin mx-auto mb-4" />
-        <p className="text-gray-500">Looking up your business on Google Maps...</p>
+        <p className="text-gray-500">Scanning your website for business details...</p>
       </div>
     );
   }
@@ -382,8 +415,84 @@ function LocationStep({
         </p>
       </div>
 
+      {/* Scraped Address from Website (highest priority) */}
+      {scrapedAddress && !showManual && places.length === 0 && (
+        <div className="bg-white rounded-xl border-2 border-green-200 p-6 mb-6">
+          <div className="flex items-start gap-3 mb-4">
+            <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
+            <div>
+              <h4 className="text-sm font-semibold text-green-800">Address found on your website</h4>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Detected from {
+                  scrapedAddress.source === 'schema_org' ? 'structured data (Schema.org)' :
+                  scrapedAddress.source === 'address_tag' ? 'HTML address tag' :
+                  scrapedAddress.source === 'footer_parse' ? 'website footer' :
+                  'page content'
+                }. Please confirm or edit below.
+              </p>
+            </div>
+          </div>
+          {scrapedAddress.businessName && (
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Business Name</label>
+              <input
+                type="text"
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+              />
+            </div>
+          )}
+          {scrapedAddress.address && (
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Street Address</label>
+              <input
+                type="text"
+                value={manualAddress}
+                onChange={(e) => setManualAddress(e.target.value)}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+              />
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
+              <input
+                type="text"
+                value={manualCity}
+                onChange={(e) => setManualCity(e.target.value)}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">State</label>
+              <input
+                type="text"
+                value={manualState}
+                onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                maxLength={2}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">ZIP Code</label>
+              <input
+                type="text"
+                value={manualZip}
+                onChange={(e) => setManualZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10))}
+                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                maxLength={10}
+              />
+            </div>
+          </div>
+          {scrapedAddress.phone && (
+            <div className="text-xs text-gray-400 mt-1">📞 {scrapedAddress.phone}</div>
+          )}
+        </div>
+      )}
+
       {/* Google Places Results */}
-      {places.length > 0 && !showManual && (
+      {places.length > 0 && !showManual && !scrapedAddress && (
         <div className="space-y-3 mb-6">
           {places.map((place) => (
             <button
@@ -437,8 +546,8 @@ function LocationStep({
         </div>
       )}
 
-      {/* No Google Maps listing — missing customers message */}
-      {places.length === 0 && !showManual && (
+      {/* No Google Maps listing — missing customers message (only when no scraped address either) */}
+      {places.length === 0 && !showManual && !scrapedAddress && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-6">
           <div className="flex items-start gap-3 mb-3">
             <AlertCircle className="w-6 h-6 text-amber-500 mt-0.5 shrink-0" />
