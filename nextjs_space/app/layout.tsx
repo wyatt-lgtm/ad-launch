@@ -10,8 +10,8 @@ const inter = Inter({ subsets: ['latin'] });
 export async function generateMetadata(): Promise<Metadata> {
   const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
   return {
-    title: 'Ad Launch - 3 Free AI-Generated Ads in Minutes',
-    description: 'Enter your website URL and get 3 professionally crafted Facebook ads, SEO insights, and a 90-day posting plan. Free for business emails.',
+    title: 'Ad Launch - Turn Your Website Into a Social Posting Factory',
+    description: 'Enter your URL and watch AI generate 9 ready-to-post social media creatives from your website, local news, and upcoming holidays.',
     metadataBase: new URL(baseUrl),
     icons: {
       icon: '/favicon.svg',
