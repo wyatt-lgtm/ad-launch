@@ -291,6 +291,9 @@ export async function getWorkflowResults(workflowIds: string[]) {
       byWorkflow.get(wf)!.push(t);
     }
 
+    // Also track Creative Strategy task per workflow for fallback copy
+    const wfCreativeStrategy = new Map<string, number>(); // workflowId → taskId
+
     for (const [wfId, tasks] of byWorkflow) {
       // Pick ONE ad task per workflow: prefer Conversion Assembly (final step),
       // then Render Production, so we don't double-count ads per workflow.
@@ -305,6 +308,10 @@ export async function getWorkflowResults(workflowIds: string[]) {
         } else if ((dept.includes('render')) && !bestAdTask) {
           bestAdTask = task; // Fallback if no Conversion Assembly
         }
+        // Track creative strategy per workflow (Ogilvy's copy data)
+        if (dept.includes('creative strategy')) {
+          wfCreativeStrategy.set(wfId, task.id);
+        }
         // First research task has business data for SEO
         if (dept.includes('research') && !researchData) {
           researchData = { taskId: task.id };
@@ -313,7 +320,7 @@ export async function getWorkflowResults(workflowIds: string[]) {
         if (dept.includes('marketing') && !marketingData) {
           marketingData = { taskId: task.id, output: null as any };
         }
-        // Creative strategy has copy data
+        // Creative strategy has copy data (first across all workflows, for SEO/posting plan)
         if (dept.includes('creative strategy') && !creativeData) {
           creativeData = { taskId: task.id };
         }
@@ -372,16 +379,32 @@ export async function getWorkflowResults(workflowIds: string[]) {
           });
         }
       } else {
-        // Single-asset fallback
+        // Single-asset fallback (e.g. Render Production only, no Conversion Assembly)
         const artifactPath = taskOutput?.background_asset_path ?? '';
         const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(ad.taskId);
-        let headline = '';
-        let caption = '';
-        let cta = '';
-        if (taskOutput) {
-          headline = taskOutput?.headline ?? '';
-          caption = taskOutput?.body_copy ?? taskOutput?.body ?? taskOutput?.caption ?? '';
-          cta = taskOutput?.cta ?? '';
+        let headline = taskOutput?.headline ?? '';
+        let caption = taskOutput?.body_copy ?? taskOutput?.body ?? taskOutput?.caption ?? '';
+        let cta = taskOutput?.cta ?? '';
+
+        // If Render Production output has no copy (background-only image),
+        // pull headline/body/cta from Creative Strategy (Ogilvy) for this workflow
+        if (!headline && !caption) {
+          const ogilvyTaskId = wfCreativeStrategy.get(ad.workflowId);
+          if (ogilvyTaskId) {
+            const ogilvyOutputs = await getTaskOutputs(ogilvyTaskId);
+            for (const out of ogilvyOutputs) {
+              try {
+                const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+                if (parsed?.headline) {
+                  headline = parsed.headline;
+                  caption = parsed.body_copy ?? parsed.body ?? '';
+                  cta = parsed.cta ?? '';
+                  console.log(`[getWorkflowResults] Pulled copy from Ogilvy (task ${ogilvyTaskId}) for workflow ${ad.workflowId}`);
+                  break;
+                }
+              } catch { /* ignore */ }
+            }
+          }
         }
         enrichedAds.push({ ...ad, headline, caption, cta, imageUrl });
       }

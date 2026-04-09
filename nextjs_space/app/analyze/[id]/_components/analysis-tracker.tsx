@@ -830,19 +830,21 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     }
   }, [status, session, analysisId, router]);
 
-  // Deduplicate tasks by department per workflow for cleaner display
+  // Deduplicate tasks by department across 3 parallel workflows for cleaner display.
+  // Enforce sequential appearance: a step can only show "active" if the prior step
+  // is at least partially complete, so the tracker never looks out of order.
   const displayTasks = React.useMemo(() => {
     if (tasks.length === 0) return [];
-    // Group by department, show highest-priority status
+    // Group by department label
     const byDept = new Map<string, TaskItem[]>();
     for (const t of tasks) {
       const key = t.label;
       if (!byDept.has(key)) byDept.set(key, []);
       byDept.get(key)!.push(t);
     }
-    // For each department, show aggregated status
     const result: TaskItem[] = [];
     const deptOrder = ['Business Analysis', 'Marketing Strategy', 'Ad Copywriting', 'Visual Direction', 'Image Generation'];
+    let prevHasAnyComplete = true; // first step has no prerequisite
     for (const dept of deptOrder) {
       const items = byDept.get(dept);
       if (!items || items.length === 0) continue;
@@ -850,13 +852,20 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       const allComplete = items.every(i => i.status === 'complete');
       const hasError = items.some(i => i.status === 'error');
       const completeCount = items.filter(i => i.status === 'complete').length;
+      // Only show as "active" if the prior step has at least 1 completion
+      const effectiveStatus: TaskItem['status'] = allComplete
+        ? 'complete'
+        : hasError ? 'error'
+        : (hasActive && prevHasAnyComplete) ? 'active'
+        : 'waiting';
       result.push({
         ...items[0],
-        status: hasActive ? 'active' : allComplete ? 'complete' : hasError ? 'error' : 'waiting',
+        status: effectiveStatus,
         description: items.length > 1
           ? `${items[0].description} (${completeCount}/${items.length} complete)`
           : items[0].description,
       });
+      prevHasAnyComplete = completeCount > 0;
     }
     return result;
   }, [tasks]);
