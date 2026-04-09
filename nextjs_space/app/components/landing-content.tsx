@@ -136,7 +136,7 @@ export default function LandingContent() {
         <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
           <div className="text-center mb-14">
             <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
-              9 Posts. 3 Angles. <span className="text-blue-600">Zero Effort.</span>
+              9 Posts. 3 Angles. <span className="text-blue-600">2 Easy.</span>
             </h2>
             <p className="text-gray-600 max-w-xl mx-auto">We scan your website, pull local news, and match upcoming holidays to create a complete social calendar.</p>
           </div>
