@@ -34,9 +34,7 @@ async function sendCommand(command: string) {
 
 /**
  * Create a single mission that generates 3 ads (awareness, conversion, trust).
- * Sends 1 command → 1 workflow → 6 tasks. Research & marketing run once;
- * Creative Strategy produces 3 angle-specific headlines/CTAs which flow
- * through Creative Direction → Render → Assembly as a multi-campaign.
+ * Sends 1 command → 1 workflow → 5 tasks.
  */
 export async function createMissions(websiteUrl: string) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -51,6 +49,55 @@ export async function createMissions(websiteUrl: string) {
     workflowIds: result.workflowId ? [result.workflowId] : [],
     allTaskIds: result.taskIds,
     angles: ['awareness', 'conversion', 'trust'],
+  };
+}
+
+/**
+ * Create a single-lane mission for one content type.
+ * lane: 'website' | 'news' | 'holiday'
+ * context: additional context (news headline, holiday info, etc.)
+ * count: number of posts to generate (default 1)
+ */
+export async function createLaneMission(
+  websiteUrl: string,
+  lane: 'website' | 'news' | 'holiday',
+  context: string,
+  count: number = 1,
+) {
+  const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+
+  let command = '';
+  if (lane === 'website') {
+    command = [
+      `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} promoting the business.`,
+      `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
+      `Use colors, logo, and brand voice from the website. Make it feel authentic — like the business owner wrote it.`,
+      context ? `\nAdditional context:\n${context}` : '',
+    ].filter(Boolean).join('\n');
+  } else if (lane === 'news') {
+    command = [
+      `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} that connects the business to local news.`,
+      `The post should tie the business to local community news in a way that feels natural and relevant.`,
+      `Use the business brand colors and voice from the website.`,
+      `\nLocal news context to reference:\n${context}`,
+    ].join('\n');
+  } else if (lane === 'holiday') {
+    command = [
+      `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} tied to an upcoming holiday or seasonal event.`,
+      `The post should connect the business to the holiday/event in a creative, engaging way.`,
+      `Use the business brand colors and voice from the website.`,
+      `\nUpcoming events/holidays:\n${context}`,
+    ].join('\n');
+  }
+
+  console.log(`[tombstone] Creating ${lane} lane mission (${count} posts) for: ${normalizedUrl}`);
+  const result = await sendCommand(command);
+
+  return {
+    success: !!result.workflowId,
+    workflowId: result.workflowId,
+    taskIds: result.taskIds,
+    lane,
   };
 }
 

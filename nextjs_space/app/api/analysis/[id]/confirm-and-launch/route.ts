@@ -2,18 +2,16 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { createMissions, createSocialMissions } from '@/lib/tombstone';
+import { createLaneMission } from '@/lib/tombstone';
+import { getUpcomingEvents } from '@/lib/social/upcoming-events';
+import { generateContentBrief } from '@/lib/rss/trade-area-feed';
 
 /**
  * POST /api/analysis/[id]/confirm-and-launch
- * Step 2: User confirms location, then:
- *   1. Clark Kent scouts LOCAL intel only (RSS + events + trade area)
- *   2. Scout brief is sent to Tombstone as a social content mission
- *   3. Tombstone ad generation launches in parallel
- *
- * Clark Kent is SCOUT ONLY — provides local context that Jim Bridger
- * (website recon) can't get. Tombstone's creative chain
- * (Bridger → Zig → Ogilvy → Draper → Warhol → Hopkins) produces the actual posts.
+ * Step 2: User confirms location, then launches 3 lane-based missions:
+ *   Lane 1 (website): Brand/service post from website content
+ *   Lane 2 (news): Post tied to local news
+ *   Lane 3 (holiday): Post tied to upcoming holiday/event
  */
 export async function POST(
   request: NextRequest,
@@ -30,7 +28,6 @@ export async function POST(
       return NextResponse.json({ error: 'Analysis not found' }, { status: 404 });
     }
     if (analysis.status !== 'pending_location') {
-      // Already launched — return current state
       return NextResponse.json({
         success: true,
         analysisId,
@@ -51,87 +48,83 @@ export async function POST(
         businessPhone: phone || analysis.businessPhone,
         geoConfirmed: true,
         geoSource: placeId ? 'google_places' : (analysis.geoSource ?? 'manual'),
-        status: 'processing', // Transition to processing
+        status: 'processing',
       },
     });
 
-    console.log(`[confirm-and-launch] Location confirmed for ${analysisId}: ${name} in ${city}, ${state} ${zip}`);
+    const businessCity = city || analysis.businessCity || '';
+    const businessState = state || analysis.businessState || '';
+    const businessZip = zip || analysis.businessZip || '';
+    const businessName = name || analysis.businessName || '';
+    console.log(`[confirm-and-launch] Location confirmed for ${analysisId}: ${businessName} in ${businessCity}, ${businessState} ${businessZip}`);
 
-    // ── Clark Kent Scout → Tombstone Social Mission ─────────────────
-    // Fire scout + social mission in background (don't block ad launch)
-    const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
-    if (analysis.userId && zip) {
-      console.log(`[confirm-and-launch] Firing Clark Kent scout for ${analysisId} (ZIP: ${zip})`);
+    // ── Gather context for news and holiday lanes ────────────────────
+    let newsContext = '';
+    let holidayContext = '';
 
-      // Run scout in background, then send brief to Tombstone
-      (async () => {
-        try {
-          // Step 1: Clark Kent gathers intelligence
-          const scoutRes = await fetch(`${baseUrl}/api/rss/clark-kent`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              analysisId,
-              zip,
-              _internalUserId: analysis.userId,
-            }),
-          });
-
-          if (!scoutRes.ok) {
-            console.error(`[confirm-and-launch] Clark Kent scout failed: ${scoutRes.status}`);
-            return;
-          }
-
-          const scoutData = await scoutRes.json();
-          const scoutSummary = scoutData?.brief?.scoutSummary;
-
-          if (!scoutSummary) {
-            console.error('[confirm-and-launch] Clark Kent returned no scout summary');
-            return;
-          }
-
-          console.log(`[confirm-and-launch] Scout brief ready (${scoutData.meta?.rssItemCount} RSS items, ${scoutData.meta?.eventCount} events)`);
-
-          // Step 2: Send scout brief to Tombstone as social content mission
-          const websiteUrl = analysis.websiteUrl;
-          const socialResult = await createSocialMissions(websiteUrl, scoutSummary);
-
-          if (socialResult.success) {
-            const socialMissionId = socialResult.workflowIds.join(',');
-            await prisma.analysis.update({
-              where: { id: analysisId },
-              data: { socialMissionId },
-            });
-            console.log(`[confirm-and-launch] Social mission created: ${socialMissionId} (${socialResult.allTaskIds.length} tasks)`);
-          } else {
-            console.error('[confirm-and-launch] Tombstone social mission creation failed');
-          }
-        } catch (err: any) {
-          console.error('[confirm-and-launch] Scout → social pipeline error:', err?.message);
-        }
-      })();
+    // Get upcoming events/holidays
+    try {
+      const events = getUpcomingEvents();
+      if (events.length > 0) {
+        holidayContext = events.slice(0, 5).map(e => `${e.name} (${e.date}): ${e.ideas}`).join('\n');
+      }
+    } catch (err: any) {
+      console.error('[confirm-and-launch] Failed to get upcoming events:', err?.message);
+    }
+    if (!holidayContext) {
+      holidayContext = 'Spring/Summer seasonal content — fresh starts, outdoor activities, community events';
     }
 
-    // ── Launch Tombstone ad generation (parallel) ───────────────────
-    console.log(`[confirm-and-launch] Launching Tombstone ads for: ${analysis.websiteUrl}`);
-    const result = await createMissions(analysis.websiteUrl);
-    console.log(`[confirm-and-launch] Ad missions created:`, {
-      success: result.success,
-      workflowIds: result.workflowIds,
-      taskCount: result.allTaskIds.length,
-      angles: result.angles,
+    // Get local news via RSS trade area feed
+    try {
+      if (businessZip) {
+        const brief = await generateContentBrief(businessZip, 25);
+        if (brief?.headlines && brief.headlines.length > 0) {
+          newsContext = brief.headlines.slice(0, 5).map((h: any) =>
+            `${h.title}${h.source ? ` (${h.source})` : ''}`
+          ).join('\n');
+        }
+      }
+    } catch (err: any) {
+      console.error('[confirm-and-launch] Failed to get local news:', err?.message);
+    }
+    if (!newsContext) {
+      newsContext = `Local community news and events in ${businessCity}, ${businessState}. Focus on small business, community development, or local economy stories.`;
+    }
+
+    // ── Launch 3 lane missions in parallel ───────────────────────────
+    console.log(`[confirm-and-launch] Launching 3 lane missions for: ${analysis.websiteUrl}`);
+
+    const [websiteResult, newsResult, holidayResult] = await Promise.all([
+      createLaneMission(analysis.websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`),
+      createLaneMission(analysis.websiteUrl, 'news', newsContext),
+      createLaneMission(analysis.websiteUrl, 'holiday', holidayContext),
+    ]);
+
+    console.log(`[confirm-and-launch] Lane missions created:`, {
+      website: { success: websiteResult.success, workflowId: websiteResult.workflowId },
+      news: { success: newsResult.success, workflowId: newsResult.workflowId },
+      holiday: { success: holidayResult.success, workflowId: holidayResult.workflowId },
     });
 
-    if (!result.success) {
-      console.error('[confirm-and-launch] Tombstone API failed');
+    // Collect workflow IDs (store as JSON map so we know which is which)
+    const laneWorkflows: Record<string, string> = {};
+    if (websiteResult.workflowId) laneWorkflows.website = websiteResult.workflowId;
+    if (newsResult.workflowId) laneWorkflows.news = newsResult.workflowId;
+    if (holidayResult.workflowId) laneWorkflows.holiday = holidayResult.workflowId;
+
+    const allWorkflowIds = Object.values(laneWorkflows);
+    if (allWorkflowIds.length === 0) {
+      console.error('[confirm-and-launch] All lane missions failed');
       await prisma.analysis.update({
         where: { id: analysisId },
         data: { status: 'error' },
       });
-      return NextResponse.json({ error: 'Failed to start ad generation. Please try again.' }, { status: 502 });
+      return NextResponse.json({ error: 'Failed to start post generation. Please try again.' }, { status: 502 });
     }
 
-    const missionId = result.workflowIds.join(',');
+    // Store as JSON so frontend knows which workflow = which lane
+    const missionId = JSON.stringify(laneWorkflows);
     await prisma.analysis.update({
       where: { id: analysisId },
       data: { missionId },
@@ -141,7 +134,8 @@ export async function POST(
       success: true,
       analysisId,
       missionId,
-      workflowCount: result.workflowIds.length,
+      laneWorkflows,
+      workflowCount: allWorkflowIds.length,
       status: 'processing',
     });
   } catch (err: any) {

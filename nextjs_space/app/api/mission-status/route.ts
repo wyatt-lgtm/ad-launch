@@ -67,6 +67,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Analysis not found' }, { status: 404 });
     }
 
+    // Parse lane workflows from missionId (used in all response paths)
+    let laneWorkflows: Record<string, string | string[]> = {};
+    if (analysis.missionId) {
+      try {
+        const parsed = JSON.parse(analysis.missionId);
+        if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+          laneWorkflows = parsed;
+        }
+      } catch { /* legacy comma-separated — no lane info */ }
+    }
+
     // If already completed with ads, return cached results with fresh image URLs
     if ((analysis.status === 'completed' || analysis.status === 'completing') && (analysis.ads?.length ?? 0) > 0) {
       const freshAds = await resolveAdImages(analysis.ads ?? []);
@@ -133,6 +144,7 @@ export async function GET(request: NextRequest) {
         websiteConceptData: cachedResults.websiteConcept ?? null,
         budgetData: cachedResults.budget ?? null,
         socialStatus,
+        laneWorkflows,
         tasks: [], // No need to poll tasks anymore
       });
     }
@@ -142,8 +154,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ status: analysis.status, tasks: [] });
     }
 
-    // Parse workflow IDs (comma-separated)
-    const workflowIds = analysis.missionId.split(',').filter(Boolean);
+    // Build flat array of workflow IDs from laneWorkflows or legacy comma-separated
+    let workflowIds: string[] = [];
+    if (Object.keys(laneWorkflows).length > 0) {
+      // Flatten — each lane value can be a string or array of strings (from generate-more)
+      for (const v of Object.values(laneWorkflows)) {
+        if (Array.isArray(v)) workflowIds.push(...v);
+        else if (v) workflowIds.push(v);
+      }
+    } else if (analysis.missionId) {
+      workflowIds = analysis.missionId.split(',').filter(Boolean);
+    }
 
     // Poll Tombstone for status
     const statusResult = await getMultiWorkflowStatus(workflowIds);
@@ -211,8 +232,18 @@ export async function GET(request: NextRequest) {
         const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl);
         const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
 
+        // Build reverse map: workflowId → lane name
+        const wfToLane: Record<string, string> = {};
+        for (const [lane, wfIdOrArr] of Object.entries(laneWorkflows)) {
+          if (Array.isArray(wfIdOrArr)) {
+            for (const wfId of wfIdOrArr) wfToLane[wfId] = lane;
+          } else if (wfIdOrArr) {
+            wfToLane[wfIdOrArr] = lane;
+          }
+        }
+
         // Create ad records IMMEDIATELY with Tombstone images (fast — no GPT-5.1 blocking)
-        const adsToCreate = results.ads.slice(0, 3);
+        const adsToCreate = results.ads;
         console.log(`[mission-status] Creating ${adsToCreate.length} ads with Tombstone images (fast path)`);
         for (let i = 0; i < adsToCreate.length; i++) {
           const ad = adsToCreate[i];
@@ -235,6 +266,7 @@ export async function GET(request: NextRequest) {
               caption: ad?.caption ?? '',
               headline: ad?.headline ?? 'Ad',
               watermarked: true,
+              lane: wfToLane[ad?.workflowId] ?? null,
             },
           });
         }
@@ -316,6 +348,7 @@ export async function GET(request: NextRequest) {
           websiteConceptData,
           budgetData,
           socialStatus,
+          laneWorkflows,
           tasks: statusResult.tasks ?? [],
         });
       } catch (err: any) {
@@ -359,6 +392,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       status: mappedStatus,
       tasks: statusResult.tasks ?? [],
+      laneWorkflows,
       ...(errorReason ? { errorReason } : {}),
     });
   } catch (err: any) {

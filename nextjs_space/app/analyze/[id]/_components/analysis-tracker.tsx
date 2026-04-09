@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, CheckCircle, AlertCircle, Search, Sparkles, FileCheck,
   Lock, Clock, CircleDot, XCircle, MapPin, Edit3,
+  Building2, Newspaper, CalendarHeart, Plus,
 } from 'lucide-react';
 import WatermarkCard from '../../../components/watermark-card';
 import SeoInsights from '../../../components/seo-insights';
@@ -690,11 +691,19 @@ function LocationStep({
   );
 }
 
+/* ── Lane configuration ───────────────────────────────────── */
+const LANE_CONFIG: Record<string, { label: string; description: string; icon: React.ElementType; color: string; bgColor: string }> = {
+  website: { label: 'Website / Brand', description: 'Created from your website content', icon: Building2, color: 'text-blue-600', bgColor: 'bg-blue-50' },
+  news:    { label: 'Local News', description: 'Tied to local news in your area', icon: Newspaper, color: 'text-amber-600', bgColor: 'bg-amber-50' },
+  holiday: { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50' },
+};
+
 export default function AnalysisTracker({ analysisId }: { analysisId: string }) {
   const [phase, setPhase] = useState<'location' | 'tracking'>('location');
   const [status, setStatus] = useState('processing');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [ads, setAds] = useState<Ad[]>([]);
+  const [laneWorkflows, setLaneWorkflows] = useState<Record<string, string | string[]>>({});
   const [seoData, setSeoData] = useState<any>(null);
   const [postingPlan, setPostingPlan] = useState<any>(null);
   const [googleAdsData, setGoogleAdsData] = useState<any>(null);
@@ -702,6 +711,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const [budgetData, setBudgetData] = useState<any>(null);
   const [error, setError] = useState('');
   const [showRegister, setShowRegister] = useState(false);
+  const [generatingLane, setGeneratingLane] = useState<string | null>(null);
   const { data: session } = useSession() || {};
   const router = useRouter();
 
@@ -716,6 +726,11 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       if (s === 'pending_location') return;
 
       setStatus(s);
+
+      // Capture lane workflow mapping
+      if (data?.laneWorkflows && Object.keys(data.laneWorkflows).length > 0) {
+        setLaneWorkflows(data.laneWorkflows);
+      }
 
       // Update live task list
       if (data?.tasks?.length > 0) {
@@ -736,6 +751,47 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       console.error('Poll error:', err);
     }
   }, [analysisId]);
+
+  /* ── Group ads by lane ───────────────────────────────────── */
+  const adsByLane = React.useMemo(() => {
+    const map: Record<string, Ad[]> = { website: [], news: [], holiday: [] };
+    for (const ad of ads) {
+      const lane = (ad as any).lane;
+      if (lane && map[lane]) {
+        map[lane].push(ad);
+      } else {
+        // Fallback: assign to first non-full lane (for legacy ads without lane field)
+        if (map.website.length === 0) map.website.push(ad);
+        else if (map.news.length === 0) map.news.push(ad);
+        else if (map.holiday.length === 0) map.holiday.push(ad);
+        else map.website.push(ad); // overflow into website
+      }
+    }
+    return map;
+  }, [ads]);
+
+  /* ── Generate more posts for a lane ─────────────────────── */
+  const handleGenerateMore = useCallback(async (lane: string) => {
+    setGeneratingLane(lane);
+    try {
+      const res = await fetch(`/api/analysis/${analysisId}/generate-more`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lane }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data?.success) {
+        // Re-poll to pick up new ads
+        setTimeout(() => pollStatus(), 2000);
+      } else {
+        console.error('[generate-more] Failed:', data?.error);
+      }
+    } catch (err: any) {
+      console.error('[generate-more] Error:', err);
+    } finally {
+      setGeneratingLane(null);
+    }
+  }, [analysisId, pollStatus]);
 
   const statusRef = React.useRef(status);
   statusRef.current = status;
@@ -843,7 +899,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         </h1>
         <p className="text-gray-500 mt-2 text-sm">
           {isGenerating
-            ? 'Our AI agents are analyzing your business and crafting 9 unique posts'
+            ? 'Our AI agents are analyzing your business and crafting 3 unique posts'
             : 'Register with your business email to download without watermarks'}
         </p>
       </div>
@@ -890,7 +946,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
           <div className="mt-6 text-center">
             <span className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">
               <Sparkles className="w-4 h-4" />
-              Generating 9 unique posts
+              Generating 3 unique posts
             </span>
           </div>
         </div>
@@ -907,29 +963,81 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         </div>
       )}
 
-      {/* Results: Ads */}
+      {/* Results: Lane-Based Posts */}
       {!isGenerating && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-          {/* Ads Section */}
+          {/* Posts by Content Lane */}
           <div className="mb-12">
-            <div className="text-center mb-6">
-              <h2 className="text-xl font-bold text-gray-900">Your 3 Generated Ads</h2>
-              <p className="text-gray-500 text-sm mt-1">Each targets a different marketing angle for maximum impact</p>
+            <div className="text-center mb-8">
+              <h2 className="text-xl font-bold text-gray-900">Your Generated Posts</h2>
+              <p className="text-gray-500 text-sm mt-1">3 content lanes to keep your social media fresh and engaging</p>
             </div>
-            <div className="grid md:grid-cols-3 gap-6">
-              {(ads.length > 0 ? ads : [null, null, null]).map((ad: any, i: number) => (
-                <WatermarkCard
-                  key={ad?.id ?? i}
-                  caption={ad?.caption ?? null}
-                  headline={ad?.headline ?? null}
-                  imageUrl={ad?.imageUrl ?? ad?.watermarkedUrl ?? null}
-                  index={i}
-                  angle={i === 0 ? 'Awareness' : i === 1 ? 'Conversion' : 'Trust'}
-                  businessName={seoData?.businessName ?? ''}
-                  websiteUrl={seoData?.websiteUrl ?? ''}
-                  editable={ads.length > 0}
-                />
-              ))}
+
+            <div className="grid md:grid-cols-3 gap-8">
+              {(['website', 'news', 'holiday'] as const).map((lane) => {
+                const config = LANE_CONFIG[lane];
+                const laneAds = adsByLane[lane] ?? [];
+                const Icon = config.icon;
+                const isLoadingMore = generatingLane === lane;
+
+                return (
+                  <div key={lane} className="space-y-4">
+                    {/* Lane Header */}
+                    <div className={`flex items-center gap-2.5 px-4 py-3 rounded-xl ${config.bgColor}`}>
+                      <Icon className={`w-5 h-5 ${config.color}`} />
+                      <div>
+                        <h3 className={`text-sm font-bold ${config.color}`}>{config.label}</h3>
+                        <p className="text-xs text-gray-500">{config.description}</p>
+                      </div>
+                    </div>
+
+                    {/* Posts in this lane */}
+                    {laneAds.length > 0 ? (
+                      laneAds.map((ad, i) => (
+                        <WatermarkCard
+                          key={ad.id ?? `${lane}-${i}`}
+                          caption={ad.caption ?? null}
+                          headline={ad.headline ?? null}
+                          imageUrl={ad.imageUrl ?? ad.watermarkedUrl ?? null}
+                          index={i}
+                          angle={config.label}
+                          businessName={seoData?.businessName ?? ''}
+                          websiteUrl={seoData?.websiteUrl ?? ''}
+                          editable={true}
+                        />
+                      ))
+                    ) : (
+                      <div className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center">
+                        <Icon className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                        <p className="text-sm text-gray-400">No post generated yet</p>
+                      </div>
+                    )}
+
+                    {/* Generate More button */}
+                    <button
+                      onClick={() => handleGenerateMore(lane)}
+                      disabled={isLoadingMore || generatingLane !== null}
+                      className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold transition-all border-2 ${
+                        isLoadingMore
+                          ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
+                          : 'border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600'
+                      }`}
+                    >
+                      {isLoadingMore ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Generating 3 more...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-4 h-4" />
+                          Generate 3 More
+                        </>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -961,8 +1069,8 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
           {/* Register CTA */}
           <div className="text-center py-8">
             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-8 max-w-xl mx-auto text-white">
-              <h3 className="text-2xl font-bold mb-3">Download Your Ads Without Watermarks</h3>
-              <p className="text-blue-100 mb-6">Register with your business email to get all 3 ads in full resolution, ready to post.</p>
+              <h3 className="text-2xl font-bold mb-3">Download Your Posts Without Watermarks</h3>
+              <p className="text-blue-100 mb-6">Register with your business email to get all posts in full resolution, ready to publish.</p>
               <button
                 onClick={() => setShowRegister(true)}
                 className="px-8 py-4 bg-white text-blue-600 rounded-xl font-bold text-lg hover:bg-blue-50 transition-all shadow-lg"

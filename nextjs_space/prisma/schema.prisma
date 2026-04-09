@@ -67,6 +67,7 @@ model Ad {
   caption         String?  @db.Text
   headline        String?
   watermarked     Boolean  @default(true)
+  lane            String?  // "website" | "news" | "holiday"
   createdAt       DateTime @default(now())
   analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
