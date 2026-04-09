@@ -25,6 +25,7 @@ interface DemoPost {
 }
 
 const ABACUS_URL = 'https://apps.abacus.ai/v1/chat/completions';
+const OPENAI_IMAGE_API = 'https://api.openai.com/v1/chat/completions';
 
 function sseEvent(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
@@ -126,10 +127,11 @@ Respond with raw JSON only. No markdown, no code blocks, no explanation.`;
 }
 
 async function generatePostImage(
-  apiKey: string,
   post: DemoPost,
   businessUrl: string,
 ): Promise<string | null> {
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!openaiKey) return null;
   try {
     const prompt = `Create a professional social media post image for a business (${businessUrl}).
 Post headline: "${post.headline}"
@@ -138,11 +140,11 @@ Category: ${post.lane === 'website' ? 'business promotional' : post.lane === 'ne
 
 Design a visually striking image that would work as a social media post. Make it eye-catching, professional, and relevant to the content. Include the headline text "${post.headline}" rendered beautifully into the image with proper typography. Aspect ratio 4:5.`;
 
-    const resp = await fetch(ABACUS_URL, {
+    const resp = await fetch(OPENAI_IMAGE_API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${openaiKey}`,
       },
       body: JSON.stringify({
         model: 'gpt-5.1',
@@ -235,7 +237,7 @@ export async function POST(req: NextRequest) {
         for (let i = 0; i < allPosts.length; i += BATCH_SIZE) {
           const batch = allPosts.slice(i, i + BATCH_SIZE);
           const imageResults = await Promise.all(
-            batch.map(post => generatePostImage(apiKey, post, url))
+            batch.map(post => generatePostImage(post, url))
           );
           for (let j = 0; j < batch.length; j++) {
             if (imageResults[j]) {
