@@ -804,7 +804,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       if (statusRef.current !== 'completed' && statusRef.current !== 'error') {
         pollStatus();
       }
-    }, 4000);
+    }, 6000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisId, phase]);

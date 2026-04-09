@@ -189,7 +189,14 @@ export function getTaskLabel(department: string): { label: string; description: 
  */
 export async function getMultiWorkflowStatus(workflowIds: string[]) {
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store' });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000); // 15s timeout for large response
+    let res: Response;
+    try {
+      res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store', signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
     const allTasks = await res.json().catch(() => []);
     if (!Array.isArray(allTasks)) return { success: false, tasks: [], status: 'error' };
 
@@ -257,7 +264,14 @@ export async function getMissionStatus(missionId: string) {
  */
 export async function getWorkflowResults(workflowIds: string[]) {
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store' });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000); // 20s timeout
+    let res: Response;
+    try {
+      res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store', signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
     const allTasks = await res.json().catch(() => []);
     if (!Array.isArray(allTasks)) return { success: false, ads: [], research: null, marketing: null, creative: null };
 
@@ -278,15 +292,18 @@ export async function getWorkflowResults(workflowIds: string[]) {
     }
 
     for (const [wfId, tasks] of byWorkflow) {
+      // Pick ONE ad task per workflow: prefer Conversion Assembly (final step),
+      // then Render Production, so we don't double-count ads per workflow.
+      let bestAdTask: any = null;
       for (const task of tasks) {
         const dept = (task?.department ?? '').toLowerCase();
         const status = (task?.status ?? '').toLowerCase();
         if (status !== 'complete' && status !== 'completed') continue;
 
-        // Render Production (Andy Warhol) = final ad(s) with full composition
-        // Also check Conversion Assembly for backward compat with older workflows
-        if (dept.includes('render') || dept.includes('conversion') || dept.includes('assembly')) {
-          ads.push({ taskId: task.id, workflowId: wfId });
+        if (dept.includes('conversion') || dept.includes('assembly')) {
+          bestAdTask = task; // Highest priority — final pipeline step
+        } else if ((dept.includes('render')) && !bestAdTask) {
+          bestAdTask = task; // Fallback if no Conversion Assembly
         }
         // First research task has business data for SEO
         if (dept.includes('research') && !researchData) {
@@ -301,13 +318,16 @@ export async function getWorkflowResults(workflowIds: string[]) {
           creativeData = { taskId: task.id };
         }
       }
+      if (bestAdTask) {
+        ads.push({ taskId: bestAdTask.id, workflowId: wfId });
+      }
     }
 
     // Enrich ads with artifact URLs and outputs
     // Andy Warhol outputs: { renders: [...], background_asset_path, ... }
     // Claude Hopkins (legacy): { assets: [...], final_ad_path, ... }
     const enrichedAds = [];
-    for (const ad of ads.slice(0, 3)) {
+    for (const ad of ads) {
       const outputs = await getTaskOutputs(ad.taskId);
       let taskOutput: any = null;
       for (const out of outputs) {
@@ -317,9 +337,10 @@ export async function getWorkflowResults(workflowIds: string[]) {
       }
 
       // Andy Warhol multi-campaign: renders array with per-campaign images
+      // Each lane workflow should produce 1 ad — take the first render only
       const renders = taskOutput?.renders;
       if (Array.isArray(renders) && renders.length > 0) {
-        for (const render of renders.slice(0, 3)) {
+        for (const render of renders.slice(0, 1)) {
           const artifactPath = render?.background_asset_path ?? '';
           const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(ad.taskId);
           enrichedAds.push({
@@ -336,7 +357,7 @@ export async function getWorkflowResults(workflowIds: string[]) {
       }
       // Claude Hopkins legacy: assets array
       else if (Array.isArray(taskOutput?.assets) && taskOutput.assets.length > 0) {
-        for (const asset of taskOutput.assets.slice(0, 3)) {
+        for (const asset of taskOutput.assets.slice(0, 1)) {
           const artifactPath = asset?.artifact_path ?? asset?.final_ad_path ?? '';
           const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(ad.taskId);
           enrichedAds.push({
