@@ -20,10 +20,13 @@ interface WatermarkCardProps {
 export default function WatermarkCard({
   caption, headline, imageUrl, index, angle, businessName, websiteUrl, editable, onEdited,
 }: WatermarkCardProps) {
-  const angleLabels = ['Awareness', 'Conversion', 'Trust'];
-  const angleColors = ['bg-blue-500', 'bg-orange-500', 'bg-green-500'];
-  const displayAngle = angle ?? angleLabels[index] ?? '';
-  const badgeColor = angleColors[index] ?? 'bg-gray-500';
+  const laneColors: Record<string, string> = {
+    'Website / Brand': 'bg-blue-500',
+    'Local News': 'bg-amber-500',
+    'Upcoming Holiday': 'bg-rose-500',
+  };
+  const displayAngle = angle ?? `Post ${index + 1}`;
+  const badgeColor = laneColors[displayAngle] ?? 'bg-blue-500';
 
   const displayName = businessName || 'Your Business';
   const displayDomain = websiteUrl
