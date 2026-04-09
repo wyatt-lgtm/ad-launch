@@ -843,8 +843,8 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       byDept.get(key)!.push(t);
     }
     const result: TaskItem[] = [];
-    const deptOrder = ['Business Analysis', 'Marketing Strategy', 'Ad Copywriting', 'Visual Direction', 'Image Generation'];
-    let prevHasAnyComplete = true; // first step has no prerequisite
+    const deptOrder = ['Business Analysis', 'Marketing Strategy', 'Ad Copywriting', 'Visual Direction', 'Image Generation', 'Final Assembly'];
+    let prevAllComplete = true; // first step has no prerequisite
     for (const dept of deptOrder) {
       const items = byDept.get(dept);
       if (!items || items.length === 0) continue;
@@ -852,11 +852,11 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       const allComplete = items.every(i => i.status === 'complete');
       const hasError = items.some(i => i.status === 'error');
       const completeCount = items.filter(i => i.status === 'complete').length;
-      // Only show as "active" if the prior step has at least 1 completion
+      // Only show as "active" if ALL prior-step tasks are complete (strict sequential)
       const effectiveStatus: TaskItem['status'] = allComplete
         ? 'complete'
         : hasError ? 'error'
-        : (hasActive && prevHasAnyComplete) ? 'active'
+        : (hasActive && prevAllComplete) ? 'active'
         : 'waiting';
       result.push({
         ...items[0],
@@ -865,7 +865,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
           ? `${items[0].description} (${completeCount}/${items.length} complete)`
           : items[0].description,
       });
-      prevHasAnyComplete = completeCount > 0;
+      prevAllComplete = allComplete;
     }
     return result;
   }, [tasks]);

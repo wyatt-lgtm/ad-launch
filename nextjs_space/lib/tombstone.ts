@@ -176,6 +176,7 @@ const DEPT_LABELS: Record<string, { label: string; description: string }> = {
   'creative strategy': { label: 'Ad Copywriting', description: 'Writing headlines, body copy & CTAs' },
   'creative direction': { label: 'Visual Direction', description: 'Creating art direction & image prompt' },
   'render production': { label: 'Image Generation', description: 'Generating final ad images with GPT 5.1' },
+  'conversion assembly': { label: 'Final Assembly', description: 'Composing final ad with text overlay' },
 };
 
 export function getTaskLabel(department: string): { label: string; description: string } {
