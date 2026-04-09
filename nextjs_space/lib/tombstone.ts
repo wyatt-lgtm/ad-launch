@@ -128,8 +128,7 @@ const DEPT_LABELS: Record<string, { label: string; description: string }> = {
   'marketing': { label: 'Marketing Strategy', description: 'Defining audience, offer framing & keywords' },
   'creative strategy': { label: 'Ad Copywriting', description: 'Writing headlines, body copy & CTAs' },
   'creative direction': { label: 'Visual Direction', description: 'Creating art direction & image prompt' },
-  'render production': { label: 'Image Generation', description: 'Generating background artwork' },
-  'conversion assembly': { label: 'Final Composition', description: 'Composing text overlays on final ad' },
+  'render production': { label: 'Image Generation', description: 'Generating final ad images with GPT 5.1' },
 };
 
 export function getTaskLabel(department: string): { label: string; description: string } {
@@ -237,8 +236,9 @@ export async function getWorkflowResults(workflowIds: string[]) {
         const status = (task?.status ?? '').toLowerCase();
         if (status !== 'complete' && status !== 'completed') continue;
 
-        // Conversion Assembly = final ad(s)
-        if (dept.includes('conversion') || dept.includes('assembly')) {
+        // Render Production (Andy Warhol) = final ad(s) with full composition
+        // Also check Conversion Assembly for backward compat with older workflows
+        if (dept.includes('render') || dept.includes('conversion') || dept.includes('assembly')) {
           ads.push({ taskId: task.id, workflowId: wfId });
         }
         // First research task has business data for SEO
@@ -257,21 +257,39 @@ export async function getWorkflowResults(workflowIds: string[]) {
     }
 
     // Enrich ads with artifact URLs and outputs
-    // The Assembly task may contain an "assets" array with multiple ads
+    // Andy Warhol outputs: { renders: [...], background_asset_path, ... }
+    // Claude Hopkins (legacy): { assets: [...], final_ad_path, ... }
     const enrichedAds = [];
     for (const ad of ads.slice(0, 3)) {
       const outputs = await getTaskOutputs(ad.taskId);
-      let assemblyOutput: any = null;
+      let taskOutput: any = null;
       for (const out of outputs) {
         try {
-          assemblyOutput = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+          taskOutput = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
         } catch { /* ignore */ }
       }
 
-      // Multi-asset mode: assets array contains per-campaign ads
-      const assets = assemblyOutput?.assets;
-      if (Array.isArray(assets) && assets.length > 0) {
-        for (const asset of assets.slice(0, 3)) {
+      // Andy Warhol multi-campaign: renders array with per-campaign images
+      const renders = taskOutput?.renders;
+      if (Array.isArray(renders) && renders.length > 0) {
+        for (const render of renders.slice(0, 3)) {
+          const artifactPath = render?.background_asset_path ?? '';
+          const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(ad.taskId);
+          enrichedAds.push({
+            taskId: ad.taskId,
+            workflowId: ad.workflowId,
+            headline: render?.headline ?? '',
+            caption: render?.body ?? render?.body_copy ?? '',
+            cta: render?.cta ?? '',
+            imageUrl,
+            campaignId: render?.campaign_id ?? '',
+            campaignName: render?.campaign_name ?? '',
+          });
+        }
+      }
+      // Claude Hopkins legacy: assets array
+      else if (Array.isArray(taskOutput?.assets) && taskOutput.assets.length > 0) {
+        for (const asset of taskOutput.assets.slice(0, 3)) {
           const artifactPath = asset?.artifact_path ?? asset?.final_ad_path ?? '';
           const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(ad.taskId);
           enrichedAds.push({
@@ -287,14 +305,15 @@ export async function getWorkflowResults(workflowIds: string[]) {
         }
       } else {
         // Single-asset fallback
-        const imageUrl = await getTaskArtifact(ad.taskId);
+        const artifactPath = taskOutput?.background_asset_path ?? '';
+        const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(ad.taskId);
         let headline = '';
         let caption = '';
         let cta = '';
-        if (assemblyOutput) {
-          headline = assemblyOutput?.headline ?? '';
-          caption = assemblyOutput?.body_copy ?? assemblyOutput?.body ?? assemblyOutput?.caption ?? '';
-          cta = assemblyOutput?.cta ?? '';
+        if (taskOutput) {
+          headline = taskOutput?.headline ?? '';
+          caption = taskOutput?.body_copy ?? taskOutput?.body ?? taskOutput?.caption ?? '';
+          cta = taskOutput?.cta ?? '';
         }
         enrichedAds.push({ ...ad, headline, caption, cta, imageUrl });
       }
@@ -432,8 +451,8 @@ export async function getSocialWorkflowResults(workflowIds: string[]) {
       const taskStatus = (task?.status ?? '').toLowerCase();
       if (taskStatus !== 'complete' && taskStatus !== 'completed') continue;
 
-      // Conversion Assembly produces final social post assets
-      if (dept.includes('conversion') || dept.includes('assembly')) {
+      // Render Production (Andy Warhol) or Conversion Assembly (legacy) produces final social post assets
+      if (dept.includes('render') || dept.includes('conversion') || dept.includes('assembly')) {
         const outputs = await getTaskOutputs(task.id);
         for (const out of outputs) {
           try {

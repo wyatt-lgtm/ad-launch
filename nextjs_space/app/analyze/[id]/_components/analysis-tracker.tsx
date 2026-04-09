@@ -769,7 +769,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     }
     // For each department, show aggregated status
     const result: TaskItem[] = [];
-    const deptOrder = ['Business Analysis', 'Marketing Strategy', 'Ad Copywriting', 'Visual Direction', 'Image Generation', 'Final Composition'];
+    const deptOrder = ['Business Analysis', 'Marketing Strategy', 'Ad Copywriting', 'Visual Direction', 'Image Generation'];
     for (const dept of deptOrder) {
       const items = byDept.get(dept);
       if (!items || items.length === 0) continue;
@@ -822,11 +822,11 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       {/* Header */}
       <div className="text-center mb-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-          {isGenerating ? 'Creating Your Ads...' : 'Your Results Are Ready!'}
+          {isGenerating ? 'Creating Your Posts...' : 'Your Results Are Ready!'}
         </h1>
         <p className="text-gray-500 mt-2 text-sm">
           {isGenerating
-            ? 'Our AI agents are analyzing your business and crafting 3 unique ads'
+            ? 'Our AI agents are analyzing your business and crafting 9 unique posts'
             : 'Register with your business email to download without watermarks'}
         </p>
       </div>
@@ -869,11 +869,11 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
             </div>
           )}
 
-          {/* Generating 3 ads badge */}
+          {/* Generating posts badge */}
           <div className="mt-6 text-center">
             <span className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">
               <Sparkles className="w-4 h-4" />
-              Generating 3 unique ad variations
+              Generating 9 unique posts
             </span>
           </div>
         </div>
