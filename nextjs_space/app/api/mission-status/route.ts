@@ -350,7 +350,7 @@ export async function GET(request: NextRequest) {
         } else if (raw.includes('timeout') || raw.includes('Timeout')) {
           errorReason = 'The website took too long to respond. Please try again.';
         } else {
-          errorReason = 'Ad generation encountered an issue. Please try again.';
+          errorReason = 'Post generation encountered an issue. Please try again.';
         }
         console.log(`[mission-status] Error reason: ${raw}`);
       }

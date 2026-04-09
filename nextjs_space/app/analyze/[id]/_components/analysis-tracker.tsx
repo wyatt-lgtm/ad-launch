@@ -279,6 +279,21 @@ function LocationStep({
   const [manualZip, setManualZip] = useState('');
   const [showManual, setShowManual] = useState(false);
 
+  /** Smart paste: if user pastes a full address like "123 Main St, City, ST 12345", split it */
+  const handleAddressPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text')?.trim() ?? '';
+    if (!pasted) return;
+    // Match patterns like: "Street, City, ST 12345" or "Street, City, ST"
+    const match = pasted.match(/^(.+?),\s*(.+?),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)?$/i);
+    if (match) {
+      e.preventDefault();
+      setManualAddress(match[1].trim());
+      setManualCity(match[2].trim());
+      setManualState(match[3].trim().toUpperCase());
+      if (match[4]) setManualZip(match[4].trim());
+    }
+  };
+
   useEffect(() => {
     const fetchAnalysis = async () => {
       try {
@@ -450,6 +465,7 @@ function LocationStep({
                 type="text"
                 value={manualAddress}
                 onChange={(e) => setManualAddress(e.target.value)}
+                onPaste={handleAddressPaste}
                 className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
               />
             </div>
@@ -565,7 +581,7 @@ function LocationStep({
                 </a>
               </p>
               <p className="text-sm text-amber-600 mt-2">
-                In the meantime, please enter your address below so we can create your ads.
+                In the meantime, please enter your address below so we can create your posts.
               </p>
             </div>
           </div>
@@ -607,6 +623,7 @@ function LocationStep({
               value={manualAddress}
               onChange={(e) => setManualAddress(e.target.value)}
               className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+              onPaste={handleAddressPaste}
               placeholder="123 Main Street"
             />
           </div>
@@ -663,7 +680,7 @@ function LocationStep({
         ) : (
           <Sparkles className="w-5 h-5" />
         )}
-        {launching ? 'Launching Ad Creation...' : 'Confirm Location & Create Ads'}
+        {launching ? 'Launching Post Creation...' : 'Confirm Location & Create Posts'}
       </button>
 
       <p className="text-center text-xs text-gray-400 mt-3">

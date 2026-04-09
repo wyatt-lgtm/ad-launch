@@ -45,6 +45,13 @@ export default function LandingContent() {
       }
 
       if (data?.analysisId) {
+        // Cache scraped address / places in sessionStorage so /analyze/[id] picks them up
+        if (data.scrapedAddress) {
+          sessionStorage.setItem(`scraped_${data.analysisId}`, JSON.stringify(data.scrapedAddress));
+        }
+        if (data.places && data.places.length > 0) {
+          sessionStorage.setItem(`places_${data.analysisId}`, JSON.stringify(data.places));
+        }
         // Redirect to the unified analysis/tracking page
         router.push(`/analyze/${data.analysisId}`);
       } else {
