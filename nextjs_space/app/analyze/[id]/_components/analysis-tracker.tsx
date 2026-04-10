@@ -996,7 +996,11 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
                       <Icon className={`w-5 h-5 ${config.color}`} />
                       <div>
                         <h3 className={`text-sm font-bold ${config.color}`}>{config.label}</h3>
-                        <p className="text-xs text-gray-500">{config.description}</p>
+                        <p className="text-xs text-gray-500">
+                          {laneAds.length > 0 && laneAds[0].headline
+                            ? laneAds[0].headline
+                            : config.description}
+                        </p>
                       </div>
                     </div>
 

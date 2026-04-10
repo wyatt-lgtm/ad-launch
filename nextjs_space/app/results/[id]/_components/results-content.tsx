@@ -20,10 +20,10 @@ interface Ad {
   lane?: string | null;
 }
 
-const LANE_CONFIG: Record<string, { label: string; icon: React.ElementType; color: string; bgColor: string; badgeColor: string }> = {
-  website: { label: 'Website / Brand', icon: Building2, color: 'text-blue-600', bgColor: 'bg-blue-50', badgeColor: 'bg-blue-500' },
-  news:    { label: 'Local News', icon: Newspaper, color: 'text-amber-600', bgColor: 'bg-amber-50', badgeColor: 'bg-amber-500' },
-  holiday: { label: 'Upcoming Holiday', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50', badgeColor: 'bg-rose-500' },
+const LANE_CONFIG: Record<string, { label: string; description: string; icon: React.ElementType; color: string; bgColor: string; badgeColor: string }> = {
+  website: { label: 'Website / Brand', description: 'Created from your website content', icon: Building2, color: 'text-blue-600', bgColor: 'bg-blue-50', badgeColor: 'bg-blue-500' },
+  news:    { label: 'Local News', description: 'Tied to local news in your area', icon: Newspaper, color: 'text-amber-600', bgColor: 'bg-amber-50', badgeColor: 'bg-amber-500' },
+  holiday: { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50', badgeColor: 'bg-rose-500' },
 };
 
 export default function ResultsContent({ analysisId }: { analysisId: string }) {
@@ -121,7 +121,14 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
               {/* Lane Header */}
               <div className={`flex items-center gap-2.5 px-4 py-3 rounded-xl ${config.bgColor}`}>
                 <Icon className={`w-5 h-5 ${config.color}`} />
-                <h3 className={`text-sm font-bold ${config.color}`}>{config.label}</h3>
+                <div>
+                  <h3 className={`text-sm font-bold ${config.color}`}>{config.label}</h3>
+                  <p className="text-xs text-gray-500">
+                    {laneAds.length > 0 && laneAds[0].headline
+                      ? laneAds[0].headline
+                      : config.description}
+                  </p>
+                </div>
               </div>
 
               {/* Posts in this lane */}
