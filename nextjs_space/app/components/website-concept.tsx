@@ -1,11 +1,13 @@
 'use client';
 
-import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink } from 'lucide-react';
+import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail } from 'lucide-react';
 import { useState } from 'react';
+import { useSession } from 'next-auth/react';
 
 interface WebsiteConceptProps {
   data: any;
   locked?: boolean;
+  analysisId?: string;
 }
 
 function CopyAll({ text }: { text: string }) {
@@ -23,7 +25,7 @@ function CopyAll({ text }: { text: string }) {
 }
 
 function SectionCard({ section, icon: Icon, color }: { section: any; icon: any; color: string }) {
-  const allText = [section.headline, section.description, section.cta].filter(Boolean).join('\n\n');
+  const allText = [section.headline, section.cta].filter(Boolean).join('\n\n');
   return (
     <div className="bg-gray-50 rounded-xl p-5 border border-gray-100">
       <div className="flex items-center justify-between mb-3">
@@ -39,12 +41,6 @@ function SectionCard({ section, icon: Icon, color }: { section: any; icon: any; 
         <div className="mb-3">
           <div className="text-xs text-gray-400 uppercase font-medium mb-1">Headline</div>
           <p className="text-lg font-bold text-gray-900 leading-tight">{section.headline}</p>
-        </div>
-      )}
-      {section.description && (
-        <div className="mb-3">
-          <div className="text-xs text-gray-400 uppercase font-medium mb-1">Description</div>
-          <p className="text-sm text-gray-700 leading-relaxed">{section.description}</p>
         </div>
       )}
       {section.cta && (
@@ -70,13 +66,50 @@ function SectionCard({ section, icon: Icon, color }: { section: any; icon: any; 
   );
 }
 
-export default function WebsiteConcept({ data, locked = false }: WebsiteConceptProps) {
+export default function WebsiteConcept({ data, locked = false, analysisId }: WebsiteConceptProps) {
+  const { data: session } = useSession() || {};
   const [generating, setGenerating] = useState(false);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [genError, setGenError] = useState('');
+  const [showEmailPrompt, setShowEmailPrompt] = useState(false);
+  const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
+
+  const isLoggedIn = !!(session?.user as any)?.email;
 
   const handleGenerate = async () => {
     if (!data?.sections?.length || generating) return;
+
+    // If not logged in, require business email
+    if (!isLoggedIn) {
+      setShowEmailPrompt(true);
+      return;
+    }
+
+    doGenerate();
+  };
+
+  const handleEmailSubmit = async () => {
+    if (!email.trim()) {
+      setEmailError('Email is required');
+      return;
+    }
+    const blockedDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com'];
+    const domain = email.split('@')?.[1]?.toLowerCase() ?? '';
+    if (blockedDomains.includes(domain)) {
+      setEmailError('Please use a business email');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setEmailError('Invalid email format');
+      return;
+    }
+    setEmailError('');
+    setShowEmailPrompt(false);
+    doGenerate();
+  };
+
+  const doGenerate = async () => {
     setGenerating(true);
     setGenError('');
     setGeneratedUrl(null);
@@ -119,15 +152,75 @@ export default function WebsiteConcept({ data, locked = false }: WebsiteConceptP
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-violet-600 to-fuchsia-500 px-6 py-4">
-        <h3 className="text-lg font-bold text-white flex items-center gap-2">
-          <Globe className="w-5 h-5" /> Website Concept
-        </h3>
-        <p className="text-violet-100 text-sm mt-1">
-          Ready-to-use website copy for {data.businessName ?? 'your business'}
-        </p>
+      {/* Header with Generate button */}
+      <div className="bg-gradient-to-r from-violet-600 to-fuchsia-500 px-6 py-4 flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            <Globe className="w-5 h-5" /> Website Concept
+          </h3>
+          <p className="text-violet-100 text-sm mt-1">
+            Ready-to-use website copy for {data.businessName ?? 'your business'}
+          </p>
+        </div>
+        <button
+          onClick={handleGenerate}
+          disabled={generating || locked}
+          className="flex-shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-white/20 hover:bg-white/30 text-white rounded-xl font-semibold transition-all disabled:opacity-50 text-sm border border-white/30"
+        >
+          {generating ? (
+            <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
+          ) : (
+            <><Sparkles className="w-4 h-4" /> Generate Concept Website</>
+          )}
+        </button>
       </div>
+
+      {/* Email prompt modal */}
+      {showEmailPrompt && (
+        <div className="p-6 bg-violet-50 border-b border-violet-100">
+          <div className="max-w-md mx-auto text-center">
+            <Mail className="w-8 h-8 text-violet-500 mx-auto mb-2" />
+            <h4 className="font-bold text-gray-900 mb-1">Enter your business email</h4>
+            <p className="text-sm text-gray-600 mb-4">Required to generate your concept website</p>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@company.com"
+                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
+              />
+              <button
+                onClick={handleEmailSubmit}
+                className="px-5 py-2.5 bg-violet-600 text-white rounded-lg font-semibold text-sm hover:bg-violet-700 transition-colors"
+              >
+                Generate
+              </button>
+            </div>
+            {emailError && <p className="text-red-500 text-xs mt-2">{emailError}</p>}
+            <button onClick={() => setShowEmailPrompt(false)} className="text-xs text-gray-400 mt-2 hover:text-gray-600">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {genError && (
+        <div className="px-6 py-3 bg-red-50 border-b border-red-100">
+          <p className="text-red-500 text-sm text-center">{genError}</p>
+        </div>
+      )}
+
+      {generatedUrl && !generating && (
+        <div className="px-6 py-3 bg-green-50 border-b border-green-100 text-center">
+          <a
+            href={generatedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-600 hover:text-violet-800 transition-colors"
+          >
+            <ExternalLink className="w-4 h-4" /> Open Generated Website Again
+          </a>
+        </div>
+      )}
 
       <div className="p-6 relative">
         {locked && (
@@ -164,43 +257,6 @@ export default function WebsiteConcept({ data, locked = false }: WebsiteConceptP
             </div>
           </div>
         )}
-
-        {/* Generate Concept Website Button */}
-        <div className="mt-8 bg-gradient-to-r from-violet-50 to-fuchsia-50 rounded-xl p-6 border border-violet-100 text-center">
-          <Sparkles className="w-8 h-8 text-violet-500 mx-auto mb-3" />
-          <h4 className="text-lg font-bold text-gray-900 mb-2">See It Come to Life</h4>
-          <p className="text-sm text-gray-600 mb-4">
-            Generate a fully designed concept website using the copy and colors above.
-          </p>
-          <button
-            onClick={handleGenerate}
-            disabled={generating || locked}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-violet-600 to-fuchsia-500 text-white rounded-xl font-semibold hover:from-violet-700 hover:to-fuchsia-600 transition-all disabled:opacity-50 shadow-lg shadow-violet-200"
-          >
-            {generating ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> Generating Website...</>
-            ) : (
-              <><Sparkles className="w-5 h-5" /> Generate Concept Website</>
-            )}
-          </button>
-
-          {genError && (
-            <p className="text-red-500 text-sm mt-3">{genError}</p>
-          )}
-
-          {generatedUrl && !generating && (
-            <div className="mt-4">
-              <a
-                href={generatedUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-600 hover:text-violet-800 transition-colors"
-              >
-                <ExternalLink className="w-4 h-4" /> Open Generated Website Again
-              </a>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

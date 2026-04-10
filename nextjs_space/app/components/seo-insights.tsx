@@ -1,6 +1,7 @@
 'use client';
 
-import { Lock, TrendingUp, Target, MessageSquare, Globe, CheckCircle, AlertTriangle, XCircle, Shield, Smartphone, Share2, Code, FileText, Link2, Type, Image as ImageIcon } from 'lucide-react';
+import { useState } from 'react';
+import { Lock, TrendingUp, Target, MessageSquare, Globe, CheckCircle, AlertTriangle, XCircle, Shield, Smartphone, Share2, Code, FileText, Link2, Type, Image as ImageIcon, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface SeoInsightsProps {
   data: any;
@@ -61,6 +62,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function SeoInsights({ data, locked = false }: SeoInsightsProps) {
+  const [expanded, setExpanded] = useState(false);
+
   if (!data) {
     return (
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
@@ -72,6 +75,9 @@ export default function SeoInsights({ data, locked = false }: SeoInsightsProps) 
 
   const audit = data.audit;
   const hasAudit = audit && typeof audit.score === 'number';
+  const scoreColor = hasAudit
+    ? audit.score >= 80 ? '#10B981' : audit.score >= 65 ? '#F59E0B' : audit.score >= 50 ? '#F97316' : '#EF4444'
+    : '#94A3B8';
 
   // Group audit items by category
   const groupedItems: Record<string, any[]> = {};
@@ -89,162 +95,123 @@ export default function SeoInsights({ data, locked = false }: SeoInsightsProps) 
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-4">
-        <h3 className="text-lg font-bold text-white flex items-center gap-2">
-          <TrendingUp className="w-5 h-5" /> SEO Audit Report
-        </h3>
-        <p className="text-emerald-100 text-sm mt-1">
-          Technical analysis of {data.websiteUrl ?? 'your website'}
-        </p>
-      </div>
-
-      <div className="p-6 relative">
-        {locked && (
-          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
-            <div className="text-center">
-              <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
-              <p className="font-semibold text-gray-700">Register to unlock full audit</p>
-            </div>
+      {/* Header with score */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-4 flex items-center justify-between cursor-pointer hover:from-emerald-600 hover:to-teal-600 transition-all"
+      >
+        <div className="flex items-center gap-3">
+          <TrendingUp className="w-5 h-5 text-white" />
+          <div className="text-left">
+            <h3 className="text-lg font-bold text-white">SEO Audit Report</h3>
+            <p className="text-emerald-100 text-sm">
+              Technical analysis of {data.websiteUrl ?? 'your website'}
+            </p>
           </div>
-        )}
+        </div>
+        <div className="flex items-center gap-3">
+          {hasAudit && (
+            <div className="flex items-center gap-2 bg-white/20 rounded-full px-4 py-1.5">
+              <span className="text-white font-black text-lg">{audit.score}</span>
+              <span className="text-emerald-100 text-sm font-medium">/ 100</span>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: scoreColor, color: '#fff' }}>
+                {audit.grade}
+              </span>
+            </div>
+          )}
+          {expanded ? <ChevronUp className="w-5 h-5 text-white" /> : <ChevronDown className="w-5 h-5 text-white" />}
+        </div>
+      </button>
 
-        {hasAudit ? (
-          <>
-            {/* Score Ring + Summary */}
-            <div className="text-center mb-8">
-              <ScoreRing score={audit.score} grade={audit.grade} />
-              <div className="flex justify-center gap-4 mt-4">
-                <span className="text-sm"><span className="font-bold text-emerald-600">{passCount}</span> <span className="text-gray-400">passed</span></span>
-                <span className="text-sm"><span className="font-bold text-amber-600">{warnCount}</span> <span className="text-gray-400">warnings</span></span>
-                <span className="text-sm"><span className="font-bold text-red-600">{failCount}</span> <span className="text-gray-400">issues</span></span>
+      {/* Collapsible detail */}
+      {expanded && (
+        <div className="p-6 relative">
+          {locked && (
+            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
+              <div className="text-center">
+                <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
+                <p className="font-semibold text-gray-700">Register to unlock full audit</p>
               </div>
             </div>
+          )}
 
-            {/* Category Score Cards */}
-            {(() => {
-              const catScores: Record<string, { pass: number; total: number }> = {};
-              for (const item of audit.items ?? []) {
-                const cat = item.category ?? 'Other';
-                if (!catScores[cat]) catScores[cat] = { pass: 0, total: 0 };
-                catScores[cat].total += 1;
-                if (item.status === 'pass') catScores[cat].pass += 1;
-              }
-              const catList = Object.entries(catScores).map(([name, { pass, total }]) => ({
-                name,
-                score: total > 0 ? Math.round((pass / total) * 100) : 0,
-              }));
-              return catList.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
-                  {catList.map((cat) => {
-                    const color = cat.score >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : cat.score >= 50 ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-red-600 bg-red-50 border-red-200';
-                    const CatIcon = CATEGORY_ICONS[cat.name] ?? Globe;
-                    return (
-                      <div key={cat.name} className={`rounded-xl p-3 border ${color} text-center`}>
-                        <CatIcon className="w-5 h-5 mx-auto mb-1 opacity-70" />
-                        <div className="text-2xl font-black">{cat.score}</div>
-                        <div className="text-xs font-medium opacity-80 mt-0.5">{cat.name}</div>
-                      </div>
-                    );
-                  })}
+          {hasAudit ? (
+            <>
+              {/* Score Ring + Summary */}
+              <div className="text-center mb-8">
+                <ScoreRing score={audit.score} grade={audit.grade} />
+                <div className="flex justify-center gap-4 mt-4">
+                  <span className="text-sm"><span className="font-bold text-emerald-600">{passCount}</span> <span className="text-gray-400">passed</span></span>
+                  <span className="text-sm"><span className="font-bold text-amber-600">{warnCount}</span> <span className="text-gray-400">warnings</span></span>
+                  <span className="text-sm"><span className="font-bold text-red-600">{failCount}</span> <span className="text-gray-400">issues</span></span>
                 </div>
-              ) : null;
-            })()}
+              </div>
 
-            {/* Issues First (fail), then Warnings, then Passes */}
-            {Object.entries(groupedItems).map(([category, items]) => {
-              const Icon = CATEGORY_ICONS[category] ?? Globe;
-              return (
-                <div key={category} className="mb-5">
-                  <h4 className="text-xs font-semibold text-gray-900 uppercase tracking-wide mb-2 flex items-center gap-2">
-                    <Icon className="w-4 h-4 text-gray-500" /> {category}
-                  </h4>
-                  <div className="space-y-2">
-                    {items
-                      .sort((a: any, b: any) => {
-                        const order: Record<string, number> = { fail: 0, warn: 1, pass: 2 };
-                        return (order[a.status] ?? 2) - (order[b.status] ?? 2);
-                      })
-                      .map((item: any, i: number) => (
-                        <div key={i} className="flex items-start gap-3 bg-gray-50 rounded-lg p-3">
-                          <div className="flex-shrink-0 mt-0.5">
-                            <StatusBadge status={item.status} />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold text-gray-900">{item.label}</div>
-                            <div className="text-xs text-gray-600 mt-0.5">{item.detail}</div>
-                          </div>
+              {/* Category Score Cards */}
+              {(() => {
+                const catScores: Record<string, { pass: number; total: number }> = {};
+                for (const item of audit.items ?? []) {
+                  const cat = item.category ?? 'Other';
+                  if (!catScores[cat]) catScores[cat] = { pass: 0, total: 0 };
+                  catScores[cat].total += 1;
+                  if (item.status === 'pass') catScores[cat].pass += 1;
+                }
+                const catList = Object.entries(catScores).map(([name, { pass, total }]) => ({
+                  name,
+                  score: total > 0 ? Math.round((pass / total) * 100) : 0,
+                }));
+                return catList.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
+                    {catList.map((cat) => {
+                      const color = cat.score >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : cat.score >= 50 ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-red-600 bg-red-50 border-red-200';
+                      const CatIcon = CATEGORY_ICONS[cat.name] ?? Globe;
+                      return (
+                        <div key={cat.name} className={`rounded-xl p-3 border ${color} text-center`}>
+                          <CatIcon className="w-5 h-5 mx-auto mb-1 opacity-70" />
+                          <div className="text-2xl font-black">{cat.score}</div>
+                          <div className="text-xs font-medium opacity-80 mt-0.5">{cat.name}</div>
                         </div>
-                      ))}
+                      );
+                    })}
                   </div>
-                </div>
-              );
-            })}
-          </>
-        ) : (
-          /* Fallback: show old-style brand insights if no audit data */
-          <>
-            {/* Business Overview */}
-            <div className="mb-6">
-              <h4 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3 flex items-center gap-2">
-                <Globe className="w-4 h-4 text-blue-500" /> Business Overview
-              </h4>
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-xs text-gray-400 uppercase mb-1">Business Name</div>
-                  <div className="font-semibold text-gray-900">{data.businessName ?? 'N/A'}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="text-xs text-gray-400 uppercase mb-1">Industry</div>
-                  <div className="font-semibold text-gray-900">{data.industry ?? 'N/A'}</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg p-4 sm:col-span-2">
-                  <div className="text-xs text-gray-400 uppercase mb-1">Core Offer</div>
-                  <div className="text-gray-700 text-sm">{data.coreOffer ?? 'N/A'}</div>
-                </div>
-              </div>
-            </div>
+                ) : null;
+              })()}
 
-            {data.targetCustomer && (
-              <div className="mb-6">
-                <h4 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3 flex items-center gap-2">
-                  <Target className="w-4 h-4 text-purple-500" /> Target Customer
-                </h4>
-                <div className="bg-purple-50 rounded-lg p-4">
-                  <p className="text-gray-700 text-sm">{data.targetCustomer}</p>
-                </div>
-              </div>
-            )}
-
-            {data.brandVoice?.tone && (
-              <div className="mb-6">
-                <h4 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3 flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-orange-500" /> Brand Voice
-                </h4>
-                <div className="bg-orange-50 rounded-lg p-4">
-                  <p className="text-gray-700 text-sm">{data.brandVoice.tone}</p>
-                </div>
-              </div>
-            )}
-
-            {data.recommendations?.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3">Action Items</h4>
-                <div className="bg-blue-50 rounded-lg p-4 space-y-3">
-                  {(data.recommendations as string[]).map((rec: string, i: number) => (
-                    <div key={i} className="flex items-start gap-3 text-sm">
-                      <span className="flex-shrink-0 w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs font-bold">
-                        {i + 1}
-                      </span>
-                      <span className="text-gray-700">{rec}</span>
+              {/* Issues First (fail), then Warnings, then Passes */}
+              {Object.entries(groupedItems).map(([category, items]) => {
+                const Icon = CATEGORY_ICONS[category] ?? Globe;
+                return (
+                  <div key={category} className="mb-5">
+                    <h4 className="text-xs font-semibold text-gray-900 uppercase tracking-wide mb-2 flex items-center gap-2">
+                      <Icon className="w-4 h-4 text-gray-500" /> {category}
+                    </h4>
+                    <div className="space-y-2">
+                      {items
+                        .sort((a: any, b: any) => {
+                          const order: Record<string, number> = { fail: 0, warn: 1, pass: 2 };
+                          return (order[a.status] ?? 2) - (order[b.status] ?? 2);
+                        })
+                        .map((item: any, i: number) => (
+                          <div key={i} className="flex items-start gap-3 bg-gray-50 rounded-lg p-3">
+                            <div className="flex-shrink-0 mt-0.5">
+                              <StatusBadge status={item.status} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-semibold text-gray-900">{item.label}</div>
+                              <div className="text-xs text-gray-600 mt-0.5">{item.detail}</div>
+                            </div>
+                          </div>
+                        ))}
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+                  </div>
+                );
+              })}
+            </>
+          ) : (
+            <p className="text-gray-400 text-sm">No audit data available.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

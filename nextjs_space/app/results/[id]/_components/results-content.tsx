@@ -9,7 +9,7 @@ import SeoInsights from '../../../components/seo-insights';
 import PostingPlan from '../../../components/posting-plan';
 import GoogleAdsCopy from '../../../components/google-ads-copy';
 import WebsiteConcept from '../../../components/website-concept';
-import BudgetRecommendations from '../../../components/budget-recommendations';
+// BudgetRecommendations removed per user request
 
 interface Ad {
   id: string;
@@ -208,11 +208,6 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
         })}
       </div>
 
-      {/* Google Search Ad Copy */}
-      <div className="mb-8">
-        <GoogleAdsCopy data={googleAdsData} locked={false} />
-      </div>
-
       {/* SEO Insights */}
       <div className="mb-8">
         <SeoInsights data={seoData} locked={false} />
@@ -228,9 +223,9 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
         <PostingPlan data={postingPlan} locked={false} />
       </div>
 
-      {/* Budget Recommendations */}
+      {/* Google Search Ad Copy — collapsed */}
       <div className="mb-12">
-        <BudgetRecommendations data={budgetData} locked={false} />
+        <GoogleAdsCopy data={googleAdsData} locked={false} collapsed={true} />
       </div>
 
       {/* Generate More CTA */}

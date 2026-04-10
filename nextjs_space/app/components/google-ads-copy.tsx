@@ -1,11 +1,12 @@
 'use client';
 
-import { Search, Copy, Check, Lock, ExternalLink, Tag } from 'lucide-react';
+import { Search, Copy, Check, Lock, ExternalLink, Tag, ChevronDown, ChevronUp } from 'lucide-react';
 import { useState } from 'react';
 
 interface GoogleAdsCopyProps {
   data: any;
   locked?: boolean;
+  collapsed?: boolean;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -22,7 +23,9 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-export default function GoogleAdsCopy({ data, locked = false }: GoogleAdsCopyProps) {
+export default function GoogleAdsCopy({ data, locked = false, collapsed = false }: GoogleAdsCopyProps) {
+  const [expanded, setExpanded] = useState(!collapsed);
+
   if (!data) {
     return (
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
@@ -35,16 +38,23 @@ export default function GoogleAdsCopy({ data, locked = false }: GoogleAdsCopyPro
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-cyan-500 px-6 py-4">
-        <h3 className="text-lg font-bold text-white flex items-center gap-2">
-          <Search className="w-5 h-5" /> Google Search Ad Copy
-        </h3>
-        <p className="text-blue-100 text-sm mt-1">
-          Ready-to-use headlines, descriptions & keywords for {data.businessName ?? 'your business'}
-        </p>
-      </div>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full bg-gradient-to-r from-blue-600 to-cyan-500 px-6 py-4 flex items-center justify-between cursor-pointer hover:from-blue-700 hover:to-cyan-600 transition-all"
+      >
+        <div className="flex items-center gap-3">
+          <Search className="w-5 h-5 text-white" />
+          <div className="text-left">
+            <h3 className="text-lg font-bold text-white">Google Search Ad Copy</h3>
+            <p className="text-blue-100 text-sm">
+              Ready-to-use headlines, descriptions & keywords for {data.businessName ?? 'your business'}
+            </p>
+          </div>
+        </div>
+        {expanded ? <ChevronUp className="w-5 h-5 text-white" /> : <ChevronDown className="w-5 h-5 text-white" />}
+      </button>
 
-      <div className="p-6 relative">
+      {expanded && <div className="p-6 relative">
         {locked && (
           <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
             <div className="text-center">
@@ -129,7 +139,7 @@ export default function GoogleAdsCopy({ data, locked = false }: GoogleAdsCopyPro
             </div>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

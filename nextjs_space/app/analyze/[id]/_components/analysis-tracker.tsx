@@ -12,7 +12,7 @@ import SeoInsights from '../../../components/seo-insights';
 import PostingPlan from '../../../components/posting-plan';
 import GoogleAdsCopy from '../../../components/google-ads-copy';
 import WebsiteConcept from '../../../components/website-concept';
-import BudgetRecommendations from '../../../components/budget-recommendations';
+// BudgetRecommendations removed per user request
 import RegistrationModal from '../../../components/registration-modal';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
@@ -1050,33 +1050,8 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
             </div>
           </div>
 
-          {/* Google Search Ad Copy */}
-          <div className="mb-12">
-            <GoogleAdsCopy data={googleAdsData} locked={false} />
-          </div>
-
-          {/* SEO Insights */}
-          <div className="mb-12">
-            <SeoInsights data={seoData} locked={false} />
-          </div>
-
-          {/* Website Concept */}
-          <div className="mb-12">
-            <WebsiteConcept data={websiteConceptData} locked={false} />
-          </div>
-
-          {/* 90-Day Posting Plan */}
-          <div className="mb-12">
-            <PostingPlan data={postingPlan} locked={false} />
-          </div>
-
-          {/* Budget Recommendations */}
-          <div className="mb-12">
-            <BudgetRecommendations data={budgetData} locked={false} />
-          </div>
-
-          {/* Register CTA */}
-          <div className="text-center py-8">
+          {/* Register CTA — right after posts */}
+          <div className="text-center py-8 mb-12">
             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-8 max-w-xl mx-auto text-white">
               <h3 className="text-2xl font-bold mb-3">Download Your Posts Without Watermarks</h3>
               <p className="text-blue-100 mb-6">Register with your business email to get all posts in full resolution, ready to publish.</p>
@@ -1086,8 +1061,28 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
               >
                 Register to Download Free
               </button>
-              <p className="text-blue-200 text-xs mt-4">Business email required · No credit card needed</p>
+              <p className="text-blue-200 text-xs mt-4">No credit card required</p>
             </div>
+          </div>
+
+          {/* SEO Insights */}
+          <div className="mb-12">
+            <SeoInsights data={seoData} locked={false} />
+          </div>
+
+          {/* Website Concept */}
+          <div className="mb-12">
+            <WebsiteConcept data={websiteConceptData} locked={false} analysisId={analysisId} />
+          </div>
+
+          {/* 90-Day Posting Plan */}
+          <div className="mb-12">
+            <PostingPlan data={postingPlan} locked={false} />
+          </div>
+
+          {/* Google Search Ad Copy — collapsed by default */}
+          <div className="mb-12">
+            <GoogleAdsCopy data={googleAdsData} locked={false} collapsed={true} />
           </div>
         </motion.div>
       )}
