@@ -135,6 +135,7 @@ export default function PublishingDashboard() {
   // Publish controls state
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
   const [scheduleTime, setScheduleTime] = useState('');
+  const [publishing, setPublishing] = useState(false);
 
   // Auth guard
   useEffect(() => {
@@ -305,6 +306,87 @@ export default function PublishingDashboard() {
     setEditPlatformCaptions({ ...originalContent.platformCaptions });
     setInlineToast(null);
   }, [originalContent]);
+
+  // ── Publish content to selected platforms ──────────────────────────────────
+
+  const publishContent = useCallback(async (mode: 'now' | 'schedule') => {
+    if (!selectedTaskId || publishing) return;
+    if (selectedPlatforms.size === 0) {
+      showToast('error', 'Select at least one platform');
+      return;
+    }
+    if (mode === 'schedule' && !scheduleTime) {
+      showToast('error', 'Set a schedule time first');
+      return;
+    }
+
+    // Build content from current editor state (not stale original)
+    const hashtags = editHashtags
+      .split(/\s+/)
+      .map(h => h.trim())
+      .filter(Boolean);
+
+    const pv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(editPlatformCaptions)) {
+      if (v) pv[k] = v;
+    }
+
+    const payload: Record<string, any> = {
+      platforms: Array.from(selectedPlatforms),
+      content: {
+        caption: editCaption || null,
+        platform_variants: Object.keys(pv).length > 0 ? pv : null,
+        hashtags: hashtags.length > 0 ? hashtags : null,
+        cta: editCta || null,
+      },
+    };
+    if (mode === 'schedule') {
+      payload.scheduled_time = scheduleTime;
+    }
+
+    const publishUrl = `/api/publish/${selectedTaskId}`;
+    console.log('[publishContent]', mode, publishUrl, JSON.stringify(payload).slice(0, 400));
+
+    setPublishing(true);
+    setInlineToast(null);
+
+    try {
+      const res = await fetch(publishUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const resBody = await res.json().catch(() => ({ error: 'Unparseable response' }));
+      console.log('[publishContent] response', res.status, JSON.stringify(resBody).slice(0, 400));
+
+      if (!res.ok) {
+        throw new Error(resBody.error || `Publish failed (${res.status})`);
+      }
+
+      const platformCount = payload.platforms.length;
+      const statusLabel = mode === 'schedule' ? 'scheduled' : 'queued';
+      showToast('success', `${platformCount} platform(s) ${statusLabel} successfully`);
+
+      // Update local queue item status
+      setQueue(prev => prev.map(item =>
+        item.task_id === selectedTaskId
+          ? { ...item, publish_status: mode === 'schedule' ? 'scheduled' : 'pending' }
+          : item
+      ));
+
+      // Clear platform selection + schedule after success
+      setSelectedPlatforms(new Set());
+      setScheduleTime('');
+
+      // Refresh queue in background to pick up accurate server state
+      fetchQueue();
+    } catch (e: any) {
+      console.error('[publishContent] error:', e);
+      showToast('error', e.message || 'Publish failed');
+    } finally {
+      setPublishing(false);
+    }
+  }, [selectedTaskId, publishing, selectedPlatforms, scheduleTime, editCaption, editHashtags, editCta, editPlatformCaptions, showToast, fetchQueue]);
 
   // ── Render helpers ─────────────────────────────────────────────────────────
 
@@ -623,11 +705,12 @@ export default function PublishingDashboard() {
                         <button
                           key={p.id}
                           onClick={() => togglePlatform(p.id)}
+                          disabled={publishing}
                           className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
                             isSelected
                               ? `${p.color} text-white border-transparent ring-2 ${p.ring}`
                               : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                          }`}
+                          } disabled:opacity-40 disabled:cursor-not-allowed`}
                         >
                           <Icon className="w-4 h-4" />
                           {p.label}
@@ -653,24 +736,31 @@ export default function PublishingDashboard() {
                 {/* Action buttons */}
                 <div className="flex flex-wrap gap-3">
                   <button
-                    disabled={selectedPlatforms.size === 0}
+                    onClick={() => publishContent('now')}
+                    disabled={selectedPlatforms.size === 0 || publishing}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     title={selectedPlatforms.size === 0 ? 'Select at least one platform' : 'Post immediately'}
                   >
-                    <Zap className="w-4 h-4" />
-                    Post Now
+                    {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                    {publishing ? 'Publishing…' : 'Post Now'}
                   </button>
                   <button
-                    disabled={selectedPlatforms.size === 0 || !scheduleTime}
+                    onClick={() => publishContent('schedule')}
+                    disabled={selectedPlatforms.size === 0 || !scheduleTime || publishing}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white text-gray-700 text-sm font-semibold border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     title={!scheduleTime ? 'Set a schedule time first' : selectedPlatforms.size === 0 ? 'Select at least one platform' : 'Schedule post'}
                   >
-                    <Clock className="w-4 h-4" />
+                    {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
                     Schedule
                   </button>
                 </div>
-                <p className="text-xs text-gray-400 mt-3">
-                  Publishing controls are placeholders — wiring comes in a future prompt.
+                {isDirty && (
+                  <p className="text-xs text-amber-600 mt-3">
+                    ⚠ You have unsaved caption edits. Publishing will use the current editor content.
+                  </p>
+                )}
+                <p className="text-xs text-gray-400 mt-2">
+                  Posts are queued for publishing — actual delivery depends on connected social accounts.
                 </p>
               </div>
             </div>
