@@ -256,20 +256,28 @@ export default function PublishingDashboard() {
       payload.platform_variants = pv;
     }
 
-    if (Object.keys(payload).length === 0) return; // nothing to save
+    if (Object.keys(payload).length === 0) {
+      console.warn('[saveEdits] payload empty — nothing to save');
+      return;
+    }
+
+    const saveUrl = `/api/content/${selectedTaskId}`;
+    console.log('[saveEdits] PUT', saveUrl, JSON.stringify(payload).slice(0, 300));
 
     setSaving(true);
     setInlineToast(null);
 
     try {
-      const res = await fetch(`/api/content/${selectedTaskId}`, {
+      const res = await fetch(saveUrl, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      const resBody = await res.json().catch(() => ({ error: 'Unparseable response' }));
+      console.log('[saveEdits] response', res.status, JSON.stringify(resBody).slice(0, 300));
+
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Save failed' }));
-        throw new Error(err.error || `Save failed (${res.status})`);
+        throw new Error(resBody.error || `Save failed (${res.status})`);
       }
       // Success — update original snapshot to match current edits
       setOriginalContent({
@@ -278,9 +286,9 @@ export default function PublishingDashboard() {
         cta: editCta,
         platformCaptions: { ...editPlatformCaptions },
       });
-      showToast('success', 'Draft saved successfully');
+      showToast('success', `Draft saved (${resBody.storage_status || 'ok'})`);
     } catch (e: any) {
-      console.error('Save error:', e);
+      console.error('[saveEdits] error:', e);
       showToast('error', e.message || 'Failed to save edits');
     } finally {
       setSaving(false);

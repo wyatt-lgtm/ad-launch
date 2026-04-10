@@ -37,8 +37,11 @@ export async function PUT(
   try {
     const { taskId } = params;
     const body = await request.json();
+    const outboundUrl = `${TOMBSTONE_URL}/content/${taskId}`;
 
-    const res = await fetch(`${TOMBSTONE_URL}/content/${taskId}`, {
+    console.log(`[content/${taskId}] PUT proxy → ${outboundUrl}`, JSON.stringify(body).slice(0, 200));
+
+    const res = await fetch(outboundUrl, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -47,16 +50,23 @@ export async function PUT(
       body: JSON.stringify(body),
     });
 
+    const resText = await res.text();
+    console.log(`[content/${taskId}] PUT response ${res.status}:`, resText.slice(0, 300));
+
     if (!res.ok) {
-      const errText = await res.text().catch(() => 'Unknown error');
-      console.error(`[content/${taskId}] PUT failed (${res.status}):`, errText);
       return NextResponse.json(
         { error: `Failed to save edits (${res.status})` },
         { status: res.status }
       );
     }
 
-    const data = await res.json();
+    // Parse the successful response text as JSON
+    let data;
+    try {
+      data = JSON.parse(resText);
+    } catch {
+      data = { raw: resText };
+    }
     return NextResponse.json(data);
   } catch (e: any) {
     console.error(`[content/${params.taskId}] PUT error:`, e.message);
