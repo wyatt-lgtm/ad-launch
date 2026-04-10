@@ -8,7 +8,7 @@ import {
   Loader2, Send, Clock, CheckCircle2, XCircle, Edit3,
   Hash, CalendarDays, Zap, RefreshCw, ImageIcon, FileText,
   Facebook, Instagram, Linkedin, ChevronRight, AlertCircle,
-  Save, RotateCcw,
+  Save, RotateCcw, Link2,
 } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -41,6 +41,14 @@ interface OriginalContent {
   hashtags: string;
   cta: string;
   platformCaptions: Record<string, string>;
+}
+
+interface SocialAccountItem {
+  id: string;
+  platform: string;
+  handle: string;
+  displayName: string | null;
+  isActive: boolean;
 }
 
 interface InlineToast {
@@ -137,6 +145,10 @@ export default function PublishingDashboard() {
   const [scheduleTime, setScheduleTime] = useState('');
   const [publishing, setPublishing] = useState(false);
 
+  // Connected accounts state
+  const [connectedAccounts, setConnectedAccounts] = useState<SocialAccountItem[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+
   // Auth guard
   useEffect(() => {
     if (sessionStatus === 'unauthenticated') router.push('/login');
@@ -163,6 +175,29 @@ export default function PublishingDashboard() {
   useEffect(() => {
     if (sessionStatus === 'authenticated') fetchQueue();
   }, [sessionStatus, fetchQueue]);
+
+  // ── Fetch connected accounts ────────────────────────────────────────────────
+
+  const fetchAccounts = useCallback(async () => {
+    setAccountsLoading(true);
+    try {
+      const res = await fetch('/api/social/accounts');
+      if (res.ok) {
+        const data = await res.json();
+        setConnectedAccounts(Array.isArray(data.accounts) ? data.accounts : []);
+      } else {
+        setConnectedAccounts([]);
+      }
+    } catch {
+      setConnectedAccounts([]);
+    } finally {
+      setAccountsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sessionStatus === 'authenticated') fetchAccounts();
+  }, [sessionStatus, fetchAccounts]);
 
   // ── Fetch detail ───────────────────────────────────────────────────────────
 
@@ -762,6 +797,71 @@ export default function PublishingDashboard() {
                 <p className="text-xs text-gray-400 mt-2">
                   Posts are queued for publishing — actual delivery depends on connected social accounts.
                 </p>
+              </div>
+
+              {/* ── Connected Accounts (placeholder) ─────────────────── */}
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                    <Link2 className="w-4 h-4" /> Connected Accounts
+                  </h3>
+                  <span className="text-[10px] text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">
+                    Coming soon
+                  </span>
+                </div>
+
+                {accountsLoading ? (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                  </div>
+                ) : connectedAccounts.length === 0 ? (
+                  <div className="py-6 text-center">
+                    <Link2 className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                    <p className="text-sm text-gray-500">No connected accounts yet</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Social account connections will be available in a future update.
+                    </p>
+                    <button
+                      disabled
+                      className="mt-3 px-4 py-1.5 text-xs font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed"
+                    >
+                      Connect Account
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {connectedAccounts.map(acct => {
+                      const platformCfg = PLATFORMS.find(p => p.id === acct.platform);
+                      const Icon = platformCfg?.icon ?? Link2;
+                      const colorClass = platformCfg?.color ?? 'bg-gray-500';
+                      return (
+                        <div
+                          key={acct.id}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-gray-100 bg-gray-50/50"
+                        >
+                          <span className={`w-7 h-7 rounded-md flex items-center justify-center text-white ${colorClass}`}>
+                            <Icon className="w-3.5 h-3.5" />
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">
+                              {acct.displayName || acct.handle || acct.platform}
+                            </p>
+                            <p className="text-[10px] text-gray-400">{acct.platform}</p>
+                          </div>
+                          <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                            placeholder
+                          </span>
+                        </div>
+                      );
+                    })}
+                    <button
+                      disabled
+                      className="w-full mt-2 px-4 py-1.5 text-xs font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed"
+                    >
+                      Manage Accounts
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
