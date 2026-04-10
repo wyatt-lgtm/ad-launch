@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
@@ -8,6 +8,7 @@ import {
   Loader2, Send, Clock, CheckCircle2, XCircle, Edit3,
   Hash, CalendarDays, Zap, RefreshCw, ImageIcon, FileText,
   Facebook, Instagram, Linkedin, ChevronRight, AlertCircle,
+  Save, RotateCcw,
 } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -33,6 +34,18 @@ interface ContentDetail {
   cta: string | null;
   image_urls: string[];
   raw_output: string | null;
+}
+
+interface OriginalContent {
+  caption: string;
+  hashtags: string;
+  cta: string;
+  platformCaptions: Record<string, string>;
+}
+
+interface InlineToast {
+  type: 'success' | 'error';
+  message: string;
 }
 
 const PUBLISH_STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: any }> = {
@@ -78,11 +91,46 @@ export default function PublishingDashboard() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  // Editor state (local only for now)
+  // Editor state
   const [editCaption, setEditCaption] = useState('');
   const [editHashtags, setEditHashtags] = useState('');
   const [editCta, setEditCta] = useState('');
   const [editPlatformCaptions, setEditPlatformCaptions] = useState<Record<string, string>>({});
+
+  // Original content snapshot (set when detail loads or save succeeds)
+  const [originalContent, setOriginalContent] = useState<OriginalContent | null>(null);
+
+  // Save state
+  const [saving, setSaving] = useState(false);
+  const [inlineToast, setInlineToast] = useState<InlineToast | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Dirty detection — true when any editor field differs from original
+  const isDirty = useMemo(() => {
+    if (!originalContent) return false;
+    if (editCaption !== originalContent.caption) return true;
+    if (editHashtags !== originalContent.hashtags) return true;
+    if (editCta !== originalContent.cta) return true;
+    // Compare platform captions
+    const origKeys = Object.keys(originalContent.platformCaptions);
+    const editKeys = Object.keys(editPlatformCaptions);
+    if (origKeys.length !== editKeys.length) return true;
+    for (const k of origKeys) {
+      if ((editPlatformCaptions[k] ?? '') !== (originalContent.platformCaptions[k] ?? '')) return true;
+    }
+    // Check for new keys in edit that don't exist in original
+    for (const k of editKeys) {
+      if (editPlatformCaptions[k] && !originalContent.platformCaptions[k]) return true;
+    }
+    return false;
+  }, [editCaption, editHashtags, editCta, editPlatformCaptions, originalContent]);
+
+  // Show inline toast with auto-dismiss
+  const showToast = useCallback((type: 'success' | 'error', message: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setInlineToast({ type, message });
+    toastTimer.current = setTimeout(() => setInlineToast(null), 4000);
+  }, []);
 
   // Publish controls state
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
@@ -148,6 +196,9 @@ export default function PublishingDashboard() {
         }
       }
       setEditPlatformCaptions(pc);
+
+      // Snapshot for dirty detection & reset
+      setOriginalContent({ caption, hashtags: Array.isArray(data.hashtags) ? data.hashtags.join(' ') : '', cta: data.cta || '', platformCaptions: { ...pc } });
     } catch (e: any) {
       console.error('Detail fetch error:', e);
       setDetailError(e.message || 'Failed to load content');
@@ -174,6 +225,78 @@ export default function PublishingDashboard() {
       return next;
     });
   };
+
+  // ── Save edits to Tombstone ───────────────────────────────────────────────
+
+  const saveEdits = useCallback(async () => {
+    if (!selectedTaskId || !originalContent || saving) return;
+
+    // Build partial payload — only include fields that changed
+    const payload: Record<string, any> = {};
+    if (editCaption !== originalContent.caption) payload.caption = editCaption;
+    if (editCta !== originalContent.cta) payload.cta = editCta;
+    if (editHashtags !== originalContent.hashtags) {
+      payload.hashtags = editHashtags
+        .split(/\s+/)
+        .map(h => h.trim())
+        .filter(Boolean);
+    }
+    // Check platform_variants
+    const pvChanged = Object.keys(editPlatformCaptions).some(
+      k => (editPlatformCaptions[k] ?? '') !== (originalContent.platformCaptions[k] ?? '')
+    ) || Object.keys(originalContent.platformCaptions).some(
+      k => (editPlatformCaptions[k] ?? '') !== (originalContent.platformCaptions[k] ?? '')
+    );
+    if (pvChanged) {
+      // Send as dict — backend expects { facebook: "...", instagram: "..." }
+      const pv: Record<string, string> = {};
+      for (const [k, v] of Object.entries(editPlatformCaptions)) {
+        if (v) pv[k] = v;
+      }
+      payload.platform_variants = pv;
+    }
+
+    if (Object.keys(payload).length === 0) return; // nothing to save
+
+    setSaving(true);
+    setInlineToast(null);
+
+    try {
+      const res = await fetch(`/api/content/${selectedTaskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Save failed' }));
+        throw new Error(err.error || `Save failed (${res.status})`);
+      }
+      // Success — update original snapshot to match current edits
+      setOriginalContent({
+        caption: editCaption,
+        hashtags: editHashtags,
+        cta: editCta,
+        platformCaptions: { ...editPlatformCaptions },
+      });
+      showToast('success', 'Draft saved successfully');
+    } catch (e: any) {
+      console.error('Save error:', e);
+      showToast('error', e.message || 'Failed to save edits');
+    } finally {
+      setSaving(false);
+    }
+  }, [selectedTaskId, originalContent, saving, editCaption, editHashtags, editCta, editPlatformCaptions, showToast]);
+
+  // ── Reset edits to original ─────────────────────────────────────────────
+
+  const resetEdits = useCallback(() => {
+    if (!originalContent) return;
+    setEditCaption(originalContent.caption);
+    setEditHashtags(originalContent.hashtags);
+    setEditCta(originalContent.cta);
+    setEditPlatformCaptions({ ...originalContent.platformCaptions });
+    setInlineToast(null);
+  }, [originalContent]);
 
   // ── Render helpers ─────────────────────────────────────────────────────────
 
@@ -370,10 +493,31 @@ export default function PublishingDashboard() {
                 </div>
               )}
 
+              {/* ── Inline Toast ────────────────────────────────────── */}
+              {inlineToast && (
+                <div className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  inlineToast.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-red-50 text-red-700 border border-red-200'
+                }`}>
+                  {inlineToast.type === 'success'
+                    ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                    : <XCircle className="w-4 h-4 flex-shrink-0" />
+                  }
+                  {inlineToast.message}
+                  <button onClick={() => setInlineToast(null)} className="ml-auto text-xs opacity-60 hover:opacity-100">✕</button>
+                </div>
+              )}
+
               {/* ── Caption Editor ──────────────────────────────────── */}
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-1">Caption</h3>
-                <p className="text-xs text-gray-400 mb-3">Main post caption — edits are local only for now</p>
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="text-sm font-semibold text-gray-700">Caption</h3>
+                  {isDirty && (
+                    <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">Unsaved changes</span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 mb-3">Main post caption</p>
                 <textarea
                   value={editCaption}
                   onChange={(e) => setEditCaption(e.target.value)}
@@ -404,6 +548,26 @@ export default function PublishingDashboard() {
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
                     placeholder="e.g. Book your table today"
                   />
+                </div>
+
+                {/* Save / Reset buttons */}
+                <div className="flex items-center gap-3 mt-5 pt-4 border-t border-gray-100">
+                  <button
+                    onClick={saveEdits}
+                    disabled={!isDirty || saving}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    {saving ? 'Saving…' : 'Save Edits'}
+                  </button>
+                  <button
+                    onClick={resetEdits}
+                    disabled={!isDirty || saving}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-gray-600 text-sm font-medium border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Reset
+                  </button>
                 </div>
               </div>
 
