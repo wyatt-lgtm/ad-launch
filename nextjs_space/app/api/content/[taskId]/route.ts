@@ -39,8 +39,6 @@ export async function PUT(
     const body = await request.json();
     const outboundUrl = `${TOMBSTONE_URL}/content/${taskId}`;
 
-    console.log(`[content/${taskId}] PUT proxy → ${outboundUrl}`, JSON.stringify(body).slice(0, 200));
-
     const res = await fetch(outboundUrl, {
       method: 'PUT',
       headers: {
@@ -51,7 +49,6 @@ export async function PUT(
     });
 
     const resText = await res.text();
-    console.log(`[content/${taskId}] PUT response ${res.status}:`, resText.slice(0, 300));
 
     if (!res.ok) {
       return NextResponse.json(

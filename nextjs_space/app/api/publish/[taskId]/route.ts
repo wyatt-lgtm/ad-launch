@@ -13,8 +13,6 @@ export async function POST(
     const body = await request.json();
     const outboundUrl = `${TOMBSTONE_URL}/publish/${taskId}`;
 
-    console.log(`[publish/${taskId}] POST proxy → ${outboundUrl}`, JSON.stringify(body).slice(0, 300));
-
     const res = await fetch(outboundUrl, {
       method: 'POST',
       headers: {
@@ -25,7 +23,6 @@ export async function POST(
     });
 
     const resText = await res.text();
-    console.log(`[publish/${taskId}] POST response ${res.status}:`, resText.slice(0, 400));
 
     if (!res.ok) {
       let errMsg = `Publish failed (${res.status})`;

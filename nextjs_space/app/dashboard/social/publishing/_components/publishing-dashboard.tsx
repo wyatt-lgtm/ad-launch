@@ -297,7 +297,6 @@ export default function PublishingDashboard() {
     }
 
     const saveUrl = `/api/content/${selectedTaskId}`;
-    console.log('[saveEdits] PUT', saveUrl, JSON.stringify(payload).slice(0, 300));
 
     setSaving(true);
     setInlineToast(null);
@@ -309,7 +308,6 @@ export default function PublishingDashboard() {
         body: JSON.stringify(payload),
       });
       const resBody = await res.json().catch(() => ({ error: 'Unparseable response' }));
-      console.log('[saveEdits] response', res.status, JSON.stringify(resBody).slice(0, 300));
 
       if (!res.ok) {
         throw new Error(resBody.error || `Save failed (${res.status})`);
@@ -379,7 +377,6 @@ export default function PublishingDashboard() {
     }
 
     const publishUrl = `/api/publish/${selectedTaskId}`;
-    console.log('[publishContent]', mode, publishUrl, JSON.stringify(payload).slice(0, 400));
 
     setPublishing(true);
     setInlineToast(null);
@@ -391,7 +388,6 @@ export default function PublishingDashboard() {
         body: JSON.stringify(payload),
       });
       const resBody = await res.json().catch(() => ({ error: 'Unparseable response' }));
-      console.log('[publishContent] response', res.status, JSON.stringify(resBody).slice(0, 400));
 
       if (!res.ok) {
         throw new Error(resBody.error || `Publish failed (${res.status})`);
