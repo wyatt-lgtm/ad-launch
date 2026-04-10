@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
     const sourceType = url.searchParams.get('sourceType') || undefined;
     const pilotState = url.searchParams.get('pilotState') || undefined;
     const geoScope = url.searchParams.get('geoScope') || undefined;
+    const industry = url.searchParams.get('industry') || undefined;
     const search = url.searchParams.get('search') || undefined;
     const sortBy = url.searchParams.get('sortBy') || 'updatedAt';
     const sortDir = (url.searchParams.get('sortDir') || 'desc') as 'asc' | 'desc';
@@ -21,6 +22,7 @@ export async function GET(req: NextRequest) {
     if (sourceType) where.sourceType = sourceType;
     if (pilotState) where.pilotState = pilotState;
     if (geoScope) where.geoScope = geoScope;
+    if (industry) where.industry = industry;
     if (search) {
       where.OR = [
         { title: { contains: search, mode: 'insensitive' } },

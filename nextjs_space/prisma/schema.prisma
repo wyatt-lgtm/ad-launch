@@ -208,6 +208,14 @@ model RssFeed {
     // national → included in ALL trade area queries
     // weather  → state-level weather; matches pilotState
 
+  // Industry classification — for national feed opt-in system
+  industry          String?            // "technology", "automotive", "rural_agriculture",
+    // "rodeo_western", "small_business", "weather", "sports",
+    // "home_services", "cybersecurity", "retail_consumer"
+  contentTags       String[] @default([])  // ["news","tips","alerts","how-to","did-you-know"]
+  localizable       Boolean  @default(false) // Can content be repurposed with local framing?
+  updateFrequency   String?            // "daily", "weekly", "multiple_daily"
+
   // Tombstone integration — agent that last processed this feed
   lastAgentRun      String?            // e.g. "tombstone_rss_refresh_2026-04-07"
   lastAgentRunAt    DateTime?
@@ -227,6 +235,7 @@ model RssFeed {
   @@index([lastItemDate])
   @@index([geoScope])
   @@index([geoScope, status])
+  @@index([industry])
 }
 
 // ═══════════════════════════════════════════════════════════════
