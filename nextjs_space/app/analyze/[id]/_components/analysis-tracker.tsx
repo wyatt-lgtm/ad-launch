@@ -843,7 +843,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       byDept.get(key)!.push(t);
     }
     const result: TaskItem[] = [];
-    const deptOrder = ['Business Analysis', 'Marketing Strategy', 'Ad Copywriting', 'Visual Direction', 'Image Generation', 'Final Assembly'];
+    const deptOrder = ['Business Analysis', 'Marketing Strategy', 'Ad Copywriting', 'Visual Direction', 'Image Generation'];
     let prevAllComplete = true; // first step has no prerequisite
     for (const dept of deptOrder) {
       const items = byDept.get(dept);
