@@ -215,19 +215,19 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
         })}
       </div>
 
+      {/* 90-Day Posting Plan — right after Register CTA */}
+      <div className="mb-8">
+        <PostingPlan data={postingPlan} locked={false} />
+      </div>
+
       {/* SEO Insights */}
       <div className="mb-8">
         <SeoInsights data={seoData} locked={false} />
       </div>
 
-      {/* Website Concept */}
+      {/* Website Concept — collapsed by default */}
       <div className="mb-8">
-        <WebsiteConcept data={websiteConceptData} locked={false} />
-      </div>
-
-      {/* 90-Day Posting Plan */}
-      <div className="mb-8">
-        <PostingPlan data={postingPlan} locked={false} />
+        <WebsiteConcept data={websiteConceptData} locked={false} collapsed={true} />
       </div>
 
       {/* Google Search Ad Copy — collapsed */}

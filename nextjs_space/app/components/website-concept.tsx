@@ -1,6 +1,6 @@
 'use client';
 
-import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail } from 'lucide-react';
+import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail, ChevronDown, ChevronUp } from 'lucide-react';
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 
@@ -8,6 +8,7 @@ interface WebsiteConceptProps {
   data: any;
   locked?: boolean;
   analysisId?: string;
+  collapsed?: boolean;
 }
 
 function CopyAll({ text }: { text: string }) {
@@ -66,8 +67,9 @@ function SectionCard({ section, icon: Icon, color }: { section: any; icon: any; 
   );
 }
 
-export default function WebsiteConcept({ data, locked = false, analysisId }: WebsiteConceptProps) {
+export default function WebsiteConcept({ data, locked = false, analysisId, collapsed = false }: WebsiteConceptProps) {
   const { data: session } = useSession() || {};
+  const [expanded, setExpanded] = useState(!collapsed);
   const [generating, setGenerating] = useState(false);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [genError, setGenError] = useState('');
@@ -152,20 +154,25 @@ export default function WebsiteConcept({ data, locked = false, analysisId }: Web
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      {/* Header with Generate button */}
+      {/* Header with Generate button and collapse toggle */}
       <div className="bg-gradient-to-r from-violet-600 to-fuchsia-500 px-6 py-4 flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <Globe className="w-5 h-5" /> Website Concept
-          </h3>
-          <p className="text-violet-100 text-sm mt-1">
-            Ready-to-use website copy for {data.businessName ?? 'your business'}
-          </p>
-        </div>
         <button
-          onClick={handleGenerate}
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-3 flex-1 min-w-0 text-left"
+        >
+          <Globe className="w-5 h-5 text-white flex-shrink-0" />
+          <div className="min-w-0">
+            <h3 className="text-lg font-bold text-white">Website Concept</h3>
+            <p className="text-violet-100 text-sm">
+              Ready-to-use website copy for {data.businessName ?? 'your business'}
+            </p>
+          </div>
+          {expanded ? <ChevronUp className="w-5 h-5 text-white flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-white flex-shrink-0" />}
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); handleGenerate(); }}
           disabled={generating || locked}
-          className="flex-shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-white/20 hover:bg-white/30 text-white rounded-xl font-semibold transition-all disabled:opacity-50 text-sm border border-white/30"
+          className="flex-shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-white/20 hover:bg-white/30 text-white rounded-xl font-semibold transition-all disabled:opacity-50 text-sm border border-white/30 ml-3"
         >
           {generating ? (
             <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
@@ -175,7 +182,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId }: Web
         </button>
       </div>
 
-      {/* Email prompt modal */}
+      {/* Email prompt modal — always visible regardless of collapse */}
       {showEmailPrompt && (
         <div className="p-6 bg-violet-50 border-b border-violet-100">
           <div className="max-w-md mx-auto text-center">
@@ -222,42 +229,45 @@ export default function WebsiteConcept({ data, locked = false, analysisId }: Web
         </div>
       )}
 
-      <div className="p-6 relative">
-        {locked && (
-          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
-            <div className="text-center">
-              <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
-              <p className="font-semibold text-gray-700">Register to unlock website concept</p>
+      {/* Collapsible body */}
+      {expanded && (
+        <div className="p-6 relative">
+          {locked && (
+            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
+              <div className="text-center">
+                <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
+                <p className="font-semibold text-gray-700">Register to unlock website concept</p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="space-y-4">
-          {(data.sections ?? []).map((section: any, i: number) => (
-            <SectionCard
-              key={i}
-              section={section}
-              icon={sectionIcons[i] ?? Globe}
-              color={sectionColors[i] ?? 'bg-gray-600'}
-            />
-          ))}
+          <div className="space-y-4">
+            {(data.sections ?? []).map((section: any, i: number) => (
+              <SectionCard
+                key={i}
+                section={section}
+                icon={sectionIcons[i] ?? Globe}
+                color={sectionColors[i] ?? 'bg-gray-600'}
+              />
+            ))}
+          </div>
+
+          {/* Color Palette */}
+          {data.colorPalette?.length > 0 && (
+            <div className="mt-6">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Suggested Color Palette</h4>
+              <div className="flex gap-3">
+                {(data.colorPalette as any[]).map((c: any, i: number) => (
+                  <div key={i} className="flex flex-col items-center gap-1">
+                    <div className="w-10 h-10 rounded-lg shadow-sm border border-gray-200" style={{ backgroundColor: c.hex ?? '#ccc' }} />
+                    <span className="text-xs text-gray-500">{c.name ?? c.hex}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-
-        {/* Color Palette */}
-        {data.colorPalette?.length > 0 && (
-          <div className="mt-6">
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Suggested Color Palette</h4>
-            <div className="flex gap-3">
-              {(data.colorPalette as any[]).map((c: any, i: number) => (
-                <div key={i} className="flex flex-col items-center gap-1">
-                  <div className="w-10 h-10 rounded-lg shadow-sm border border-gray-200" style={{ backgroundColor: c.hex ?? '#ccc' }} />
-                  <span className="text-xs text-gray-500">{c.name ?? c.hex}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }
