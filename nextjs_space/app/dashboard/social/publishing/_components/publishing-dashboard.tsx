@@ -38,10 +38,21 @@ interface ContentDetail {
 const PUBLISH_STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: any }> = {
   ready: { label: 'Ready', color: 'text-emerald-700', bg: 'bg-emerald-50', icon: CheckCircle2 },
   draft: { label: 'Draft', color: 'text-gray-600', bg: 'bg-gray-100', icon: Edit3 },
+  pending: { label: 'Pending', color: 'text-amber-700', bg: 'bg-amber-50', icon: Clock },
   scheduled: { label: 'Scheduled', color: 'text-amber-700', bg: 'bg-amber-50', icon: Clock },
   posted: { label: 'Posted', color: 'text-blue-700', bg: 'bg-blue-50', icon: Send },
   failed: { label: 'Failed', color: 'text-red-700', bg: 'bg-red-50', icon: XCircle },
 };
+
+function safeDate(raw: string | null | undefined): string {
+  if (!raw) return '';
+  try {
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+  } catch {
+    return '';
+  }
+}
 
 const PLATFORMS = [
   { id: 'facebook', label: 'Facebook', icon: Facebook, color: 'bg-blue-600', ring: 'ring-blue-300' },
@@ -65,6 +76,7 @@ export default function PublishingDashboard() {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [detail, setDetail] = useState<ContentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   // Editor state (local only for now)
   const [editCaption, setEditCaption] = useState('');
@@ -107,18 +119,21 @@ export default function PublishingDashboard() {
 
   const fetchDetail = useCallback(async (taskId: number) => {
     setDetailLoading(true);
+    setDetailError(null);
     try {
       const res = await fetch(`/api/content/${taskId}`);
       if (!res.ok) throw new Error('Failed to load content detail');
       const data: ContentDetail = await res.json();
       setDetail(data);
 
-      // Populate editor fields
-      setEditCaption(data.base_caption || '');
-      setEditHashtags((data.hashtags || []).join(' '));
+      // Populate editor fields — fall back to raw_output snippet for caption
+      const caption = data.base_caption
+        || (data.raw_output ? data.raw_output.slice(0, 300) : '');
+      setEditCaption(caption);
+      setEditHashtags(Array.isArray(data.hashtags) ? data.hashtags.join(' ') : '');
       setEditCta(data.cta || '');
 
-      // Platform-specific captions from variants
+      // Platform-specific captions from variants (defensive: array or object)
       const pc: Record<string, string> = {};
       if (Array.isArray(data.platform_variants)) {
         for (const v of data.platform_variants) {
@@ -126,10 +141,16 @@ export default function PublishingDashboard() {
             pc[v.platform] = v.caption;
           }
         }
+      } else if (data.platform_variants && typeof data.platform_variants === 'object') {
+        // Handle dict format: { facebook: "...", instagram: "..." }
+        for (const [k, v] of Object.entries(data.platform_variants as any)) {
+          if (typeof v === 'string') pc[k] = v;
+        }
       }
       setEditPlatformCaptions(pc);
     } catch (e: any) {
       console.error('Detail fetch error:', e);
+      setDetailError(e.message || 'Failed to load content');
       setDetail(null);
     } finally {
       setDetailLoading(false);
@@ -270,7 +291,7 @@ export default function PublishingDashboard() {
                         <div className="flex items-center gap-2 mt-1.5">
                           <StatusBadge publishStatus={item.publish_status} />
                           <span className="text-[10px] text-gray-400">
-                            {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
+                            {safeDate(item.created_at)}
                           </span>
                         </div>
                       </div>
@@ -303,32 +324,46 @@ export default function PublishingDashboard() {
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex items-center justify-center min-h-[500px]">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
             </div>
-          ) : !detail ? (
+          ) : detailError || !detail ? (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex items-center justify-center min-h-[500px]">
               <div className="text-center px-8">
                 <AlertCircle className="w-10 h-10 text-red-300 mx-auto mb-3" />
-                <p className="text-sm text-red-600">Failed to load content details</p>
+                <p className="text-sm text-red-600">{detailError || 'Failed to load content details'}</p>
+                {selectedTaskId && (
+                  <button
+                    onClick={() => fetchDetail(selectedTaskId)}
+                    className="mt-3 text-xs text-blue-600 underline hover:text-blue-700"
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             </div>
           ) : (
             <div className="space-y-6">
               {/* ── Image Preview ───────────────────────────────────── */}
-              {detail.image_urls && detail.image_urls.length > 0 && (
+              {Array.isArray(detail.image_urls) && detail.image_urls.length > 0 && (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
                   <h3 className="text-sm font-semibold text-gray-700 mb-3">Images</h3>
                   <div className="flex gap-3 overflow-x-auto pb-2">
                     {detail.image_urls.map((url, i) => (
-                      <div key={i} className="w-40 h-40 rounded-lg bg-gray-100 flex-shrink-0 overflow-hidden relative">
+                      <div key={i} className="w-40 h-40 rounded-lg bg-gray-100 flex-shrink-0 overflow-hidden relative group">
                         <Image
                           src={url}
-                          alt={`Asset ${i + 1}`}
+                          alt={detail.summary || `Asset ${i + 1}`}
                           fill
                           className="object-cover"
                           sizes="160px"
                           onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
+                            const el = e.target as HTMLImageElement;
+                            el.style.display = 'none';
+                            // Show fallback sibling
+                            el.parentElement?.querySelector('[data-img-fallback]')?.removeAttribute('hidden');
                           }}
                         />
+                        <div data-img-fallback hidden className="absolute inset-0 flex items-center justify-center">
+                          <ImageIcon className="w-6 h-6 text-gray-300" />
+                        </div>
                       </div>
                     ))}
                   </div>
