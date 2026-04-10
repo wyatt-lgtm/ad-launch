@@ -189,13 +189,22 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
                   {/* Download */}
                   <div className="px-4 py-3 border-t border-gray-100">
                     <button
-                      onClick={() => {
-                        if (ad?.imageUrl) {
+                      onClick={async () => {
+                        if (!ad?.imageUrl) return;
+                        try {
+                          const res = await fetch(ad.imageUrl);
+                          const blob = await res.blob();
+                          const blobUrl = URL.createObjectURL(blob);
                           const a = document.createElement('a');
-                          a.href = ad.imageUrl;
+                          a.href = blobUrl;
                           a.download = `${lane}-post-${i + 1}.png`;
-                          a.target = '_blank';
+                          document.body.appendChild(a);
                           a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(blobUrl);
+                        } catch {
+                          // Fallback: open in new tab
+                          window.open(ad.imageUrl, '_blank');
                         }
                       }}
                       className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
