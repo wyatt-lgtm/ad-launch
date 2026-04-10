@@ -44,11 +44,10 @@ interface OriginalContent {
 }
 
 interface SocialAccountItem {
-  id: string;
+  id: number;
   platform: string;
-  handle: string;
-  displayName: string | null;
-  isActive: boolean;
+  account_name: string;
+  connection_status: string;
 }
 
 interface InlineToast {
@@ -181,7 +180,7 @@ export default function PublishingDashboard() {
   const fetchAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
-      const res = await fetch('/api/social/accounts');
+      const res = await fetch('/api/publish/accounts');
       if (res.ok) {
         const data = await res.json();
         setConnectedAccounts(Array.isArray(data.accounts) ? data.accounts : []);
@@ -844,12 +843,12 @@ export default function PublishingDashboard() {
                           </span>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-800 truncate">
-                              {acct.displayName || acct.handle || acct.platform}
+                              {acct.account_name}
                             </p>
                             <p className="text-[10px] text-gray-400">{acct.platform}</p>
                           </div>
                           <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-                            placeholder
+                            {acct.connection_status}
                           </span>
                         </div>
                       );
