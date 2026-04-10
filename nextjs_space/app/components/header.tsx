@@ -2,7 +2,7 @@
 
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
-import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper } from 'lucide-react';
+import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss } from 'lucide-react';
 import { useState } from 'react';
 
 export default function Header() {
@@ -30,6 +30,9 @@ export default function Header() {
               </Link>
               <Link href="/dashboard/social" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
                 <Newspaper className="w-4 h-4" /> Social Posts
+              </Link>
+              <Link href="/dashboard/feeds" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
+                <Rss className="w-4 h-4" /> Content Feeds
               </Link>
               <button onClick={() => signOut({ callbackUrl: '/' })} className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-red-50 text-red-600 transition-colors text-sm font-medium">
                 <LogOut className="w-4 h-4" /> Sign Out
@@ -61,6 +64,9 @@ export default function Header() {
               </Link>
               <Link href="/dashboard/social" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>
                 <Newspaper className="w-4 h-4" /> Social Posts
+              </Link>
+              <Link href="/dashboard/feeds" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>
+                <Rss className="w-4 h-4" /> Content Feeds
               </Link>
               <button onClick={() => { signOut({ callbackUrl: '/' }); setMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-50 text-red-600 text-sm w-full">
                 <LogOut className="w-4 h-4" /> Sign Out
