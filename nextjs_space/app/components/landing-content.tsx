@@ -122,7 +122,7 @@ export default function LandingContent() {
                   className="m-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-500 transition-all disabled:opacity-50 flex items-center gap-2 text-sm whitespace-nowrap shadow-lg shadow-blue-600/25"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
-                  {loading ? 'Analyzing...' : 'Get 9 Posts'}
+                  {loading ? 'Analyzing...' : 'Get 3 Posts'}
                 </button>
               </div>
               {error && (
