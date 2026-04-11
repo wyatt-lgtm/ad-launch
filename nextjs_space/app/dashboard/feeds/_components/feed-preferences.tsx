@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Check, Rss, ArrowRight, Sparkles } from 'lucide-react';
+import { Loader2, Check, Rss, ArrowRight, Sparkles, Zap, AlertCircle } from 'lucide-react';
 
 interface Industry {
   key: string;
@@ -23,6 +23,10 @@ export default function FeedPreferences() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [genResult, setGenResult] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  // Track what was last saved so we know if a save is needed before generate
+  const lastSavedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -40,6 +44,7 @@ export default function FeedPreferences() {
           (data.industries ?? []).filter((i: Industry) => i.enabled).map((i: Industry) => i.key)
         );
         setSelected(enabled);
+        lastSavedRef.current = new Set(enabled);
       })
       .catch(() => setError('Failed to load feed options'))
       .finally(() => setLoading(false));
@@ -67,11 +72,90 @@ export default function FeedPreferences() {
       });
       if (!res.ok) throw new Error();
       setSaved(true);
+      lastSavedRef.current = new Set(selected);
     } catch {
       setError('Failed to save. Please try again.');
     } finally {
       setSaving(false);
     }
+  };
+
+  // ── Save preferences silently (for auto-save before generate) ──────────
+  const savePreferencesSilent = async (): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/user/feed-preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ industries: Array.from(selected) }),
+      });
+      if (!res.ok) return false;
+      lastSavedRef.current = new Set(selected);
+      setSaved(true);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // ── Check if current selection differs from last saved ──────────────────
+  const needsSave = (): boolean => {
+    if (selected.size !== lastSavedRef.current.size) return true;
+    for (const key of selected) {
+      if (!lastSavedRef.current.has(key)) return true;
+    }
+    return false;
+  };
+
+  // ── Generate Posts: auto-save → Clark Kent → Tombstone ─────────────────
+  const handleGeneratePosts = async () => {
+    if (selected.size === 0) {
+      setError('Select at least one content category to generate posts.');
+      return;
+    }
+    setGenerating(true);
+    setGenResult(null);
+    setError('');
+
+    try {
+      // Auto-save preferences if they changed
+      if (needsSave()) {
+        const ok = await savePreferencesSilent();
+        if (!ok) {
+          setGenResult({ message: 'Failed to save feed preferences. Please try again.', type: 'error' });
+          setGenerating(false);
+          return;
+        }
+      }
+
+      // Step 1: Clark Kent gathers local intelligence
+      const scoutRes = await fetch('/api/rss/clark-kent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const scoutData = await scoutRes.json();
+      if (!scoutRes.ok) throw new Error(scoutData.error || 'Scout failed');
+
+      // Step 2: Send scout brief to Tombstone creative pipeline
+      const tombstoneRes = await fetch('/api/social/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scoutBrief: scoutData.brief }),
+      });
+      const tombstoneData = await tombstoneRes.json();
+      if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
+
+      setGenResult({
+        message: `${tombstoneData.taskCount ?? 0} posts queued from ${selected.size} feed ${selected.size === 1 ? 'category' : 'categories'}. Posts with artwork will appear in your Social dashboard.`,
+        type: 'success',
+      });
+
+      // Redirect to social dashboard after a brief delay so user sees the success message
+      setTimeout(() => router.push('/dashboard/social'), 2500);
+    } catch (e: any) {
+      setGenResult({ message: e.message || 'Something went wrong', type: 'error' });
+    }
+    setGenerating(false);
   };
 
   if (status === 'loading' || loading) {
@@ -155,7 +239,7 @@ export default function FeedPreferences() {
             {error && <span className="text-sm text-red-500">{error}</span>}
             <button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || generating}
               className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg font-semibold text-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
               {saving ? (
@@ -165,9 +249,47 @@ export default function FeedPreferences() {
               )}
               {saving ? 'Saving...' : 'Save Preferences'}
             </button>
+            <button
+              onClick={handleGeneratePosts}
+              disabled={generating || saving || selected.size === 0}
+              className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold text-sm hover:bg-emerald-700 transition-colors disabled:opacity-50"
+            >
+              {generating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Zap className="w-4 h-4" />
+              )}
+              {generating ? 'Generating Posts...' : 'Generate Posts'}
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Generate result toast */}
+      {genResult && (
+        <div className={`rounded-xl border p-4 mb-6 ${
+          genResult.type === 'success'
+            ? 'bg-emerald-50 border-emerald-200'
+            : 'bg-red-50 border-red-200'
+        }`}>
+          <div className="flex items-start gap-3">
+            {genResult.type === 'success' ? (
+              <Zap className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+            )}
+            <div className="flex-1">
+              <p className={`text-sm font-medium ${genResult.type === 'success' ? 'text-emerald-800' : 'text-red-800'}`}>
+                {genResult.type === 'success' ? 'Posts Queued!' : 'Generation Failed'}
+              </p>
+              <p className={`text-sm mt-0.5 ${genResult.type === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>
+                {genResult.message}
+              </p>
+            </div>
+            <button onClick={() => setGenResult(null)} className={`text-sm ${genResult.type === 'success' ? 'text-emerald-400 hover:text-emerald-600' : 'text-red-400 hover:text-red-600'}`}>✕</button>
+          </div>
+        </div>
+      )}
 
       {/* Explanation */}
       <p className="text-center text-xs text-gray-400">
