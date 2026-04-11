@@ -21,10 +21,30 @@ model User {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
   analyses          Analysis[]
+  businesses        Business[]
   socialAccounts    SocialAccount[]
   socialPosts       SocialPost[]
   feedPreferences   UserFeedPreference[]
   passwordResets    PasswordResetToken[]
+}
+
+model Business {
+  id            String     @id @default(cuid())
+  userId        String
+  websiteUrl    String
+  businessName  String?
+  businessAddr  String?
+  businessCity  String?
+  businessState String?
+  businessZip   String?
+  businessPhone String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analyses      Analysis[]
+
+  @@unique([userId, websiteUrl])
+  @@index([userId])
 }
 
 model PasswordResetToken {
@@ -56,6 +76,7 @@ model UserFeedPreference {
 model Analysis {
   id         String   @id @default(cuid())
   userId     String?
+  businessId String?
   websiteUrl String
   missionId        String?
   socialMissionId  String?   // Tombstone workflow ID for social content (Clark Kent scout → Zig → creative chain)
@@ -77,10 +98,12 @@ model Analysis {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   user        User?    @relation(fields: [userId], references: [id])
+  business    Business? @relation(fields: [businessId], references: [id])
   ads         Ad[]
   socialPosts SocialPost[]
 
   @@index([userId])
+  @@index([businessId])
   @@index([missionId])
   @@index([socialMissionId])
   @@index([businessZip])

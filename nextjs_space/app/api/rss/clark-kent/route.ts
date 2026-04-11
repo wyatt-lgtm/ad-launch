@@ -89,20 +89,34 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Fallback: look up ZIP from the user's Business records
     if (!businessZip) {
-      return NextResponse.json(
-        { error: 'No business ZIP available. Please complete a business analysis first or provide a ZIP code.' },
-        { status: 400 }
-      );
+      const bizWithZip = await prisma.business.findFirst({
+        where: { userId, businessZip: { not: null } },
+        orderBy: { updatedAt: 'desc' },
+        select: { businessZip: true, businessCity: true, businessState: true },
+      });
+      if (bizWithZip?.businessZip) {
+        businessZip = bizWithZip.businessZip;
+        businessCity = bizWithZip.businessCity;
+        businessState = bizWithZip.businessState;
+      }
     }
 
-    // ── Gather RSS intelligence ────────────────────────────────────────
+    // If still no ZIP, proceed with national-only mode (events + national feeds)
+    // instead of hard-failing — this supports category-based post generation
+
+    // ── Gather RSS intelligence (requires ZIP for local news) ──────────
     let rssBrief: ContentBrief | null = null;
-    try {
-      rssBrief = await generateContentBrief(businessZip, radius, { days: 5, limit: 30 });
-      if (rssBrief.summary.totalItems === 0) rssBrief = null;
-    } catch (err) {
-      console.error('[Clark Kent] RSS brief error:', err);
+    if (businessZip) {
+      try {
+        rssBrief = await generateContentBrief(businessZip, radius, { days: 5, limit: 30 });
+        if (rssBrief.summary.totalItems === 0) rssBrief = null;
+      } catch (err) {
+        console.error('[Clark Kent] RSS brief error:', err);
+      }
+    } else {
+      console.log('[Clark Kent] No ZIP available — skipping local RSS, national/events only');
     }
 
     // ── Gather upcoming events ─────────────────────────────────────────
@@ -110,7 +124,7 @@ export async function POST(req: NextRequest) {
 
     // ── Build trade area context (geographic only) ───────────────────
     const tradeArea = {
-      zip: businessZip!,
+      zip: businessZip || '',
       city: businessCity || '',
       state: businessState || '',
       radiusMiles: radius,

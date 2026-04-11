@@ -29,11 +29,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Scout brief with scoutSummary is required' }, { status: 400 });
     }
 
-    // Resolve website URL from analysis record (Clark Kent no longer carries business context)
+    // Resolve website URL from analysis record, then business records
     let websiteUrl: string | null = null;
     let resolvedAnalysisId = analysisId || null;
 
-    // Always resolve from analysis DB — scout brief only has local intel (RSS, events, trade area)
+    // Try analysis DB first
     const recentAnalysis = await prisma.analysis.findFirst({
       where: analysisId ? { id: analysisId, userId } : { userId, geoConfirmed: true },
       orderBy: { createdAt: 'desc' },
@@ -42,6 +42,16 @@ export async function POST(req: NextRequest) {
     if (recentAnalysis) {
       websiteUrl = recentAnalysis.websiteUrl;
       resolvedAnalysisId = resolvedAnalysisId || recentAnalysis.id;
+    }
+
+    // Fallback: look up from user's Business records
+    if (!websiteUrl) {
+      const biz = await prisma.business.findFirst({
+        where: { userId },
+        orderBy: { updatedAt: 'desc' },
+        select: { websiteUrl: true },
+      });
+      if (biz) websiteUrl = biz.websiteUrl;
     }
 
     if (!websiteUrl) {

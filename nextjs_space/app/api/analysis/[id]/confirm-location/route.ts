@@ -60,6 +60,25 @@ export async function PATCH(
       },
     });
 
+    // Sync confirmed location to the Business record
+    if (analysis.businessId) {
+      try {
+        await prisma.business.update({
+          where: { id: analysis.businessId },
+          data: {
+            ...(updated.businessCity ? { businessCity: updated.businessCity } : {}),
+            ...(updated.businessState ? { businessState: updated.businessState } : {}),
+            ...(updated.businessZip ? { businessZip: updated.businessZip } : {}),
+            ...(updated.businessAddr ? { businessAddr: updated.businessAddr } : {}),
+            ...(updated.businessPhone ? { businessPhone: updated.businessPhone } : {}),
+            ...(analysis.businessName ? { businessName: analysis.businessName } : {}),
+          },
+        });
+      } catch (bizErr: any) {
+        console.error('[confirm-location] Business sync error (non-fatal):', bizErr?.message);
+      }
+    }
+
     console.log(`[confirm-location] Analysis ${id} location confirmed (changed=${changed}) source=${updated.geoSource}`);
 
     return NextResponse.json({

@@ -97,29 +97,66 @@ export async function POST(request: NextRequest) {
 
     // Step 4: Create analysis record (no Tombstone yet — user must confirm location first)
     const topPlace = places[0];
+
+    // Resolve business fields from scraped address or Google Places
+    const bizFields = hasScrapedAddress ? {
+      businessName: scraped.businessName || undefined,
+      businessAddr: scraped.address || undefined,
+      businessCity: scraped.city || undefined,
+      businessState: scraped.state || undefined,
+      businessZip: scraped.zip || undefined,
+      businessPhone: scraped.phone || undefined,
+      geoSource: scraped.source,
+    } : topPlace ? {
+      businessName: topPlace.name,
+      businessAddr: topPlace.formattedAddress,
+      businessCity: topPlace.city,
+      businessState: topPlace.state,
+      businessZip: topPlace.zip,
+      businessPhone: topPlace.phone,
+      geoSource: 'google_places',
+    } : {};
+
+    // Upsert a Business record for this user + URL (if authenticated)
+    let businessId: string | undefined;
+    if (userId) {
+      try {
+        const business = await prisma.business.upsert({
+          where: { userId_websiteUrl: { userId, websiteUrl: normalizedUrl } },
+          create: {
+            userId,
+            websiteUrl: normalizedUrl,
+            businessName: bizFields.businessName || null,
+            businessAddr: bizFields.businessAddr || null,
+            businessCity: bizFields.businessCity || null,
+            businessState: bizFields.businessState || null,
+            businessZip: bizFields.businessZip || null,
+            businessPhone: bizFields.businessPhone || null,
+          },
+          update: {
+            // Update fields if they were previously empty
+            ...(bizFields.businessName ? { businessName: bizFields.businessName } : {}),
+            ...(bizFields.businessCity ? { businessCity: bizFields.businessCity } : {}),
+            ...(bizFields.businessState ? { businessState: bizFields.businessState } : {}),
+            ...(bizFields.businessZip ? { businessZip: bizFields.businessZip } : {}),
+            ...(bizFields.businessPhone ? { businessPhone: bizFields.businessPhone } : {}),
+            ...(bizFields.businessAddr ? { businessAddr: bizFields.businessAddr } : {}),
+          },
+        });
+        businessId = business.id;
+        console.log(`[analyze] Business upserted: ${business.id} (${bizFields.businessName || normalizedUrl})`);
+      } catch (bizErr: any) {
+        console.error('[analyze] Business upsert error (non-fatal):', bizErr?.message);
+      }
+    }
+
     const analysis = await prisma.analysis.create({
       data: {
         websiteUrl: normalizedUrl,
         status: 'pending_location',
         userId: userId ?? null,
-        // Pre-fill from scraped website address (highest priority) or Google Places
-        ...(hasScrapedAddress ? {
-          businessName: scraped.businessName || undefined,
-          businessAddr: scraped.address || undefined,
-          businessCity: scraped.city || undefined,
-          businessState: scraped.state || undefined,
-          businessZip: scraped.zip || undefined,
-          businessPhone: scraped.phone || undefined,
-          geoSource: scraped.source,
-        } : topPlace ? {
-          businessName: topPlace.name,
-          businessAddr: topPlace.formattedAddress,
-          businessCity: topPlace.city,
-          businessState: topPlace.state,
-          businessZip: topPlace.zip,
-          businessPhone: topPlace.phone,
-          geoSource: 'google_places',
-        } : {}),
+        businessId: businessId ?? null,
+        ...bizFields,
       },
     });
 
