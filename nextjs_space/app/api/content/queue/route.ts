@@ -112,7 +112,18 @@ export async function GET(request: Request) {
       });
 
       const enriched = await Promise.all(enrichPromises);
-      return NextResponse.json(enriched);
+
+      // Convert R2 image URLs to proxy URLs to avoid presigned URL expiry
+      const withProxyImages = enriched.map((item: any) => {
+        if (!item.first_image_url) return item;
+        const r2Match = item.first_image_url.match(/r2\.cloudflarestorage\.com\/[^/]+\/(.+?)(\?|$)/);
+        if (r2Match) {
+          return { ...item, first_image_url: `/api/social/image-proxy?key=${encodeURIComponent(r2Match[1])}` };
+        }
+        return item;
+      });
+
+      return NextResponse.json(withProxyImages);
     }
 
     return NextResponse.json(data);

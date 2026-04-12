@@ -33,7 +33,21 @@ export async function GET(req: NextRequest) {
       prisma.socialPost.count({ where }),
     ]);
 
-    return NextResponse.json({ posts, total, limit, offset });
+    // Convert private R2 image URLs to proxy URLs that our server can resolve
+    const resolved = posts.map((post) => {
+      if (!post.imageUrl) return post;
+      // Already a public S3 URL — keep as-is
+      if (post.imageUrl.includes('.s3.') && post.imageUrl.includes('amazonaws.com')) return post;
+      // R2 URL — route through our image proxy to avoid presigned URL issues
+      const r2Match = post.imageUrl.match(/r2\.cloudflarestorage\.com\/[^/]+\/(.+?)(\?|$)/);
+      if (r2Match) {
+        const key = r2Match[1];
+        return { ...post, imageUrl: `/api/social/image-proxy?key=${encodeURIComponent(key)}` };
+      }
+      return post;
+    });
+
+    return NextResponse.json({ posts: resolved, total, limit, offset });
   } catch (error: any) {
     console.error('Social posts GET error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
