@@ -36,12 +36,49 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Link analysis to user
+    // Link analysis to user and upsert Business record
     if (analysisId) {
-      await prisma.analysis.update({
-        where: { id: analysisId },
-        data: { userId: user.id },
-      }).catch(() => {});
+      try {
+        const analysis = await prisma.analysis.update({
+          where: { id: analysisId },
+          data: { userId: user.id },
+        });
+
+        // Create a Business record from the Analysis data so the dashboard shows it
+        if (analysis?.websiteUrl) {
+          const biz = await prisma.business.upsert({
+            where: { userId_websiteUrl: { userId: user.id, websiteUrl: analysis.websiteUrl } },
+            create: {
+              userId: user.id,
+              websiteUrl: analysis.websiteUrl,
+              businessName: analysis.businessName || null,
+              businessAddr: analysis.businessAddr || null,
+              businessCity: analysis.businessCity || null,
+              businessState: analysis.businessState || null,
+              businessZip: analysis.businessZip || null,
+              businessPhone: analysis.businessPhone || null,
+            },
+            update: {
+              ...(analysis.businessName ? { businessName: analysis.businessName } : {}),
+              ...(analysis.businessAddr ? { businessAddr: analysis.businessAddr } : {}),
+              ...(analysis.businessCity ? { businessCity: analysis.businessCity } : {}),
+              ...(analysis.businessState ? { businessState: analysis.businessState } : {}),
+              ...(analysis.businessZip ? { businessZip: analysis.businessZip } : {}),
+              ...(analysis.businessPhone ? { businessPhone: analysis.businessPhone } : {}),
+            },
+          });
+
+          // Link the analysis to the business too
+          await prisma.analysis.update({
+            where: { id: analysisId },
+            data: { businessId: biz.id },
+          });
+
+          console.log(`[register] Business upserted: ${biz.id} for user ${user.id} (${analysis.websiteUrl})`);
+        }
+      } catch (linkErr: any) {
+        console.error('[register] Analysis/Business link error (non-fatal):', linkErr?.message);
+      }
     }
 
     // Still create GHL contact for CRM tracking (fire and forget)
