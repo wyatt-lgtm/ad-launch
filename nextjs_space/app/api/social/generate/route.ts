@@ -33,12 +33,18 @@ export async function POST(req: NextRequest) {
     let websiteUrl: string | null = null;
     let resolvedAnalysisId = analysisId || null;
 
-    // Try analysis DB first
+    // Try analysis DB first — prefer geoConfirmed, then fall back to any analysis
     const recentAnalysis = await prisma.analysis.findFirst({
-      where: analysisId ? { id: analysisId, userId } : { userId, geoConfirmed: true },
+      where: analysisId
+        ? { id: analysisId, userId }
+        : { userId, geoConfirmed: true },
       orderBy: { createdAt: 'desc' },
       select: { id: true, websiteUrl: true },
-    });
+    }) ?? (analysisId ? null : await prisma.analysis.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, websiteUrl: true },
+    }));
     if (recentAnalysis) {
       websiteUrl = recentAnalysis.websiteUrl;
       resolvedAnalysisId = resolvedAnalysisId || recentAnalysis.id;

@@ -1,6 +1,8 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { isValidUrl } from '@/lib/email-validation';
 import { extractBusinessAddress } from '@/lib/address-extractor';
@@ -14,7 +16,16 @@ import { lookupBusinessByUrl, PlaceResult } from '@/lib/google-places';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { websiteUrl, userId } = body ?? {};
+    const { websiteUrl } = body ?? {};
+
+    // Resolve userId from session (server-side) — never trust client-supplied userId
+    let userId: string | null = null;
+    try {
+      const session = await getServerSession(authOptions);
+      if (session?.user) {
+        userId = (session.user as any).id ?? null;
+      }
+    } catch { /* unauthenticated — userId stays null */ }
     if (!websiteUrl) {
       return NextResponse.json({ error: 'Website URL is required' }, { status: 400 });
     }
