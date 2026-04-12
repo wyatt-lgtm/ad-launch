@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Search, MapPin, Building2, ArrowRight, Loader2, Globe, Phone, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 interface Business {
@@ -14,6 +15,7 @@ interface Business {
 }
 
 export default function SearchContent() {
+  const router = useRouter();
   const [mode, setMode] = useState<'category' | 'url'>('category');
   const [businessType, setBusinessType] = useState('');
   const [location, setLocation] = useState('');
@@ -22,6 +24,8 @@ export default function SearchContent() {
   const [results, setResults] = useState<Business[]>([]);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState('');
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [urlError, setUrlError] = useState('');
 
   const handleCategorySearch = async () => {
     if (!businessType.trim() || !location.trim()) return;
@@ -47,10 +51,35 @@ export default function SearchContent() {
     setLoading(false);
   };
 
-  const handleUrlSearch = () => {
+  const handleUrlSearch = async () => {
     if (!url.trim()) return;
     const cleanUrl = url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`;
-    window.location.href = `/?url=${encodeURIComponent(cleanUrl)}`;
+    setUrlLoading(true);
+    setUrlError('');
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ websiteUrl: cleanUrl }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUrlError(data?.error ?? 'Failed to start analysis');
+        setUrlLoading(false);
+        return;
+      }
+      // Store location data for the analysis tracker
+      if (data?.scrapedAddress) {
+        try { sessionStorage.setItem(`scraped_${data.analysisId}`, JSON.stringify(data.scrapedAddress)); } catch {}
+      }
+      if (data?.places?.length > 0) {
+        try { sessionStorage.setItem(`places_${data.analysisId}`, JSON.stringify(data.places)); } catch {}
+      }
+      router.push(`/analyze/${data?.analysisId ?? ''}`);
+    } catch {
+      setUrlError('Something went wrong. Please try again.');
+      setUrlLoading(false);
+    }
   };
 
   return (
@@ -132,17 +161,21 @@ export default function SearchContent() {
                     type="text"
                     placeholder="Business URL (e.g., www.example.com)"
                     value={url}
-                    onChange={(e) => setUrl(e.target.value)}
+                    onChange={(e) => { setUrl(e.target.value); setUrlError(''); }}
                     onKeyDown={(e) => e.key === 'Enter' && handleUrlSearch()}
                     className="w-full pl-12 pr-4 py-3.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
                   />
                 </div>
+                {urlError && (
+                  <p className="text-red-300 text-sm text-left">{urlError}</p>
+                )}
                 <button
                   onClick={handleUrlSearch}
-                  disabled={!url.trim()}
+                  disabled={!url.trim() || urlLoading}
                   className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded-xl font-semibold transition-all flex items-center justify-center gap-2"
                 >
-                  <Sparkles className="w-5 h-5" /> Analyze Website
+                  {urlLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                  {urlLoading ? 'Analyzing...' : 'Analyze Website'}
                 </button>
               </div>
             )}
