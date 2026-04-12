@@ -4,14 +4,51 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
-import { getSocialWorkflowResults } from '@/lib/tombstone';
+
+const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
+
+/**
+ * Collect ALL workflow IDs from user's analyses (both missionId lanes and socialMissionId).
+ */
+function collectWorkflowIds(analyses: { missionId: string | null; socialMissionId: string | null }[]): string[] {
+  const ids = new Set<string>();
+  for (const a of analyses) {
+    // Parse lane-based missionId JSON: {"website":"uuid", "news":"uuid", "holiday":"uuid"}
+    if (a.missionId) {
+      try {
+        const parsed = JSON.parse(a.missionId);
+        if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const v of Object.values(parsed)) {
+            if (typeof v === 'string' && v.trim()) ids.add(v.trim());
+            else if (Array.isArray(v)) {
+              for (const id of v) if (typeof id === 'string' && id.trim()) ids.add(id.trim());
+            }
+          }
+        }
+      } catch {
+        for (const part of a.missionId.split(',')) {
+          const t = part.trim();
+          if (t) ids.add(t);
+        }
+      }
+    }
+    // Also include socialMissionId
+    if (a.socialMissionId) {
+      for (const part of a.socialMissionId.split(',')) {
+        const t = part.trim();
+        if (t) ids.add(t);
+      }
+    }
+  }
+  return Array.from(ids);
+}
 
 /**
  * POST /api/social/missions/poll
- * Finds analyses that have a socialMissionId but no corresponding SocialPost records,
- * polls Tombstone for completed results, and writes them to the SocialPost table.
  *
- * Returns: { polled: number, imported: number, pending: number, status: string }
+ * Fetches completed render tasks from Tombstone's content queue (same source
+ * as the Publish Queue), enriches each with caption/hashtag data from the
+ * detail endpoint, and writes them to the SocialPost table.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -19,108 +56,153 @@ export async function POST(req: NextRequest) {
     if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const userId = (session.user as any).id;
 
-    // Find analyses that have a socialMissionId
-    const analysesWithMissions = await prisma.analysis.findMany({
+    // Get all analyses that have any workflow IDs
+    const analyses = await prisma.analysis.findMany({
       where: {
         userId,
-        socialMissionId: { not: null },
+        OR: [
+          { missionId: { not: null } },
+          { socialMissionId: { not: null } },
+        ],
       },
-      select: {
-        id: true,
-        socialMissionId: true,
-        websiteUrl: true,
-      },
+      select: { id: true, missionId: true, socialMissionId: true },
       orderBy: { createdAt: 'desc' },
     });
 
-    if (analysesWithMissions.length === 0) {
+    if (analyses.length === 0) {
       return NextResponse.json({ polled: 0, imported: 0, pending: 0, status: 'no_missions' });
     }
 
-    // Check which analyses already have SocialPosts imported
-    const analysisIds = analysesWithMissions.map(a => a.id);
-    const existingPostCounts = await prisma.socialPost.groupBy({
-      by: ['analysisId'],
-      where: { analysisId: { in: analysisIds } },
-      _count: true,
-    });
-    const importedAnalysisIds = new Set(
-      existingPostCounts.filter(g => g._count > 0).map(g => g.analysisId)
+    const workflowIds = collectWorkflowIds(analyses);
+    if (workflowIds.length === 0) {
+      return NextResponse.json({ polled: 0, imported: 0, pending: 0, status: 'no_workflows' });
+    }
+
+    // Check how many SocialPosts already exist for this user
+    const existingCount = await prisma.socialPost.count({ where: { userId } });
+    if (existingCount > 0) {
+      return NextResponse.json({
+        polled: 0, imported: 0, pending: 0,
+        status: 'all_imported',
+        totalPosts: existingCount,
+        message: `Already have ${existingCount} posts imported.`,
+      });
+    }
+
+    console.log(`[missions/poll] Fetching content queue for ${workflowIds.length} workflows`);
+
+    // Fetch completed render tasks from Tombstone content queue
+    const queueRes = await fetch(
+      `${TOMBSTONE_URL}/content/queue?limit=50&workflow_ids=${encodeURIComponent(workflowIds.join(','))}`,
+      { headers: { Accept: 'application/json' }, cache: 'no-store' }
+    );
+    if (!queueRes.ok) {
+      return NextResponse.json({ error: 'Failed to fetch content queue' }, { status: 502 });
+    }
+    const queueItems = await queueRes.json();
+
+    if (!Array.isArray(queueItems) || queueItems.length === 0) {
+      return NextResponse.json({
+        polled: workflowIds.length, imported: 0, pending: 0,
+        status: 'no_content',
+        message: 'No completed render tasks found yet. Posts may still be generating.',
+      });
+    }
+
+    console.log(`[missions/poll] Found ${queueItems.length} queue items, enriching with details...`);
+
+    // Enrich each item with caption/hashtag data from the detail endpoint
+    const posts: any[] = [];
+    const enrichResults = await Promise.all(
+      queueItems.map(async (item: any) => {
+        try {
+          const detailRes = await fetch(`${TOMBSTONE_URL}/content/${item.task_id}`, {
+            headers: { Accept: 'application/json' }, cache: 'no-store',
+          });
+          if (!detailRes.ok) return null;
+          const detail = await detailRes.json();
+
+          const caption = detail.base_caption || detail.preview_text || item.preview_text || '';
+          const cta = detail.cta || '';
+          const hashtags = Array.isArray(detail.hashtags) ? detail.hashtags : [];
+          const imageUrl = item.first_image_url || '';
+
+          // Resolve image URL through Tombstone artifacts if it's an R2 key
+          let resolvedImageUrl = imageUrl;
+          if (imageUrl && !imageUrl.startsWith('http')) {
+            try {
+              const artRes = await fetch(`${TOMBSTONE_URL}/artifacts/resolve?key=${encodeURIComponent(imageUrl)}`);
+              if (artRes.ok) {
+                const artData = await artRes.json();
+                resolvedImageUrl = artData.url || imageUrl;
+              }
+            } catch { /* keep original */ }
+          }
+
+          // Try to determine post type from campaign name or summary
+          const pv = detail.platform_variants;
+          let campaignName = '';
+          if (Array.isArray(pv) && pv.length > 0) {
+            campaignName = pv[0]?.campaign_name || '';
+          }
+
+          // Skip items without real caption data (e.g. parent multi-campaign renders)
+          if (!caption || caption.startsWith('Multi-campaign render')) return null;
+
+          return {
+            caption: caption + (cta ? `\n\n${cta}` : ''),
+            hashtags,
+            imageUrl: resolvedImageUrl || null,
+            postType: 'general',
+            sourceType: campaignName ? 'campaign' : null,
+            newsAngle: campaignName || null,
+            platforms: ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
+          };
+        } catch (e: any) {
+          console.warn(`[missions/poll] Failed to enrich task ${item.task_id}:`, e.message);
+          return null;
+        }
+      })
     );
 
-    // Filter to analyses that haven't been imported yet
-    const pendingAnalyses = analysesWithMissions.filter(a => !importedAnalysisIds.has(a.id));
+    for (const p of enrichResults) {
+      if (p && p.caption) posts.push(p);
+    }
 
-    if (pendingAnalyses.length === 0) {
+    if (posts.length === 0) {
       return NextResponse.json({
-        polled: 0,
-        imported: 0,
-        pending: 0,
-        status: 'all_imported',
-        totalMissions: analysesWithMissions.length,
+        polled: workflowIds.length, imported: 0, pending: 0,
+        status: 'no_captions',
+        message: 'Found render tasks but no caption data yet.',
       });
     }
 
-    // Collect all unique workflow IDs from pending analyses
-    const allWorkflowIds: string[] = [];
-    const workflowToAnalysis: Record<string, string> = {};
-    for (const a of pendingAnalyses) {
-      const wfIds = (a.socialMissionId || '').split(',').filter(Boolean);
-      for (const wfId of wfIds) {
-        allWorkflowIds.push(wfId);
-        workflowToAnalysis[wfId] = a.id;
-      }
-    }
-
-    console.log(`[missions/poll] Polling ${allWorkflowIds.length} workflow(s) for ${pendingAnalyses.length} pending analyses`);
-
-    // Poll Tombstone for results
-    const result = await getSocialWorkflowResults(allWorkflowIds);
-
-    console.log(`[missions/poll] Tombstone status: ${result.status}, posts found: ${result.posts.length}`);
-
-    if (result.status !== 'completed' || result.posts.length === 0) {
-      return NextResponse.json({
-        polled: allWorkflowIds.length,
-        imported: 0,
-        pending: pendingAnalyses.length,
-        status: result.status,
-        message: result.status === 'generating' || result.status === 'processing'
-          ? 'Posts are still being generated. Check back in a minute or two.'
-          : result.status === 'error'
-            ? 'There was an error processing the workflow.'
-            : `Workflow status: ${result.status}`,
-      });
-    }
-
-    // Write completed posts to SocialPost table
-    // Use the first pending analysis as the default analysisId
-    const defaultAnalysisId = pendingAnalyses[0].id;
-    const tradeAreaZip = pendingAnalyses[0].websiteUrl; // Will be used for context
+    // Use first analysis as default
+    const defaultAnalysisId = analyses[0].id;
 
     const createdPosts = await prisma.socialPost.createMany({
-      data: result.posts.map((post: any) => ({
+      data: posts.map((post) => ({
         userId,
         analysisId: defaultAnalysisId,
-        caption: post.caption || '',
-        hashtags: Array.isArray(post.hashtags) ? post.hashtags : [],
-        imageUrl: post.imageUrl || null,
-        imagePrompt: post.imagePrompt || null,
-        postType: post.postType || 'general',
-        sourceType: post.sourceType || null,
-        newsAngle: post.newsAngle || null,
-        patternType: post.patternType || null,
-        rssItemTitle: post.rssItemTitle || null,
-        rssItemLink: post.rssItemLink || null,
-        platforms: Array.isArray(post.platforms) ? post.platforms : ['facebook', 'instagram'],
+        caption: post.caption,
+        hashtags: post.hashtags,
+        imageUrl: post.imageUrl,
+        imagePrompt: null,
+        postType: post.postType,
+        sourceType: post.sourceType,
+        newsAngle: post.newsAngle,
+        patternType: null,
+        rssItemTitle: null,
+        rssItemLink: null,
+        platforms: post.platforms,
         status: 'pending_approval',
       })),
     });
 
-    console.log(`[missions/poll] Imported ${createdPosts.count} social posts for analysis ${defaultAnalysisId}`);
+    console.log(`[missions/poll] Imported ${createdPosts.count} social posts`);
 
     return NextResponse.json({
-      polled: allWorkflowIds.length,
+      polled: workflowIds.length,
       imported: createdPosts.count,
       pending: 0,
       status: 'imported',
