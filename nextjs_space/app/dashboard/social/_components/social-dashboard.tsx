@@ -441,18 +441,44 @@ export default function SocialDashboard() {
           </div>
 
           {posts.length === 0 ? (
-            <div className="text-center py-16 bg-white rounded-2xl border border-gray-100">
-              <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-600 mb-2">No posts yet</h3>
-              <p className="text-sm text-gray-400 mb-6">Click &ldquo;Generate 9 Posts&rdquo; to create local news, website, and holiday posts.</p>
-              <button
-                onClick={scoutForPosts}
-                disabled={scouting}
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
-              >
-                {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                {scouting ? 'Generating 9 Posts...' : 'Generate 9 Posts'}
-              </button>
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              {/* Main empty state */}
+              <div className="text-center py-12 px-6">
+                <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-600 mb-2">No social posts yet</h3>
+                <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
+                  Click &ldquo;Generate 9 Posts&rdquo; to create social media content from local news, your website, and upcoming holidays. Posts with artwork will appear here once the creative team finishes (usually 2-5 minutes).
+                </p>
+                <button
+                  onClick={scoutForPosts}
+                  disabled={scouting}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
+                >
+                  {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                  {scouting ? 'Generating 9 Posts...' : 'Generate 9 Posts'}
+                </button>
+              </div>
+
+              {/* Link to existing ad assets on Dashboard */}
+              <div className="border-t border-gray-100 bg-gray-50 px-6 py-4">
+                <p className="text-xs text-gray-500 text-center mb-3">
+                  <strong>Looking for your ad images?</strong> Your generated ad creatives (Website, News, Holiday) are on the Dashboard under each business.
+                </p>
+                <div className="flex justify-center gap-3">
+                  <button
+                    onClick={() => router.push('/dashboard')}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" /> View Dashboard &amp; Assets
+                  </button>
+                  <button
+                    onClick={() => fetchPosts()}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Refresh Queue
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="space-y-4">

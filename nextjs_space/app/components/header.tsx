@@ -2,12 +2,68 @@
 
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send } from 'lucide-react';
 import { useState } from 'react';
 
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ElementType;
+  /** Paths that count as "active" for this tab (startsWith match) */
+  matchPaths?: string[];
+}
+
 export default function Header() {
   const { data: session, status } = useSession() || {};
+  const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const publicNav: NavItem[] = [
+    { href: '/search', label: 'Find Businesses', icon: Search, matchPaths: ['/search'] },
+  ];
+
+  const authNav: NavItem[] = [
+    { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, matchPaths: ['/dashboard'] },
+    { href: '/dashboard/social', label: 'Social Posts', icon: Newspaper, matchPaths: ['/dashboard/social'] },
+    { href: '/dashboard/social/publishing', label: 'Publish Queue', icon: Send, matchPaths: ['/dashboard/social/publishing'] },
+    { href: '/dashboard/feeds', label: 'Content Feeds', icon: Rss, matchPaths: ['/dashboard/feeds'] },
+  ];
+
+  // Determine if a nav item is active. More specific paths checked first via sort.
+  const isActive = (item: NavItem): boolean => {
+    const paths = item.matchPaths ?? [item.href];
+    // Exact match for /dashboard to avoid matching /dashboard/social etc.
+    if (item.href === '/dashboard') {
+      return pathname === '/dashboard';
+    }
+    return paths.some(p => pathname?.startsWith(p));
+  };
+
+  // Need to resolve /dashboard/social vs /dashboard/social/publishing
+  // publishing is more specific, so check it first
+  const getActiveClass = (item: NavItem): string => {
+    // Special: for /dashboard/social, only match if NOT on /dashboard/social/publishing
+    if (item.href === '/dashboard/social' && pathname?.startsWith('/dashboard/social/publishing')) {
+      return 'hover:bg-gray-100 text-gray-700';
+    }
+    if (isActive(item)) {
+      return 'bg-blue-600 text-white shadow-sm';
+    }
+    return 'hover:bg-gray-100 text-gray-700';
+  };
+
+  const getMobileActiveClass = (item: NavItem): string => {
+    if (item.href === '/dashboard/social' && pathname?.startsWith('/dashboard/social/publishing')) {
+      return 'hover:bg-gray-100 text-gray-700';
+    }
+    if (isActive(item)) {
+      return 'bg-blue-600 text-white';
+    }
+    return 'hover:bg-gray-100 text-gray-700';
+  };
+
+  const allNav = status === 'authenticated' ? [...publicNav, ...authNav] : publicNav;
 
   return (
     <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-100 shadow-sm">
@@ -19,28 +75,23 @@ export default function Header() {
           <span className="text-xl font-bold text-gray-900">Ad <span className="text-blue-600">Launch</span></span>
         </Link>
 
-        <nav className="hidden md:flex items-center gap-2">
-          <Link href="/search" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
-            <Search className="w-4 h-4" /> Find Businesses
-          </Link>
+        <nav className="hidden md:flex items-center gap-1">
+          {allNav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${getActiveClass(item)}`}
+              >
+                <Icon className="w-4 h-4" /> {item.label}
+              </Link>
+            );
+          })}
           {status === 'authenticated' ? (
-            <>
-              <Link href="/dashboard" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
-                <LayoutDashboard className="w-4 h-4" /> Dashboard
-              </Link>
-              <Link href="/dashboard/social" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
-                <Newspaper className="w-4 h-4" /> Social Posts
-              </Link>
-              <Link href="/dashboard/social/publishing" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
-                <Send className="w-4 h-4" /> Publish Queue
-              </Link>
-              <Link href="/dashboard/feeds" className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition-colors text-sm font-medium">
-                <Rss className="w-4 h-4" /> Content Feeds
-              </Link>
-              <button onClick={() => signOut({ callbackUrl: '/' })} className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-red-50 text-red-600 transition-colors text-sm font-medium">
-                <LogOut className="w-4 h-4" /> Sign Out
-              </button>
-            </>
+            <button onClick={() => signOut({ callbackUrl: '/' })} className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-red-50 text-red-600 transition-colors text-sm font-medium">
+              <LogOut className="w-4 h-4" /> Sign Out
+            </button>
           ) : (
             <Link href="/login" className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium">
               <LogIn className="w-4 h-4" /> Sign In
@@ -56,28 +107,24 @@ export default function Header() {
       </div>
 
       {menuOpen && (
-        <div className="md:hidden bg-white border-t border-gray-100 px-4 py-3 space-y-2">
-          <Link href="/search" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>
-            <Search className="w-4 h-4" /> Find Businesses
-          </Link>
+        <div className="md:hidden bg-white border-t border-gray-100 px-4 py-3 space-y-1">
+          {allNav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${getMobileActiveClass(item)}`}
+                onClick={() => setMenuOpen(false)}
+              >
+                <Icon className="w-4 h-4" /> {item.label}
+              </Link>
+            );
+          })}
           {status === 'authenticated' ? (
-            <>
-              <Link href="/dashboard" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>
-                <LayoutDashboard className="w-4 h-4" /> Dashboard
-              </Link>
-              <Link href="/dashboard/social" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>
-                <Newspaper className="w-4 h-4" /> Social Posts
-              </Link>
-              <Link href="/dashboard/social/publishing" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>
-                <Send className="w-4 h-4" /> Publish Queue
-              </Link>
-              <Link href="/dashboard/feeds" className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-700 text-sm" onClick={() => setMenuOpen(false)}>
-                <Rss className="w-4 h-4" /> Content Feeds
-              </Link>
-              <button onClick={() => { signOut({ callbackUrl: '/' }); setMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-50 text-red-600 text-sm w-full">
-                <LogOut className="w-4 h-4" /> Sign Out
-              </button>
-            </>
+            <button onClick={() => { signOut({ callbackUrl: '/' }); setMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-red-50 text-red-600 text-sm w-full">
+              <LogOut className="w-4 h-4" /> Sign Out
+            </button>
           ) : (
             <Link href="/login" className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm" onClick={() => setMenuOpen(false)}>
               <LogIn className="w-4 h-4" /> Sign In
