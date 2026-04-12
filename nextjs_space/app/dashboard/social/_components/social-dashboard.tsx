@@ -9,8 +9,10 @@ import {
   Edit3, Trash2, Copy, ExternalLink, Hash, Clock,
   Zap, RefreshCw, ChevronDown, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
-  List, AlertCircle, Sparkles
+  List, AlertCircle, Sparkles, Building2
 } from 'lucide-react';
+import { useActiveBusiness } from '@/hooks/use-active-business';
+import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -82,6 +84,8 @@ const LANE_LABELS: Record<string, { label: string; color: string; bg: string }> 
 export default function SocialDashboard() {
   const { data: session, status: sessionStatus } = useSession() || {};
   const router = useRouter();
+  const bizCtx = useActiveBusiness();
+  const [showPicker, setShowPicker] = useState(false);
 
   // State
   const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -263,11 +267,38 @@ export default function SocialDashboard() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  if (sessionStatus === 'loading' || loading) {
+  if (sessionStatus === 'loading' || loading || bizCtx.loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
       </div>
+    );
+  }
+
+  // No businesses at all — send to dashboard to add one
+  if (bizCtx.noBusiness) {
+    return (
+      <div className="max-w-lg mx-auto px-4 py-20 text-center">
+        <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-gray-900 mb-2">No Business Found</h2>
+        <p className="text-gray-500 mb-6">Analyze a website first so we know which business to create posts for.</p>
+        <button
+          onClick={() => router.push('/dashboard')}
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors"
+        >
+          <Plus className="w-4 h-4" /> Add a Business
+        </button>
+      </div>
+    );
+  }
+
+  // Multiple businesses and none selected — show picker
+  if (bizCtx.needsSelection || showPicker) {
+    return (
+      <BusinessPickerGrid
+        businesses={bizCtx.businesses}
+        onSelect={(biz) => { bizCtx.setActiveBusiness(biz); setShowPicker(false); }}
+      />
     );
   }
 
@@ -278,6 +309,15 @@ export default function SocialDashboard() {
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-8">
+      {/* Active business banner */}
+      {bizCtx.activeBusiness && (
+        <ActiveBusinessBanner
+          activeBusiness={bizCtx.activeBusiness}
+          businessCount={bizCtx.businesses.length}
+          onSwitch={() => setShowPicker(true)}
+        />
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
         <div>
