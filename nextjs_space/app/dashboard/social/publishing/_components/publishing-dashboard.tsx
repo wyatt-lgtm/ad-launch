@@ -21,6 +21,8 @@ interface QueueItem {
   preview_text: string;
   first_image_url: string | null;
   publish_status: string;
+  campaign_names?: string[];
+  caption_preview?: string | null;
 }
 
 interface ContentDetail {
@@ -72,6 +74,80 @@ function safeDate(raw: string | null | undefined): string {
   } catch {
     return '';
   }
+}
+
+/**
+ * Extract a meaningful, human-readable title from queue item data.
+ * Uses enriched campaign_names first, then falls back to summary parsing.
+ */
+function extractPostTitle(item: QueueItem): string {
+  // Use campaign names if available (from enriched API response)
+  if (item.campaign_names && item.campaign_names.length > 0) {
+    // Shorten long campaign names
+    const name = item.campaign_names[0];
+    if (name.length > 40) return name.slice(0, 38) + '…';
+    return name;
+  }
+
+  const summary = item.summary || '';
+
+  // Try to find holiday/event names from the UPCOMING EVENTS section
+  const eventsMatch = summary.match(/UPCOMING EVENTS[\s\S]*?--- END/);
+  if (eventsMatch) {
+    const eventNames: string[] = [];
+    const eventRegex = /[\u2022\u00b7•]\s+(.+?)\s+\(/g;
+    let m;
+    while ((m = eventRegex.exec(eventsMatch[0])) !== null) {
+      eventNames.push(m[1].trim());
+    }
+    if (eventNames.length > 0) {
+      return eventNames.slice(0, 2).join(' & ') + ' Posts';
+    }
+  }
+
+  // Try to extract the business URL as context
+  const urlMatch = summary.match(/for https?:\/\/([^\s/]+)/);
+  if (urlMatch) {
+    return `Posts for ${urlMatch[1].replace('www.', '')}`;
+  }
+
+  // Multi-campaign render
+  if (item.preview_text?.includes('Multi-campaign')) {
+    const countMatch = item.preview_text.match(/(\d+) images/);
+    return `${countMatch?.[1] || '3'}-Image Campaign`;
+  }
+
+  // Derive title from caption preview — use first 5 words
+  if (item.caption_preview) {
+    const words = item.caption_preview.split(/\s+/).slice(0, 5).join(' ');
+    return words.length > 35 ? words.slice(0, 33) + '…' : words + '…';
+  }
+
+  return 'Social Post';
+}
+
+/**
+ * Extract a clean preview snippet — prioritizes caption_preview from enriched data.
+ */
+function extractPreview(item: QueueItem): string {
+  // Use enriched caption preview if available
+  if (item.caption_preview) {
+    return item.caption_preview;
+  }
+
+  const previewText = item.preview_text || '';
+  const summary = item.summary || '';
+
+  // If preview is technical, generate something better
+  if (/^(Render|Multi-campaign|Generate)/i.test(previewText)) {
+    if (previewText.includes('Multi-campaign')) {
+      const countMatch = previewText.match(/(\d+) images generated/);
+      if (countMatch) return `${countMatch[1]} creative images ready to publish`;
+    }
+    return 'Creative artwork ready to publish';
+  }
+
+  return previewText || 'Ready to publish';
 }
 
 const PLATFORMS = [
@@ -502,34 +578,39 @@ export default function PublishingDashboard() {
                         : 'border-l-2 border-transparent'
                     }`}
                   >
-                    <div className="flex gap-3">
-                      {/* Thumbnail */}
-                      <div className="w-14 h-14 rounded-lg bg-gray-100 flex-shrink-0 overflow-hidden relative">
-                        {item.first_image_url ? (
+                    <div className="flex flex-col gap-2">
+                      {/* Image preview — full width, natural aspect ratio */}
+                      {item.first_image_url ? (
+                        <div className="w-full aspect-[4/5] rounded-lg bg-gray-100 overflow-hidden relative">
                           <Image
                             src={item.first_image_url}
-                            alt={item.summary || 'Content thumbnail'}
+                            alt={extractPostTitle(item)}
                             fill
-                            className="object-cover"
-                            sizes="56px"
+                            className="object-contain"
+                            sizes="240px"
                             onError={(e) => {
                               (e.target as HTMLImageElement).style.display = 'none';
                             }}
                           />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <ImageIcon className="w-5 h-5 text-gray-300" />
-                          </div>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <div className="w-full aspect-video rounded-lg bg-gray-100 flex items-center justify-center">
+                          <ImageIcon className="w-6 h-6 text-gray-300" />
+                        </div>
+                      )}
 
                       {/* Info */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          {item.summary || `Task #${item.task_id}`}
-                        </p>
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="text-sm font-semibold text-gray-900 truncate">
+                            {extractPostTitle(item)}
+                          </p>
+                          <ChevronRight className={`w-4 h-4 flex-shrink-0 ${
+                            selectedTaskId === item.task_id ? 'text-blue-500' : 'text-gray-300'
+                          }`} />
+                        </div>
                         <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">
-                          {item.preview_text || 'No preview available'}
+                          {extractPreview(item)}
                         </p>
                         <div className="flex items-center gap-2 mt-1.5">
                           <StatusBadge publishStatus={item.publish_status} />
@@ -538,10 +619,6 @@ export default function PublishingDashboard() {
                           </span>
                         </div>
                       </div>
-
-                      <ChevronRight className={`w-4 h-4 text-gray-300 flex-shrink-0 mt-1 ${
-                        selectedTaskId === item.task_id ? 'text-blue-500' : ''
-                      }`} />
                     </div>
                   </button>
                 ))}
@@ -584,28 +661,29 @@ export default function PublishingDashboard() {
             </div>
           ) : (
             <div className="space-y-6">
-              {/* ── Image Preview ───────────────────────────────────── */}
+              {/* ── Image Preview — full post preview ─────────────────── */}
               {Array.isArray(detail.image_urls) && detail.image_urls.length > 0 && (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
                   <h3 className="text-sm font-semibold text-gray-700 mb-3">Images</h3>
-                  <div className="flex gap-3 overflow-x-auto pb-2">
+                  <div className={`grid gap-4 ${detail.image_urls.length === 1 ? 'grid-cols-1 max-w-md' : detail.image_urls.length === 2 ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'}`}>
                     {detail.image_urls.map((url, i) => (
-                      <div key={i} className="w-40 h-40 rounded-lg bg-gray-100 flex-shrink-0 overflow-hidden relative group">
-                        <Image
-                          src={url}
-                          alt={detail.summary || `Asset ${i + 1}`}
-                          fill
-                          className="object-cover"
-                          sizes="160px"
-                          onError={(e) => {
-                            const el = e.target as HTMLImageElement;
-                            el.style.display = 'none';
-                            // Show fallback sibling
-                            el.parentElement?.querySelector('[data-img-fallback]')?.removeAttribute('hidden');
-                          }}
-                        />
-                        <div data-img-fallback hidden className="absolute inset-0 flex items-center justify-center">
-                          <ImageIcon className="w-6 h-6 text-gray-300" />
+                      <div key={i} className="rounded-xl bg-gray-50 border border-gray-100 overflow-hidden">
+                        <div className="relative aspect-[4/5] bg-gray-100">
+                          <Image
+                            src={url}
+                            alt={detail.summary?.slice(0, 50) || `Asset ${i + 1}`}
+                            fill
+                            className="object-contain"
+                            sizes="(max-width: 768px) 100vw, 400px"
+                            onError={(e) => {
+                              const el = e.target as HTMLImageElement;
+                              el.style.display = 'none';
+                              el.parentElement?.querySelector('[data-img-fallback]')?.removeAttribute('hidden');
+                            }}
+                          />
+                          <div data-img-fallback hidden className="absolute inset-0 flex items-center justify-center">
+                            <ImageIcon className="w-8 h-8 text-gray-300" />
+                          </div>
                         </div>
                       </div>
                     ))}

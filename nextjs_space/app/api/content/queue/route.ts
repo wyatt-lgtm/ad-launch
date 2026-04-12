@@ -72,6 +72,49 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Failed to fetch content queue' }, { status: res.status });
     }
     const data = await res.json();
+
+    // Enrich queue items with campaign_name from detail (parallel, lightweight)
+    if (Array.isArray(data) && data.length > 0) {
+      const enrichPromises = data.map(async (item: any) => {
+        try {
+          const detailRes = await fetch(`${TOMBSTONE_URL}/content/${item.task_id}`, {
+            headers: { 'Accept': 'application/json' },
+            cache: 'no-store',
+          });
+          if (!detailRes.ok) return item;
+          const detail = await detailRes.json();
+
+          // Extract campaign names from platform_variants
+          const pv = detail.platform_variants;
+          const campaignNames: string[] = [];
+          if (Array.isArray(pv)) {
+            for (const v of pv) {
+              if (v?.campaign_name) campaignNames.push(v.campaign_name);
+            }
+          }
+
+          // Extract base_caption or first campaign summary
+          let captionPreview = detail.base_caption || '';
+          if (!captionPreview && Array.isArray(pv)) {
+            for (const v of pv) {
+              if (v?.summary) { captionPreview = v.summary; break; }
+            }
+          }
+
+          return {
+            ...item,
+            campaign_names: campaignNames,
+            caption_preview: captionPreview ? captionPreview.slice(0, 120) : null,
+          };
+        } catch {
+          return item;
+        }
+      });
+
+      const enriched = await Promise.all(enrichPromises);
+      return NextResponse.json(enriched);
+    }
+
     return NextResponse.json(data);
   } catch (e: any) {
     console.error('[content/queue] Error:', e.message);
