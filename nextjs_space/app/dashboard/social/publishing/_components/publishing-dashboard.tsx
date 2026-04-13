@@ -522,7 +522,31 @@ export default function PublishingDashboard() {
   // ── Main layout ────────────────────────────────────────────────────────────
 
   return (
-    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8 relative">
+      {/* ── Coming Soon Overlay ─────────────────────────────────────── */}
+      <div className="absolute inset-0 z-30 bg-white/70 backdrop-blur-[2px] flex items-start justify-center pt-32 pointer-events-auto rounded-xl">
+        <div className="text-center px-6 py-10 max-w-lg">
+          <div className="mx-auto w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mb-5 shadow-lg">
+            <Send className="w-7 h-7 text-white" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Auto-Posting Coming Soon</h2>
+          <p className="text-gray-500 leading-relaxed">
+            We&apos;re building direct publishing to Facebook, Instagram, TikTok, and more.
+            For now, use the <span className="font-semibold text-blue-600">Social Posts</span> tab
+            to download your posts and publish them manually.
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <a
+              href="/dashboard/social"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
+            >
+              Go to Social Posts
+              <ChevronRight className="w-4 h-4" />
+            </a>
+          </div>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

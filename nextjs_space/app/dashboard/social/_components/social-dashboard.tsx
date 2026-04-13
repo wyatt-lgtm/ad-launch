@@ -9,7 +9,7 @@ import {
   Edit3, Trash2, Copy, ExternalLink, Hash, Clock,
   Zap, RefreshCw, ChevronDown, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
-  List, AlertCircle, Sparkles, Building2
+  List, AlertCircle, Sparkles, Building2, Download
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -270,6 +270,66 @@ export default function SocialDashboard() {
     navigator.clipboard.writeText(fullText);
     setCopiedId(post.id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const downloadPost = async (post: SocialPost) => {
+    setDownloadingId(post.id);
+    const slug = (post.caption || 'post').slice(0, 40).replace(/[^a-zA-Z0-9]+/g, '_').replace(/_+$/, '');
+
+    // Build text content
+    const lines: string[] = [];
+    lines.push('=== CAPTION ===');
+    lines.push(post.caption || '');
+    if (post.hashtags.length > 0) {
+      lines.push('');
+      lines.push('=== HASHTAGS ===');
+      lines.push(post.hashtags.join(' '));
+    }
+    if (post.postType && post.postType !== 'general') {
+      lines.push('');
+      lines.push(`=== TYPE: ${post.postType} ===`);
+    }
+    if (post.platforms.length > 0) {
+      lines.push('');
+      lines.push(`=== PLATFORMS: ${post.platforms.join(', ')} ===`);
+    }
+    lines.push('');
+    lines.push(`Generated: ${new Date(post.createdAt).toLocaleString()}`);
+
+    // Download text file
+    const textBlob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const textUrl = URL.createObjectURL(textBlob);
+    const textLink = document.createElement('a');
+    textLink.href = textUrl;
+    textLink.download = `${slug}.txt`;
+    document.body.appendChild(textLink);
+    textLink.click();
+    document.body.removeChild(textLink);
+    URL.revokeObjectURL(textUrl);
+
+    // Download image if available
+    if (post.imageUrl) {
+      try {
+        const imgRes = await fetch(post.imageUrl);
+        if (imgRes.ok) {
+          const imgBlob = await imgRes.blob();
+          const ext = imgBlob.type.includes('png') ? 'png' : imgBlob.type.includes('webp') ? 'webp' : 'jpg';
+          const imgUrl = URL.createObjectURL(imgBlob);
+          const imgLink = document.createElement('a');
+          imgLink.href = imgUrl;
+          imgLink.download = `${slug}.${ext}`;
+          document.body.appendChild(imgLink);
+          imgLink.click();
+          document.body.removeChild(imgLink);
+          URL.revokeObjectURL(imgUrl);
+        }
+      } catch (e) {
+        console.warn('Image download failed:', e);
+      }
+    }
+    setDownloadingId(null);
   };
 
   const openComposer = (post: SocialPost, platformId: string) => {
@@ -732,6 +792,16 @@ export default function SocialDashboard() {
                         >
                           {copiedId === post.id ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
                           {copiedId === post.id ? 'Copied!' : 'Copy Caption'}
+                        </button>
+
+                        {/* Download post (image + text) */}
+                        <button
+                          onClick={() => downloadPost(post)}
+                          disabled={downloadingId === post.id}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 rounded-lg text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50"
+                        >
+                          {downloadingId === post.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                          {downloadingId === post.id ? 'Downloading…' : 'Download'}
                         </button>
 
                         {/* Platform publish buttons */}
