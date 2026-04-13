@@ -681,12 +681,26 @@ export default function SocialDashboard() {
 
                       {/* Post image (from Tombstone creative workflow) */}
                       {post.imageUrl && (
-                        <div className="relative w-full aspect-video bg-gray-100 rounded-lg overflow-hidden mb-3">
+                        <div className="relative w-full max-w-md mx-auto aspect-[2/3] bg-gray-100 rounded-lg overflow-hidden mb-3">
+                          <div className="absolute inset-0 flex items-center justify-center text-gray-400 img-loading-indicator">
+                            <div className="flex flex-col items-center gap-2">
+                              <Loader2 className="w-6 h-6 animate-spin" />
+                              <span className="text-xs">Loading image…</span>
+                            </div>
+                          </div>
                           <img
                             src={post.imageUrl}
                             alt={post.newsAngle || 'Social post image'}
-                            className="w-full h-full object-cover"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            className="relative w-full h-full object-contain z-10"
+                            onLoad={(e) => {
+                              const indicator = (e.target as HTMLImageElement).parentElement?.querySelector('.img-loading-indicator');
+                              if (indicator) (indicator as HTMLElement).style.display = 'none';
+                            }}
+                            onError={(e) => {
+                              const indicator = (e.target as HTMLImageElement).parentElement?.querySelector('.img-loading-indicator');
+                              if (indicator) (indicator as HTMLElement).innerHTML = '<span class="text-xs text-gray-400">Image unavailable</span>';
+                              (e.target as HTMLImageElement).style.display = 'none';
+                            }}
                           />
                         </div>
                       )}
