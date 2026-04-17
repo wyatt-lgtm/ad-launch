@@ -60,8 +60,16 @@ export async function POST(request: NextRequest) {
         }, { status: 422 });
       }
 
-      // Treat 4xx/5xx as unreachable, but 2xx/3xx means site exists
-      if (res.status >= 400) {
+      // Cloudflare/bot-protection often returns 403 with challenge headers —
+      // treat these as "reachable but bot-blocked" rather than truly unreachable.
+      const cfChallenged = res.status === 403 && (
+        res.headers.get('cf-mitigated') === 'challenge' ||
+        res.headers.get('server')?.toLowerCase().includes('cloudflare') ||
+        res.headers.get('cf-ray')
+      );
+
+      // Treat non-CF 4xx/5xx as unreachable, but 2xx/3xx means site exists
+      if (res.status >= 400 && !cfChallenged) {
         console.warn(`[analyze] Website error: ${normalizedUrl} (status: ${res.status})`);
         return NextResponse.json({
           error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
@@ -69,20 +77,26 @@ export async function POST(request: NextRequest) {
       }
 
       siteReachable = true;
-      htmlBody = await res.text().catch(() => '');
 
-      // Detect captcha/bot-block responses: tiny HTML, captcha headers, or meta-refresh to captcha
-      const isCaptcha =
-        res.headers.get('sg-captcha') === 'challenge' ||
-        res.headers.get('x-sucuri-id') ||
-        (htmlBody.length < 1000 && /captcha|challenge|verify.*human|cf-browser-verification/i.test(htmlBody)) ||
-        (htmlBody.length < 500 && /meta\s+http-equiv=["']refresh["'][^>]*sgcaptcha|cloudflare/i.test(htmlBody));
-
-      if (isCaptcha) {
-        console.log(`[analyze] Bot/captcha block detected for ${normalizedUrl} — site is reachable but HTML not usable`);
-        htmlBody = ''; // Clear so address extraction skips
+      if (cfChallenged) {
+        console.log(`[analyze] Cloudflare challenge detected for ${normalizedUrl} (status: ${res.status}) — treating as reachable, skipping HTML`);
+        htmlBody = '';
       } else {
-        console.log(`[analyze] Website fetched: ${normalizedUrl} (status: ${res.status}, ${htmlBody.length} bytes)`);
+        htmlBody = await res.text().catch(() => '');
+
+        // Detect captcha/bot-block responses: tiny HTML, captcha headers, or meta-refresh to captcha
+        const isCaptcha =
+          res.headers.get('sg-captcha') === 'challenge' ||
+          res.headers.get('x-sucuri-id') ||
+          (htmlBody.length < 1000 && /captcha|challenge|verify.*human|cf-browser-verification/i.test(htmlBody)) ||
+          (htmlBody.length < 500 && /meta\s+http-equiv=["']refresh["'][^>]*sgcaptcha|cloudflare/i.test(htmlBody));
+
+        if (isCaptcha) {
+          console.log(`[analyze] Bot/captcha block detected for ${normalizedUrl} — site is reachable but HTML not usable`);
+          htmlBody = ''; // Clear so address extraction skips
+        } else {
+          console.log(`[analyze] Website fetched: ${normalizedUrl} (status: ${res.status}, ${htmlBody.length} bytes)`);
+        }
       }
     } catch (fetchErr: any) {
       console.warn(`[analyze] Website fetch failed: ${normalizedUrl}`, fetchErr?.message);
