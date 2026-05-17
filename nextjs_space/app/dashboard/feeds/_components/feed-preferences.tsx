@@ -1,14 +1,17 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import {
   Loader2, Check, Rss, ArrowRight, Sparkles, Zap, AlertCircle,
   Building2, Plus, CheckCircle2, Clock, Newspaper, XCircle,
+  MapPin, Globe2, Layers,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
+
+type ContentSourceMode = 'local_only' | 'local_plus_interests' | 'interests_only';
 
 interface Industry {
   key: string;
@@ -19,6 +22,33 @@ interface Industry {
   enabled: boolean;
 }
 
+// ── Mode option descriptors ───────────────────────────────────────────────
+const MODE_OPTIONS: {
+  value: ContentSourceMode;
+  label: string;
+  description: string;
+  icon: typeof MapPin;
+}[] = [
+  {
+    value: 'local_only',
+    label: 'Local Only',
+    description: 'Only local news from your ZIP/trade area plus upcoming events',
+    icon: MapPin,
+  },
+  {
+    value: 'local_plus_interests',
+    label: 'Local + Interests',
+    description: 'Local news plus trending content from your selected interest categories',
+    icon: Layers,
+  },
+  {
+    value: 'interests_only',
+    label: 'Interests Only',
+    description: 'Only national/interest feeds — no local ZIP required',
+    icon: Globe2,
+  },
+];
+
 // ── Generation progress steps ─────────────────────────────────────────────
 interface ProgressStep {
   id: string;
@@ -28,9 +58,9 @@ interface ProgressStep {
 }
 
 const INITIAL_STEPS: ProgressStep[] = [
-  { id: 'scout',    label: 'Scouting local news & events', status: 'pending' },
+  { id: 'scout',    label: 'Scouting news & events',         status: 'pending' },
   { id: 'creative', label: 'Sending brief to creative team', status: 'pending' },
-  { id: 'queue',    label: 'Queuing post generation',       status: 'pending' },
+  { id: 'queue',    label: 'Queuing post generation',        status: 'pending' },
 ];
 
 export default function FeedPreferences() {
@@ -38,6 +68,10 @@ export default function FeedPreferences() {
   const router = useRouter();
   const bizCtx = useActiveBusiness();
   const [showPicker, setShowPicker] = useState(false);
+
+  // Content source mode (business-level)
+  const [contentMode, setContentMode] = useState<ContentSourceMode>('local_plus_interests');
+  const savedModeRef = useRef<ContentSourceMode>('local_plus_interests');
 
   const [industries, setIndustries] = useState<Industry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -58,21 +92,39 @@ export default function FeedPreferences() {
     }
   }, [status, router]);
 
+  // Load business-level content settings when active business changes
+  const loadSettings = useCallback(async () => {
+    const bizId = bizCtx.activeBusiness?.id;
+    if (!bizId || status !== 'authenticated') return;
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/businesses/${bizId}/content-settings`);
+      if (!res.ok) throw new Error('Failed to load');
+      const data = await res.json();
+
+      // Set mode
+      const mode = (data.contentSourceMode || 'local_plus_interests') as ContentSourceMode;
+      setContentMode(mode);
+      savedModeRef.current = mode;
+
+      // Set industries + selected from business preferences
+      setIndustries(data.industries ?? []);
+      const enabledKeys = new Set<string>(
+        (data.selectedInterestCategories ?? []) as string[]
+      );
+      setSelected(enabledKeys);
+      lastSavedRef.current = new Set(enabledKeys);
+    } catch {
+      setError('Failed to load content settings');
+    } finally {
+      setLoading(false);
+    }
+  }, [bizCtx.activeBusiness?.id, status]);
+
   useEffect(() => {
-    if (status !== 'authenticated') return;
-    fetch('/api/user/feed-preferences')
-      .then((r) => r.json())
-      .then((data) => {
-        setIndustries(data.industries ?? []);
-        const enabled = new Set<string>(
-          (data.industries ?? []).filter((i: Industry) => i.enabled).map((i: Industry) => i.key)
-        );
-        setSelected(enabled);
-        lastSavedRef.current = new Set(enabled);
-      })
-      .catch(() => setError('Failed to load feed options'))
-      .finally(() => setLoading(false));
-  }, [status]);
+    loadSettings();
+  }, [loadSettings]);
 
   const toggle = (key: string) => {
     setSaved(false);
@@ -84,48 +136,43 @@ export default function FeedPreferences() {
     });
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    setError('');
+  const handleModeChange = (mode: ContentSourceMode) => {
     setSaved(false);
-    try {
-      const res = await fetch('/api/user/feed-preferences', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ industries: Array.from(selected) }),
-      });
-      if (!res.ok) throw new Error();
-      setSaved(true);
-      lastSavedRef.current = new Set(selected);
-    } catch {
-      setError('Failed to save. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const savePreferencesSilent = async (): Promise<boolean> => {
-    try {
-      const res = await fetch('/api/user/feed-preferences', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ industries: Array.from(selected) }),
-      });
-      if (!res.ok) return false;
-      lastSavedRef.current = new Set(selected);
-      setSaved(true);
-      return true;
-    } catch {
-      return false;
-    }
+    setContentMode(mode);
   };
 
   const needsSave = (): boolean => {
+    if (contentMode !== savedModeRef.current) return true;
     if (selected.size !== lastSavedRef.current.size) return true;
     for (const key of selected) {
       if (!lastSavedRef.current.has(key)) return true;
     }
     return false;
+  };
+
+  const saveSettings = async (silent = false): Promise<boolean> => {
+    if (!bizCtx.activeBusiness?.id) return false;
+    if (!silent) { setSaving(true); setError(''); setSaved(false); }
+    try {
+      const res = await fetch(`/api/businesses/${bizCtx.activeBusiness.id}/content-settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contentSourceMode: contentMode,
+          selectedInterestCategories: Array.from(selected),
+        }),
+      });
+      if (!res.ok) throw new Error();
+      setSaved(true);
+      savedModeRef.current = contentMode;
+      lastSavedRef.current = new Set(selected);
+      return true;
+    } catch {
+      if (!silent) setError('Failed to save. Please try again.');
+      return false;
+    } finally {
+      if (!silent) setSaving(false);
+    }
   };
 
   // ── Helper to update a single progress step ──────────────────────────────
@@ -135,9 +182,10 @@ export default function FeedPreferences() {
     );
   };
 
-  // ── Generate Posts: inline progress instead of redirect ──────────────────
+  // ── Generate Posts ────────────────────────────────────────────────────────
   const handleGeneratePosts = async () => {
-    if (selected.size === 0) {
+    // In interests-based modes, require at least one category
+    if (contentMode !== 'local_only' && selected.size === 0) {
       setError('Select at least one content category to generate posts.');
       return;
     }
@@ -146,37 +194,52 @@ export default function FeedPreferences() {
     setError('');
     setProgressSteps(INITIAL_STEPS.map(s => ({ ...s, status: 'pending' as const })));
 
+    const bizId = bizCtx.activeBusiness?.id;
+
     try {
-      // Auto-save preferences if they changed
+      // Auto-save if anything changed
       if (needsSave()) {
-        const ok = await savePreferencesSilent();
+        const ok = await saveSettings(true);
         if (!ok) {
-          setGenResult({ message: 'Failed to save feed preferences. Please try again.', type: 'error' });
+          setGenResult({ message: 'Failed to save content settings. Please try again.', type: 'error' });
           setGenerating(false);
           return;
         }
       }
 
-      // Step 1: Clark Kent gathers local intelligence
+      // Step 1: Clark Kent gathers intelligence (passes businessId for mode)
       updateStep('scout', { status: 'active' });
       const scoutRes = await fetch('/api/rss/clark-kent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ businessId: bizId }),
       });
       const scoutData = await scoutRes.json();
       if (!scoutRes.ok) throw new Error(scoutData.error || 'Scout failed');
-      updateStep('scout', {
-        status: 'done',
-        detail: `${scoutData.meta?.rssItemCount ?? 0} news items, ${scoutData.meta?.eventCount ?? 0} events from ${[scoutData.meta?.city, scoutData.meta?.state].filter(Boolean).join(', ') || 'local area'}`,
-      });
+
+      const localCount = scoutData.meta?.rssItemCount ?? 0;
+      const interestCount = scoutData.meta?.interestItemCount ?? 0;
+      const eventCount = scoutData.meta?.eventCount ?? 0;
+      const modeLabel = scoutData.meta?.contentSourceMode || contentMode;
+
+      let scoutDetail = '';
+      if (modeLabel === 'local_only') {
+        scoutDetail = `${localCount} local news items, ${eventCount} events`;
+      } else if (modeLabel === 'interests_only') {
+        scoutDetail = `${interestCount} interest items (${scoutData.meta?.interestCategoryCount ?? 0} categories), ${eventCount} events`;
+      } else {
+        scoutDetail = `${localCount} local + ${interestCount} interest items, ${eventCount} events`;
+      }
+      const geo = [scoutData.meta?.city, scoutData.meta?.state].filter(Boolean).join(', ');
+      if (geo) scoutDetail += ` from ${geo}`;
+      updateStep('scout', { status: 'done', detail: scoutDetail });
 
       // Step 2: Send scout brief to Tombstone creative pipeline
       updateStep('creative', { status: 'active' });
       const tombstoneRes = await fetch('/api/social/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scoutBrief: scoutData.brief }),
+        body: JSON.stringify({ scoutBrief: scoutData.brief, businessId: bizId }),
       });
       const tombstoneData = await tombstoneRes.json();
       if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
@@ -191,7 +254,7 @@ export default function FeedPreferences() {
       const taskCount = tombstoneData.taskCount ?? 0;
       updateStep('queue', {
         status: 'done',
-        detail: `${taskCount} tasks queued from ${selected.size} feed ${selected.size === 1 ? 'category' : 'categories'}`,
+        detail: `${taskCount} tasks queued (${modeLabel} mode)`,
       });
 
       setGenResult({
@@ -200,7 +263,6 @@ export default function FeedPreferences() {
         taskCount,
       });
     } catch (e: any) {
-      // Mark current active step as error
       setProgressSteps(prev =>
         prev.map(s => s.status === 'active' ? { ...s, status: 'error' as const, detail: e.message } : s)
       );
@@ -245,11 +307,12 @@ export default function FeedPreferences() {
     );
   }
 
+  const showInterestGrid = contentMode !== 'local_only';
+
   // ── If generating, show progress panel ────────────────────────────────────
   if (generating || genResult) {
     return (
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
-        {/* Active business banner */}
         {bizCtx.activeBusiness && (
           <ActiveBusinessBanner
             activeBusiness={bizCtx.activeBusiness}
@@ -278,7 +341,6 @@ export default function FeedPreferences() {
           </p>
         </div>
 
-        {/* Progress steps */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm divide-y divide-gray-100 mb-8">
           {progressSteps.map((step) => (
             <div key={step.id} className="px-5 py-4 flex items-start gap-4">
@@ -311,7 +373,6 @@ export default function FeedPreferences() {
           ))}
         </div>
 
-        {/* Action buttons after completion */}
         {!generating && genResult && (
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             {genResult.type === 'success' && (
@@ -337,7 +398,6 @@ export default function FeedPreferences() {
   // ── Normal feed selection UI ──────────────────────────────────────────────
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10">
-      {/* Active business banner */}
       {bizCtx.activeBusiness && (
         <ActiveBusinessBanner
           activeBusiness={bizCtx.activeBusiness}
@@ -352,60 +412,106 @@ export default function FeedPreferences() {
           <Rss className="w-8 h-8 text-blue-600" />
         </div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
-          Choose Your Content Feeds
+          Content Sources
         </h1>
         <p className="text-gray-500 max-w-lg mx-auto">
-          Select the national content categories that match your audience. These feeds power the news & trending content in your generated posts.
+          Choose which content sources power your generated posts — local news, national interest feeds, or both.
         </p>
       </div>
 
-      {/* Industry Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-        {industries.map((ind) => {
-          const isActive = selected.has(ind.key);
-          return (
-            <button
-              key={ind.key}
-              onClick={() => toggle(ind.key)}
-              className={`relative text-left p-5 rounded-xl border-2 transition-all duration-200 group hover:shadow-md ${
-                isActive
-                  ? 'border-blue-500 bg-blue-50/60 shadow-sm'
-                  : 'border-gray-200 bg-white hover:border-gray-300'
-              }`}
-            >
-              {/* Checkmark */}
-              <div
-                className={`absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-                  isActive ? 'bg-blue-600 scale-100' : 'bg-gray-100 scale-90 group-hover:scale-100'
+      {/* ── Content Source Mode Selector ─────────────────────────────────── */}
+      <div className="mb-10">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Content Source Mode</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {MODE_OPTIONS.map((opt) => {
+            const isActive = contentMode === opt.value;
+            const Icon = opt.icon;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => handleModeChange(opt.value)}
+                className={`relative text-left p-4 rounded-xl border-2 transition-all duration-200 ${
+                  isActive
+                    ? 'border-blue-500 bg-blue-50/70 shadow-sm'
+                    : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
                 }`}
               >
-                {isActive && <Check className="w-4 h-4 text-white" />}
-              </div>
-
-              <div className="flex items-start gap-3">
-                <span className="text-2xl">{ind.icon}</span>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-gray-900 text-base">{ind.label}</h3>
-                  <p className="text-sm text-gray-500 mt-0.5 leading-snug">{ind.description}</p>
-                  <p className="text-xs text-gray-400 mt-2">
-                    {ind.feedCount} active {ind.feedCount === 1 ? 'source' : 'sources'}
-                  </p>
+                <div className={`absolute top-3 right-3 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
+                  isActive ? 'bg-blue-600' : 'bg-gray-100'
+                }`}>
+                  {isActive && <Check className="w-3 h-3 text-white" />}
                 </div>
-              </div>
-            </button>
-          );
-        })}
+                <Icon className={`w-5 h-5 mb-2 ${isActive ? 'text-blue-600' : 'text-gray-400'}`} />
+                <h3 className={`text-sm font-semibold ${isActive ? 'text-blue-900' : 'text-gray-800'}`}>{opt.label}</h3>
+                <p className="text-xs text-gray-500 mt-1 leading-snug">{opt.description}</p>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Selection summary */}
+      {/* ── Interest Category Grid (hidden in local_only mode) ───────── */}
+      {showInterestGrid && (
+        <>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Interest Categories</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+            {industries.map((ind) => {
+              const isActive = selected.has(ind.key);
+              return (
+                <button
+                  key={ind.key}
+                  onClick={() => toggle(ind.key)}
+                  className={`relative text-left p-5 rounded-xl border-2 transition-all duration-200 group hover:shadow-md ${
+                    isActive
+                      ? 'border-blue-500 bg-blue-50/60 shadow-sm'
+                      : 'border-gray-200 bg-white hover:border-gray-300'
+                  }`}
+                >
+                  <div
+                    className={`absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+                      isActive ? 'bg-blue-600 scale-100' : 'bg-gray-100 scale-90 group-hover:scale-100'
+                    }`}
+                  >
+                    {isActive && <Check className="w-4 h-4 text-white" />}
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{ind.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-gray-900 text-base">{ind.label}</h3>
+                      <p className="text-sm text-gray-500 mt-0.5 leading-snug">{ind.description}</p>
+                      <p className="text-xs text-gray-400 mt-2">
+                        {ind.feedCount} active {ind.feedCount === 1 ? 'source' : 'sources'}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* When local_only, show a note about interest categories being skipped */}
+      {!showInterestGrid && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-8 text-center">
+          <p className="text-sm text-amber-800">
+            <MapPin className="w-4 h-4 inline-block mr-1 -mt-0.5" />
+            Interest categories are disabled in <strong>Local Only</strong> mode. Switch to <strong>Local + Interests</strong> or <strong>Interests Only</strong> to select categories.
+          </p>
+        </div>
+      )}
+
+      {/* Selection summary + actions */}
       <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-blue-600" />
             <span className="text-sm font-medium text-gray-700">
-              {selected.size === 0
-                ? 'No categories selected'
-                : `${selected.size} ${selected.size === 1 ? 'category' : 'categories'} selected`}
+              {contentMode === 'local_only'
+                ? 'Local sources only — ready to generate'
+                : selected.size === 0
+                  ? 'No interest categories selected'
+                  : `${selected.size} ${selected.size === 1 ? 'category' : 'categories'} selected`}
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -416,7 +522,7 @@ export default function FeedPreferences() {
             )}
             {error && <span className="text-sm text-red-500">{error}</span>}
             <button
-              onClick={handleSave}
+              onClick={() => saveSettings()}
               disabled={saving || generating}
               className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg font-semibold text-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
@@ -425,11 +531,11 @@ export default function FeedPreferences() {
               ) : (
                 <ArrowRight className="w-4 h-4" />
               )}
-              {saving ? 'Saving...' : 'Save Preferences'}
+              {saving ? 'Saving...' : 'Save Settings'}
             </button>
             <button
               onClick={handleGeneratePosts}
-              disabled={generating || saving || selected.size === 0}
+              disabled={generating || saving || (contentMode !== 'local_only' && selected.size === 0)}
               className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold text-sm hover:bg-emerald-700 transition-colors disabled:opacity-50"
             >
               {generating ? (
@@ -443,9 +549,12 @@ export default function FeedPreferences() {
         </div>
       </div>
 
-      {/* Explanation */}
       <p className="text-center text-xs text-gray-400">
-        Your selected feeds will be mixed into the &ldquo;Local News&rdquo; lane of future posts, giving your content a national-trending angle alongside hyper-local stories.
+        {contentMode === 'local_only'
+          ? 'Posts will be generated using hyper-local news from your business\'s trade area and upcoming events.'
+          : contentMode === 'interests_only'
+            ? 'Posts will be generated using national interest feeds and upcoming events — no ZIP code required.'
+            : 'Your selected feeds will be mixed with local news, giving your content a national-trending angle alongside hyper-local stories.'}
       </p>
     </div>
   );

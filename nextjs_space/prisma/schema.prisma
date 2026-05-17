@@ -38,13 +38,28 @@ model Business {
   businessState String?
   businessZip   String?
   businessPhone String?
+  contentSourceMode String @default("local_plus_interests") // "local_only" | "local_plus_interests" | "interests_only"
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   analyses      Analysis[]
+  feedPreferences BusinessFeedPreference[]
 
   @@unique([userId, websiteUrl])
   @@index([userId])
+}
+
+model BusinessFeedPreference {
+  id         String   @id @default(cuid())
+  businessId String
+  industry   String   // matches RssFeed.industry values
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, industry])
+  @@index([businessId])
 }
 
 model PasswordResetToken {

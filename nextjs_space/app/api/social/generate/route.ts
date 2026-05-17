@@ -12,7 +12,7 @@ import { createSocialMissions } from '@/lib/tombstone';
  * Zig Ziglar → Ogilvy → Don Draper → Andy Warhol → Claude Hopkins
  * will produce social posts with artwork.
  *
- * Body: { scoutBrief: ScoutBrief, analysisId?: string }
+ * Body: { scoutBrief: ScoutBrief, businessId?: string, analysisId?: string }
  */
 export async function POST(req: NextRequest) {
   try {
@@ -23,31 +23,46 @@ export async function POST(req: NextRequest) {
     const userId = (session.user as any).id;
 
     const body = await req.json();
-    const { scoutBrief, analysisId } = body;
+    const { scoutBrief, businessId, analysisId } = body;
 
     if (!scoutBrief?.scoutSummary) {
       return NextResponse.json({ error: 'Scout brief with scoutSummary is required' }, { status: 400 });
     }
 
-    // Resolve website URL from analysis record, then business records
+    const contentSourceMode = scoutBrief.contentSourceMode || 'local_plus_interests';
+
+    // Resolve website URL — prefer businessId lookup, then analysis, then fallback
     let websiteUrl: string | null = null;
     let resolvedAnalysisId = analysisId || null;
 
-    // Try analysis DB first — prefer geoConfirmed, then fall back to any analysis
-    const recentAnalysis = await prisma.analysis.findFirst({
-      where: analysisId
-        ? { id: analysisId, userId }
-        : { userId, geoConfirmed: true },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true, websiteUrl: true },
-    }) ?? (analysisId ? null : await prisma.analysis.findFirst({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true, websiteUrl: true },
-    }));
-    if (recentAnalysis) {
-      websiteUrl = recentAnalysis.websiteUrl;
-      resolvedAnalysisId = resolvedAnalysisId || recentAnalysis.id;
+    // Try businessId first
+    if (businessId) {
+      const biz = await prisma.business.findUnique({
+        where: { id: businessId },
+        select: { websiteUrl: true, userId: true },
+      });
+      if (biz && biz.userId === userId) {
+        websiteUrl = biz.websiteUrl;
+      }
+    }
+
+    // Try analysis DB — prefer geoConfirmed, then fall back to any analysis
+    if (!websiteUrl) {
+      const recentAnalysis = await prisma.analysis.findFirst({
+        where: analysisId
+          ? { id: analysisId, userId }
+          : { userId, geoConfirmed: true },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, websiteUrl: true },
+      }) ?? (analysisId ? null : await prisma.analysis.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, websiteUrl: true },
+      }));
+      if (recentAnalysis) {
+        websiteUrl = websiteUrl || recentAnalysis.websiteUrl;
+        resolvedAnalysisId = resolvedAnalysisId || recentAnalysis.id;
+      }
     }
 
     // Fallback: look up from user's Business records
@@ -67,8 +82,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Send to Tombstone creative workflow
-    const result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary);
+    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl}`);
+
+    // Send to Tombstone creative workflow with mode context
+    const result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary, {
+      contentSourceMode,
+    });
 
     if (!result.success) {
       return NextResponse.json(
@@ -87,13 +106,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    console.log(`[social/generate] Social mission created: ${socialMissionId} (${result.allTaskIds.length} tasks)`);
+    console.log(`[social/generate] Social mission created: ${socialMissionId} (${result.allTaskIds.length} tasks) mode=${contentSourceMode}`);
 
     return NextResponse.json({
       success: true,
       socialMissionId,
       taskCount: result.allTaskIds.length,
       workflowIds: result.workflowIds,
+      contentSourceMode,
     });
   } catch (error: any) {
     console.error('Social generate error:', error);

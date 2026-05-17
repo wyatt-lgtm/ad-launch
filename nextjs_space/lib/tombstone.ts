@@ -113,30 +113,54 @@ export async function createLaneMission(
 export async function createSocialMissions(
   websiteUrl: string,
   scoutSummary: string,
-  options: { postCount?: number; platforms?: string[] } = {},
+  options: { postCount?: number; platforms?: string[]; contentSourceMode?: string } = {},
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
   const postCount = options.postCount || 9;
   const platforms = options.platforms || ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'];
+  const mode = options.contentSourceMode || 'local_plus_interests';
 
-  // Build the Tombstone command with local scout intel embedded.
+  // Build lane instructions based on contentSourceMode
+  let laneInstructions: string;
+  if (mode === 'local_only') {
+    laneInstructions = [
+      `Create 3 lanes of content:`,
+      `  Lane 1 (Local News): 3 posts leveraging the local RSS headlines above — community news a business owner would share`,
+      `  Lane 2 (Business): 3 promotional posts using Bridger's website recon — who they are, what they offer, why choose them`,
+      `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
+    ].join('\n');
+  } else if (mode === 'interests_only') {
+    laneInstructions = [
+      `Create 3 lanes of content:`,
+      `  Lane 1 (Interest/Trending): 3 posts leveraging the interest/national feed headlines above — trending industry topics and thought leadership`,
+      `  Lane 2 (Business): 3 promotional posts using Bridger's website recon — who they are, what they offer, why choose them`,
+      `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
+    ].join('\n');
+  } else {
+    // local_plus_interests (default)
+    laneInstructions = [
+      `Create 3 lanes of content:`,
+      `  Lane 1 (Local + Interest News): 3 posts mixing local RSS headlines and interest/national feed items — community news plus trending industry topics a business owner would share`,
+      `  Lane 2 (Business): 3 promotional posts using Bridger's website recon — who they are, what they offer, why choose them`,
+      `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
+    ].join('\n');
+  }
+
+  // Build the Tombstone command with scout intel embedded.
   // Jim Bridger will independently scout the website for business identity,
-  // brand voice, offers, palette, etc. Clark Kent supplements with LOCAL intel only.
+  // brand voice, offers, palette, etc. Clark Kent supplements with content intel.
   const command = [
     `Create ${postCount} social media posts for ${normalizedUrl} targeting these platforms: ${platforms.join(', ')}.`,
     ``,
     `Jim Bridger will handle website recon (business identity, brand voice, offers, palette).`,
-    `Below is LOCAL intelligence from Clark Kent's scout report — RSS news, upcoming events,`,
+    `Below is intelligence from Clark Kent's scout report — RSS news, interest feeds, upcoming events,`,
     `and trade area context that Bridger cannot get from the website:`,
     ``,
-    `--- LOCAL SCOUT BRIEF ---`,
+    `--- SCOUT BRIEF (mode: ${mode}) ---`,
     scoutSummary,
-    `--- END LOCAL SCOUT BRIEF ---`,
+    `--- END SCOUT BRIEF ---`,
     ``,
-    `Create 3 lanes of content:`,
-    `  Lane 1 (Local News): 3 posts leveraging the local RSS headlines above — community news a business owner would share`,
-    `  Lane 2 (Business): 3 promotional posts using Bridger's website recon — who they are, what they offer, why choose them`,
-    `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
+    laneInstructions,
     ``,
     `Each post needs: caption, hashtags, an image/artwork, and the target platforms.`,
     `Posts should feel authentic — like a real small business owner wrote them.`,
