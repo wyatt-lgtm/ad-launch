@@ -7,14 +7,15 @@ import {
   BarChart3, Users, Activity, Key, Cpu, Search, Loader2,
   CheckCircle2, XCircle, Clock, AlertTriangle, Rss, RefreshCw,
   ChevronRight, Shield, Zap, FileText, Image as ImageIcon,
-  MessageSquare, ArrowRight,
+  MessageSquare, ArrowRight, ArrowLeft, Calendar, Eye, X,
 } from 'lucide-react';
+import NextImage from 'next/image';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════
 
-type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks';
+type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads';
 
 interface Overview {
   users: { total: number; confirmed: number; unconfirmed: number; recentSignups: number };
@@ -90,6 +91,7 @@ export default function AdminDashboardMain() {
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: 'accounts', label: 'Accounts', icon: Users },
+    { id: 'ads',      label: 'Ads',      icon: ImageIcon },
     { id: 'usage',    label: 'Usage',    icon: BarChart3 },
     { id: 'resets',   label: 'Resets',   icon: Key },
     { id: 'agents',   label: 'Agents',   icon: Cpu },
@@ -151,7 +153,7 @@ export default function AdminDashboardMain() {
             <StatCard label="Users" value={overview.users.total} sub={`${overview.users.confirmed} confirmed`} icon={Users} onClick={() => setTab('accounts')} />
             <StatCard label="Businesses" value={overview.businesses} icon={Zap} onClick={() => setTab('accounts')} />
             <StatCard label="Analyses" value={overview.analyses.total} icon={FileText} onClick={() => setTab('usage')} />
-            <StatCard label="Ads" value={overview.ads} icon={ImageIcon} onClick={() => setTab('usage')} />
+            <StatCard label="Ads" value={overview.ads} icon={ImageIcon} onClick={() => setTab('ads')} />
             <StatCard label="Social Posts" value={overview.socialPosts.total} icon={MessageSquare} onClick={() => setTab('usage')} />
             <StatCard label="PW Resets" value={overview.passwordResets} icon={Key} onClick={() => setTab('resets')} />
           </div>
@@ -161,6 +163,7 @@ export default function AdminDashboardMain() {
       {/* Tab content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-12">
         {tab === 'accounts' && <AccountsTab />}
+        {tab === 'ads' && <AdsTab />}
         {tab === 'usage' && <UsageTab />}
         {tab === 'resets' && <ResetsTab />}
         {tab === 'agents' && <AgentsTab />}
@@ -182,6 +185,257 @@ function StatCard({ label, value, sub, icon: Icon, onClick }: { label: string; v
       </div>
       <p className="text-2xl font-bold text-gray-900">{value.toLocaleString()}</p>
       {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tab: Ads (drill-down: days → accounts → preview)
+// ═══════════════════════════════════════════════════════════════
+
+interface DayRow { date: string; count: number; lanes: Record<string, number> }
+interface AdItem {
+  id: string; imageUrl: string | null; headline: string | null;
+  caption: string | null; lane: string | null; websiteUrl: string | null;
+  businessName: string | null; createdAt: string;
+}
+interface AccountAds {
+  userId: string; email: string; adCount: number; ads: AdItem[];
+}
+
+const LANE_COLORS: Record<string, string> = {
+  website: 'bg-blue-100 text-blue-700',
+  news: 'bg-amber-100 text-amber-700',
+  holiday: 'bg-rose-100 text-rose-700',
+  unknown: 'bg-gray-100 text-gray-600',
+};
+
+function AdsTab() {
+  const [view, setView] = useState<'daily' | 'day-detail' | 'preview'>('daily');
+  const [days, setDays] = useState<DayRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<AccountAds[]>([]);
+  const [dayLoading, setDayLoading] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState<AccountAds | null>(null);
+  const [previewAd, setPreviewAd] = useState<AdItem | null>(null);
+  const [totalAds, setTotalAds] = useState(0);
+
+  // Load daily view
+  useEffect(() => {
+    fetch('/api/admin/ads?mode=daily')
+      .then(r => r.json())
+      .then(data => { setDays(data.days || []); setTotalAds(data.total || 0); })
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Load day detail
+  const openDay = useCallback(async (day: string) => {
+    setSelectedDay(day);
+    setDayLoading(true);
+    setView('day-detail');
+    try {
+      const res = await fetch(`/api/admin/ads?mode=day-detail&day=${day}`);
+      const data = await res.json();
+      setAccounts(data.accounts || []);
+    } finally {
+      setDayLoading(false);
+    }
+  }, []);
+
+  const openAccountPreview = (account: AccountAds) => {
+    setSelectedAccount(account);
+    setView('preview');
+  };
+
+  const formatDate = (d: string) => {
+    const date = new Date(d + 'T12:00:00');
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  // find max count for the bar chart
+  const maxCount = days.length > 0 ? Math.max(...days.map(d => d.count)) : 1;
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-blue-600" /></div>;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* Breadcrumb header */}
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+        {view !== 'daily' && (
+          <button
+            onClick={() => {
+              if (view === 'preview') { setView('day-detail'); setSelectedAccount(null); }
+              else { setView('daily'); setSelectedDay(null); setAccounts([]); }
+            }}
+            className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 font-medium mr-2"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+        )}
+        <ImageIcon className="w-5 h-5 text-gray-400" />
+        <span className="text-sm font-semibold text-gray-700">
+          {view === 'daily' && `Ads by Day (${totalAds} total, last 90 days)`}
+          {view === 'day-detail' && selectedDay && `${formatDate(selectedDay)} — ${accounts.reduce((s, a) => s + a.adCount, 0)} ads`}
+          {view === 'preview' && selectedAccount && `${selectedAccount.email} — ${selectedAccount.adCount} ads on ${formatDate(selectedDay!)}`}
+        </span>
+      </div>
+
+      {/* ── Daily view: bar chart of ads by day ── */}
+      {view === 'daily' && (
+        <div className="divide-y divide-gray-50">
+          {days.length === 0 && <p className="text-center text-gray-400 py-12">No ads found in the last 90 days</p>}
+          {days.map(day => (
+            <button
+              key={day.date}
+              onClick={() => openDay(day.date)}
+              className="w-full flex items-center gap-4 px-5 py-3 hover:bg-blue-50/50 transition-colors group text-left"
+            >
+              <div className="w-36 shrink-0">
+                <p className="text-sm font-medium text-gray-800">{formatDate(day.date)}</p>
+              </div>
+              <div className="flex-1 flex items-center gap-3">
+                <div className="flex-1 h-7 bg-gray-100 rounded-full overflow-hidden relative">
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all"
+                    style={{ width: `${Math.max((day.count / maxCount) * 100, 4)}%` }}
+                  />
+                </div>
+                <span className="text-sm font-bold text-gray-700 w-10 text-right">{day.count}</span>
+              </div>
+              <div className="flex gap-1.5 shrink-0">
+                {Object.entries(day.lanes).map(([lane, cnt]) => (
+                  <span key={lane} className={`text-xs px-2 py-0.5 rounded-full font-medium ${LANE_COLORS[lane] || LANE_COLORS.unknown}`}>
+                    {lane} {cnt}
+                  </span>
+                ))}
+              </div>
+              <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 shrink-0" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Day detail: accounts that generated ads that day ── */}
+      {view === 'day-detail' && (
+        <div>
+          {dayLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-blue-600" /></div>
+          ) : accounts.length === 0 ? (
+            <p className="text-center text-gray-400 py-12">No ads found for this day</p>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {accounts.map(acct => (
+                <button
+                  key={acct.userId}
+                  onClick={() => openAccountPreview(acct)}
+                  className="w-full flex items-center gap-4 px-5 py-4 hover:bg-blue-50/50 transition-colors group text-left"
+                >
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center shrink-0">
+                    <Users className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-800 truncate">{acct.email}</p>
+                    <p className="text-xs text-gray-400">
+                      {acct.adCount} ad{acct.adCount !== 1 ? 's' : ''}
+                      {acct.ads[0]?.businessName && ` · ${acct.ads[0].businessName}`}
+                      {acct.ads[0]?.websiteUrl && ` · ${acct.ads[0].websiteUrl}`}
+                    </p>
+                  </div>
+                  {/* Mini thumbnails */}
+                  <div className="flex -space-x-2 shrink-0">
+                    {acct.ads.slice(0, 4).map((ad, i) => (
+                      <div key={ad.id} className="w-10 h-10 rounded-lg border-2 border-white overflow-hidden bg-gray-100 relative" style={{ zIndex: 4 - i }}>
+                        {ad.imageUrl ? (
+                          <NextImage src={ad.imageUrl} alt={ad.headline || 'Ad'} fill className="object-cover" sizes="40px" unoptimized />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <ImageIcon className="w-4 h-4 text-gray-300" />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {acct.adCount > 4 && (
+                      <div className="w-10 h-10 rounded-lg border-2 border-white bg-gray-200 flex items-center justify-center text-xs font-medium text-gray-600">
+                        +{acct.adCount - 4}
+                      </div>
+                    )}
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Preview: ad gallery for selected account ── */}
+      {view === 'preview' && selectedAccount && (
+        <div className="p-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {selectedAccount.ads.map(ad => (
+              <div
+                key={ad.id}
+                className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow cursor-pointer group"
+                onClick={() => setPreviewAd(ad)}
+              >
+                {/* Image */}
+                <div className="relative aspect-[4/5] bg-gray-100">
+                  {ad.imageUrl ? (
+                    <NextImage src={ad.imageUrl} alt={ad.headline || 'Ad preview'} fill className="object-cover" sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw" unoptimized />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <ImageIcon className="w-12 h-12 text-gray-300" />
+                    </div>
+                  )}
+                  {/* Lane badge */}
+                  {ad.lane && (
+                    <span className={`absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full font-medium ${LANE_COLORS[ad.lane] || LANE_COLORS.unknown}`}>
+                      {ad.lane}
+                    </span>
+                  )}
+                  {/* Hover overlay */}
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                    <Eye className="w-8 h-8 text-white drop-shadow-lg" />
+                  </div>
+                </div>
+                {/* Info */}
+                <div className="p-3">
+                  {ad.headline && <p className="text-sm font-semibold text-gray-800 truncate">{ad.headline}</p>}
+                  {ad.businessName && <p className="text-xs text-gray-400 truncate">{ad.businessName}</p>}
+                  <p className="text-xs text-gray-300 mt-1">{new Date(ad.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Full-screen preview modal ── */}
+      {previewAd && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setPreviewAd(null)}>
+          <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                {previewAd.lane && <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${LANE_COLORS[previewAd.lane] || LANE_COLORS.unknown}`}>{previewAd.lane}</span>}
+                {previewAd.businessName && <span className="text-sm font-medium text-gray-600">{previewAd.businessName}</span>}
+              </div>
+              <button onClick={() => setPreviewAd(null)} className="p-1 hover:bg-gray-100 rounded-lg"><X className="w-5 h-5 text-gray-500" /></button>
+            </div>
+            {previewAd.imageUrl && (
+              <div className="relative w-full aspect-[4/5] bg-gray-100">
+                <NextImage src={previewAd.imageUrl} alt={previewAd.headline || 'Ad'} fill className="object-contain" sizes="512px" unoptimized />
+              </div>
+            )}
+            <div className="p-5 space-y-3">
+              {previewAd.headline && <h3 className="text-lg font-bold text-gray-900">{previewAd.headline}</h3>}
+              {previewAd.caption && <p className="text-sm text-gray-600 whitespace-pre-wrap">{previewAd.caption}</p>}
+              {previewAd.websiteUrl && <p className="text-xs text-blue-500">{previewAd.websiteUrl}</p>}
+              <p className="text-xs text-gray-300">{new Date(previewAd.createdAt).toLocaleString()}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
