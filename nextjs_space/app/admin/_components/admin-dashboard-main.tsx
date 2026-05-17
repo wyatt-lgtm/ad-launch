@@ -148,12 +148,12 @@ export default function AdminDashboardMain() {
       {overview && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-            <StatCard label="Users" value={overview.users.total} sub={`${overview.users.confirmed} confirmed`} icon={Users} />
-            <StatCard label="Businesses" value={overview.businesses} icon={Zap} />
-            <StatCard label="Analyses" value={overview.analyses.total} icon={FileText} />
-            <StatCard label="Ads" value={overview.ads} icon={ImageIcon} />
-            <StatCard label="Social Posts" value={overview.socialPosts.total} icon={MessageSquare} />
-            <StatCard label="PW Resets" value={overview.passwordResets} icon={Key} />
+            <StatCard label="Users" value={overview.users.total} sub={`${overview.users.confirmed} confirmed`} icon={Users} onClick={() => setTab('accounts')} />
+            <StatCard label="Businesses" value={overview.businesses} icon={Zap} onClick={() => setTab('accounts')} />
+            <StatCard label="Analyses" value={overview.analyses.total} icon={FileText} onClick={() => setTab('usage')} />
+            <StatCard label="Ads" value={overview.ads} icon={ImageIcon} onClick={() => setTab('usage')} />
+            <StatCard label="Social Posts" value={overview.socialPosts.total} icon={MessageSquare} onClick={() => setTab('usage')} />
+            <StatCard label="PW Resets" value={overview.passwordResets} icon={Key} onClick={() => setTab('resets')} />
           </div>
         </div>
       )}
@@ -170,9 +170,12 @@ export default function AdminDashboardMain() {
   );
 }
 
-function StatCard({ label, value, sub, icon: Icon }: { label: string; value: number; sub?: string; icon: any }) {
+function StatCard({ label, value, sub, icon: Icon, onClick }: { label: string; value: number; sub?: string; icon: any; onClick?: () => void }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-xl border border-gray-200 p-4 shadow-sm transition-all ${onClick ? 'cursor-pointer hover:border-blue-400 hover:shadow-md active:scale-[0.98]' : ''}`}
+    >
       <div className="flex items-center gap-2 mb-2">
         <Icon className="w-4 h-4 text-gray-400" />
         <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</span>
