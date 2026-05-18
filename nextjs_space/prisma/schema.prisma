@@ -479,7 +479,7 @@ model SocialPost {
   @@index([userId])
   @@index([status])
   @@index([analysisId])
-  @@index([tombstoneTaskId])
+  @@unique([tombstoneTaskId])
   @@index([scheduledFor])
   @@index([createdAt])
 }

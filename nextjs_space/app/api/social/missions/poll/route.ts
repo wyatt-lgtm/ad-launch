@@ -212,6 +212,7 @@ export async function POST(req: NextRequest) {
         status: 'pending_approval',
         tombstoneTaskId: post.tombstoneTaskId || null,
       })),
+      skipDuplicates: true,
     });
 
     console.log(`[missions/poll] Imported ${createdPosts.count} social posts`);
