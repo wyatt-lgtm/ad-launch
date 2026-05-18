@@ -252,71 +252,72 @@ export default function SocialDashboard() {
     setShowStoryPicker(false);
 
     try {
-      // Build a filtered scoutSummary with only selected headlines
-      const filteredBrief = { ...scoutBriefData };
-      const lines: string[] = [];
+      // Build individual stories array — one per selected headline
+      // Each becomes its own Tombstone workflow → its own rendered post
+      const stories: { headline: string; source?: string; category?: string; type: string; link?: string }[] = [];
 
-      lines.push(`CONTENT SOURCE MODE: ${filteredBrief.contentSourceMode || 'interests_only'}`);
-      lines.push('');
-
-      // Trade area
-      const ta = filteredBrief.tradeArea;
-      if (ta?.zip || ta?.city) {
-        lines.push(`TRADE AREA: ${ta.city}${ta.state ? ', ' + ta.state : ''} ${ta.zip} (${ta.radiusMiles}mi radius)`);
-      } else {
-        lines.push('TRADE AREA: Not available');
-      }
-
-      // Local RSS (if present in original)
-      if (filteredBrief.rssBrief?.headlines?.length > 0) {
-        const rss = filteredBrief.rssBrief;
-        lines.push('');
-        lines.push(`LOCAL NEWS (${rss.summary.totalItems} items from ${rss.summary.feedsMatched} feeds):`);
-        for (const h of rss.headlines.slice(0, 12)) {
-          lines.push(`  • [${h.sourceType}] "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})`);
-        }
-      }
-
-      // Interest feeds — only include selected headlines
-      if (filteredBrief.interestBrief?.categories?.length > 0) {
-        const selectedCats: { label: string; headlines: any[] }[] = [];
-        let totalSelected = 0;
-        for (const cat of filteredBrief.interestBrief.categories) {
-          const picked = (cat.headlines || []).filter((h: any) => {
+      // Interest feed headlines
+      if (scoutBriefData.interestBrief?.categories?.length > 0) {
+        for (const cat of scoutBriefData.interestBrief.categories) {
+          for (const h of (cat.headlines || [])) {
             const hid = h.id || `${cat.industry}-${h.title?.slice(0, 20)}`;
-            return selectedStoryIds.has(hid);
-          });
-          if (picked.length > 0) {
-            selectedCats.push({ label: cat.label, headlines: picked });
-            totalSelected += picked.length;
-          }
-        }
-        if (selectedCats.length > 0) {
-          lines.push('');
-          lines.push(`INTEREST/NATIONAL FEEDS (${totalSelected} selected items, ${selectedCats.length} categories):`);
-          lines.push('');
-          for (const sc of selectedCats) {
-            lines.push(`  ${sc.label} (${sc.headlines.length} items):`);
-            for (const h of sc.headlines) {
-              lines.push(`    • "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})`);
+            if (selectedStoryIds.has(hid)) {
+              stories.push({
+                headline: h.title,
+                source: h.source,
+                category: cat.label,
+                type: 'interest',
+                link: h.link,
+              });
             }
-            lines.push('');
           }
         }
       }
 
-      // Events
-      if (filteredBrief.upcomingEvents?.length > 0) {
-        lines.push('');
-        lines.push('UPCOMING EVENTS (next 90 days):');
-        for (const e of filteredBrief.upcomingEvents.slice(0, 6)) {
-          lines.push(`  • ${e.name} (${e.date}) — Ideas: ${e.ideas}`);
+      // Local RSS headlines
+      if (scoutBriefData.rssBrief?.headlines?.length > 0) {
+        for (const h of scoutBriefData.rssBrief.headlines) {
+          const hid = h.id || `local-${h.title?.slice(0, 20)}`;
+          if (selectedStoryIds.has(hid)) {
+            stories.push({
+              headline: h.title,
+              source: h.source,
+              category: 'Local News',
+              type: 'local_news',
+              link: h.link,
+            });
+          }
         }
       }
 
-      filteredBrief.scoutSummary = lines.join('\n');
+      // Upcoming events
+      if (scoutBriefData.upcomingEvents?.length > 0) {
+        for (const e of scoutBriefData.upcomingEvents) {
+          const eid = e.id || `event-${e.name?.slice(0, 20)}`;
+          if (selectedStoryIds.has(eid)) {
+            stories.push({
+              headline: e.name,
+              source: e.ideas || `${e.date}`,
+              category: 'Events',
+              type: 'event',
+            });
+          }
+        }
+      }
 
-      await sendToTombstone(filteredBrief, null);
+      if (stories.length === 0) {
+        setScoutError('No matching stories found for selected items.');
+        setScouting(false);
+        return;
+      }
+
+      const brief = {
+        ...scoutBriefData,
+        stories,
+        scoutSummary: `Generating ${stories.length} individual posts from selected stories.`,
+      };
+
+      await sendToTombstone(brief, null);
     } catch (e: any) {
       console.error('Generate error:', e);
       setScoutError(e.message);
@@ -334,8 +335,9 @@ export default function SocialDashboard() {
     const tombstoneData = await tombstoneRes.json();
     if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
 
+    const wfCount = tombstoneData.workflowIds?.length || 0;
     setScoutResult({
-      message: `Scout brief sent to creative team. ${tombstoneData.taskCount ?? 0} tasks queued — posts with artwork will appear when complete.`,
+      message: `${wfCount} creative workflow${wfCount !== 1 ? 's' : ''} started — each will produce a unique post with artwork. Posts appear as they finish (~3-5 min each).`,
       meta: meta,
       socialMissionId: tombstoneData.socialMissionId,
     });

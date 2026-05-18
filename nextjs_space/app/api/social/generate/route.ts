@@ -25,8 +25,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { scoutBrief, businessId, analysisId } = body;
 
-    if (!scoutBrief?.scoutSummary) {
-      return NextResponse.json({ error: 'Scout brief with scoutSummary is required' }, { status: 400 });
+    if (!scoutBrief?.scoutSummary && !scoutBrief?.stories?.length) {
+      return NextResponse.json({ error: 'Scout brief with scoutSummary or stories is required' }, { status: 400 });
     }
 
     const contentSourceMode = scoutBrief.contentSourceMode || 'local_plus_interests';
@@ -82,11 +82,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl}`);
+    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl} stories=${scoutBrief.stories?.length || 0}`);
 
-    // Send to Tombstone creative workflow with mode context
-    const result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary, {
+    // Send to Tombstone creative workflow — one command per story
+    const result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary || '', {
       contentSourceMode,
+      stories: scoutBrief.stories || [],
     });
 
     if (!result.success) {

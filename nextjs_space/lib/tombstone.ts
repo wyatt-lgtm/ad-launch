@@ -160,82 +160,159 @@ export async function createLaneMission(
 }
 
 /**
- * Create a social content mission that sends Clark Kent's LOCAL scout brief
- * to Tombstone. Jim Bridger (Research agent, step 1 of every workflow)
- * handles all website/business intelligence — Clark Kent only provides
- * local context: RSS headlines, upcoming events, and trade area geography.
+ * Create social content missions — one Tombstone workflow per post.
  *
- * The scout brief is embedded in the command text so Wyatt routes it
- * through Bridger → Zig → Ogilvy → Draper → Warhol → Hopkins.
+ * Tombstone's pipeline (Bridger → Zig → Ogilvy → Draper → Warhol) creates
+ * exactly ONE rendered post per workflow. So to get N posts we send N
+ * individual commands, each with a specific content angle / headline.
+ *
+ * `stories` is an array of content items to turn into posts. Each has:
+ *   - headline: the news/interest headline to riff on
+ *   - source: feed source name
+ *   - category: interest category label (e.g. "Rural & Agriculture")
+ *   - type: 'interest' | 'local_news' | 'event' | 'business'
+ *
+ * Commands are sent in parallel (up to 3 concurrent) to avoid overloading
+ * Tombstone while keeping total wall-clock time reasonable.
  */
 export async function createSocialMissions(
   websiteUrl: string,
   scoutSummary: string,
-  options: { postCount?: number; platforms?: string[]; contentSourceMode?: string } = {},
+  options: {
+    postCount?: number;
+    platforms?: string[];
+    contentSourceMode?: string;
+    stories?: { headline: string; source?: string; category?: string; type?: string; link?: string }[];
+  } = {},
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
-  const postCount = options.postCount || 9;
   const platforms = options.platforms || ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'];
   const mode = options.contentSourceMode || 'local_plus_interests';
+  const stories = options.stories || [];
 
-  // Build lane instructions based on contentSourceMode
-  let laneInstructions: string;
-  if (mode === 'local_only') {
-    laneInstructions = [
-      `Create 3 lanes of content:`,
-      `  Lane 1 (Local News): 3 posts leveraging the local RSS headlines above — community news a business owner would share`,
-      `  Lane 2 (Business): 3 promotional posts using Bridger's website recon — who they are, what they offer, why choose them`,
-      `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
-    ].join('\n');
-  } else if (mode === 'interests_only') {
-    laneInstructions = [
-      `Create 3 lanes of content:`,
-      `  Lane 1 (Interest/Trending): 3 posts leveraging the interest/national feed headlines above — trending industry topics and thought leadership`,
-      `  Lane 2 (Business): 3 promotional posts using Bridger's website recon — who they are, what they offer, why choose them`,
-      `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
-    ].join('\n');
-  } else {
-    // local_plus_interests (default)
-    laneInstructions = [
-      `Create 3 lanes of content:`,
-      `  Lane 1 (Local + Interest News): 3 posts mixing local RSS headlines and interest/national feed items — community news plus trending industry topics a business owner would share`,
-      `  Lane 2 (Business): 3 promotional posts using Bridger's website recon — who they are, what they offer, why choose them`,
-      `  Lane 3 (Seasonal): 3 posts tied to the upcoming events/holidays listed above`,
+  // If no individual stories provided, fall back to single command with full brief
+  if (stories.length === 0) {
+    console.log(`[tombstone] No individual stories — sending single command for: ${normalizedUrl}`);
+    const command = [
+      `review ${normalizedUrl} and create 1 social media post promoting the business.`,
+      `Focus on the business brand, services, and unique value proposition found on the website.`,
+      `Use colors, logo, and brand voice from the website.`,
+      `Make it feel authentic — like a real small business owner wrote it.`,
+      `Target platforms: ${platforms.join(', ')}.`,
+      scoutSummary ? `\nContext from scout brief:\n${scoutSummary}` : '',
+    ].filter(Boolean).join('\n');
+
+    const result = await sendCommand(command);
+    return {
+      success: !!result.workflowId,
+      workflowIds: result.workflowId ? [result.workflowId] : [],
+      allTaskIds: result.taskIds,
+      postCount: 1,
+      platforms,
+    };
+  }
+
+  // Send one command per story, collecting workflow IDs
+  console.log(`[tombstone] Creating ${stories.length} individual social post missions for: ${normalizedUrl}`);
+
+  const allWorkflowIds: string[] = [];
+  const allTaskIds: number[] = [];
+  let successCount = 0;
+
+  // Process in batches of 3 to avoid overwhelming Tombstone
+  const BATCH_SIZE = 3;
+  for (let i = 0; i < stories.length; i += BATCH_SIZE) {
+    const batch = stories.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (story) => {
+        const command = buildStoryCommand(normalizedUrl, story, platforms, mode);
+        console.log(`[tombstone] Sending command for: "${story.headline?.slice(0, 60)}..." (${story.type || 'interest'})`);
+        return sendCommand(command);
+      })
+    );
+
+    for (const result of batchResults) {
+      if (result.workflowId) {
+        allWorkflowIds.push(result.workflowId);
+        allTaskIds.push(...result.taskIds);
+        successCount++;
+      }
+    }
+
+    // Brief pause between batches to let Tombstone process
+    if (i + BATCH_SIZE < stories.length) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+
+  console.log(`[tombstone] Created ${successCount}/${stories.length} workflows: ${allWorkflowIds.join(', ')}`);
+
+  return {
+    success: successCount > 0,
+    workflowIds: allWorkflowIds,
+    allTaskIds,
+    postCount: successCount,
+    platforms,
+  };
+}
+
+/**
+ * Build a Tombstone command for a single story/content item.
+ */
+function buildStoryCommand(
+  websiteUrl: string,
+  story: { headline: string; source?: string; category?: string; type?: string; link?: string },
+  platforms: string[],
+  mode: string,
+): string {
+  const type = story.type || 'interest';
+  const platformStr = platforms.join(', ');
+
+  if (type === 'event') {
+    return [
+      `review ${websiteUrl} and create 1 social media post tied to an upcoming event/holiday.`,
+      `The post should connect the business to this event in a creative, engaging way.`,
+      `Use the business brand colors and voice from the website.`,
+      `Target platforms: ${platformStr}.`,
+      ``,
+      `Event: ${story.headline}`,
+      story.source ? `Details: ${story.source}` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  if (type === 'local_news') {
+    return [
+      `review ${websiteUrl} and create 1 social media post that connects the business to local news.`,
+      `The post should tie the business to this local community news in a way that feels natural and relevant.`,
+      `Use the business brand colors and voice from the website.`,
+      `Target platforms: ${platformStr}.`,
+      ``,
+      `Local news headline: "${story.headline}"`,
+      story.source ? `Source: ${story.source}` : '',
+      story.category ? `Topic: ${story.category}` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  if (type === 'business') {
+    return [
+      `review ${websiteUrl} and create 1 social media post promoting the business.`,
+      `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
+      `Use colors, logo, and brand voice from the website. Make it feel authentic.`,
+      `Target platforms: ${platformStr}.`,
     ].join('\n');
   }
 
-  // Build the Tombstone command with scout intel embedded.
-  // Jim Bridger will independently scout the website for business identity,
-  // brand voice, offers, palette, etc. Clark Kent supplements with content intel.
-  const command = [
-    `Create ${postCount} social media posts for ${normalizedUrl} targeting these platforms: ${platforms.join(', ')}.`,
+  // Default: interest/trending headline
+  return [
+    `review ${websiteUrl} and create 1 social media post that connects the business to a trending topic.`,
+    `The post should show the business's expertise and relevance to this topic — thought leadership style.`,
+    `Use the business brand colors and voice from the website.`,
+    `Target platforms: ${platformStr}.`,
     ``,
-    `Jim Bridger will handle website recon (business identity, brand voice, offers, palette).`,
-    `Below is intelligence from Clark Kent's scout report — RSS news, interest feeds, upcoming events,`,
-    `and trade area context that Bridger cannot get from the website:`,
-    ``,
-    `--- SCOUT BRIEF (mode: ${mode}) ---`,
-    scoutSummary,
-    `--- END SCOUT BRIEF ---`,
-    ``,
-    laneInstructions,
-    ``,
-    `Each post needs: caption, hashtags, an image/artwork, and the target platforms.`,
-    `Posts should feel authentic — like a real small business owner wrote them.`,
-    `Use Bridger's brand palette and voice for visual and tonal consistency.`,
-  ].join('\n');
-
-  console.log(`[tombstone] Creating social content mission for: ${normalizedUrl} (${postCount} posts)`);
-
-  const result = await sendCommand(command);
-
-  return {
-    success: !!result.workflowId,
-    workflowIds: result.workflowId ? [result.workflowId] : [],
-    allTaskIds: result.taskIds,
-    postCount,
-    platforms,
-  };
+    `Trending headline: "${story.headline}"`,
+    story.source ? `Source: ${story.source}` : '',
+    story.category ? `Category: ${story.category}` : '',
+  ].filter(Boolean).join('\n');
 }
 
 // Legacy single-mission creator (kept for backward compat)
