@@ -78,18 +78,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ polled: 0, imported: 0, pending: 0, status: 'no_workflows' });
     }
 
-    // Check how many SocialPosts already exist for this user
-    const existingCount = await prisma.socialPost.count({ where: { userId } });
-    if (existingCount > 0) {
-      return NextResponse.json({
-        polled: 0, imported: 0, pending: 0,
-        status: 'all_imported',
-        totalPosts: existingCount,
-        message: `Already have ${existingCount} posts imported.`,
-      });
-    }
+    // Get existing tombstoneTaskIds to skip already-imported tasks
+    const existingPosts = await prisma.socialPost.findMany({
+      where: { userId, tombstoneTaskId: { not: null } },
+      select: { tombstoneTaskId: true },
+    });
+    const importedTaskIds = new Set(existingPosts.map(p => p.tombstoneTaskId));
 
-    console.log(`[missions/poll] Fetching content queue for ${workflowIds.length} workflows`);
+    console.log(`[missions/poll] Fetching content queue for ${workflowIds.length} workflows (${importedTaskIds.size} already imported)`);
 
     // Fetch completed render tasks from Tombstone content queue
     const queueRes = await fetch(
@@ -111,10 +107,27 @@ export async function POST(req: NextRequest) {
 
     console.log(`[missions/poll] Found ${queueItems.length} queue items, enriching with details...`);
 
+    // Filter out already-imported tasks
+    const newItems = queueItems.filter((item: any) => {
+      const taskId = String(item.task_id);
+      return !importedTaskIds.has(taskId);
+    });
+
+    if (newItems.length === 0) {
+      return NextResponse.json({
+        polled: workflowIds.length, imported: 0, pending: 0,
+        status: 'all_imported',
+        totalPosts: importedTaskIds.size,
+        message: `All ${importedTaskIds.size} posts already imported.`,
+      });
+    }
+
+    console.log(`[missions/poll] ${newItems.length} new items to enrich (${queueItems.length} total, ${importedTaskIds.size} already imported)`);
+
     // Enrich each item with caption/hashtag data from the detail endpoint
     const posts: any[] = [];
     const enrichResults = await Promise.all(
-      queueItems.map(async (item: any) => {
+      newItems.map(async (item: any) => {
         try {
           const detailRes = await fetch(`${TOMBSTONE_URL}/content/${item.task_id}`, {
             headers: { Accept: 'application/json' }, cache: 'no-store',
@@ -150,6 +163,7 @@ export async function POST(req: NextRequest) {
           if (!caption || caption.startsWith('Multi-campaign render')) return null;
 
           return {
+            tombstoneTaskId: String(item.task_id),
             caption: caption + (cta ? `\n\n${cta}` : ''),
             hashtags,
             imageUrl: resolvedImageUrl || null,
@@ -196,6 +210,7 @@ export async function POST(req: NextRequest) {
         rssItemLink: null,
         platforms: post.platforms,
         status: 'pending_approval',
+        tombstoneTaskId: post.tombstoneTaskId || null,
       })),
     });
 

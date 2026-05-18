@@ -5,12 +5,20 @@ const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xj
  */
 async function sendCommand(command: string) {
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/commands`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command }),
-      cache: 'no-store',
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000); // 60s timeout for large commands
+    let res: Response;
+    try {
+      res = await fetch(`${TOMBSTONE_URL}/commands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command }),
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       console.error('Tombstone /commands error:', res.status, data);
@@ -18,6 +26,8 @@ async function sendCommand(command: string) {
     }
     const taskIds: number[] = data?.created_task_ids ?? [];
     let workflowId: string | null = null;
+
+    // Strategy 1: Get workflow ID from created task
     if (taskIds.length > 0) {
       try {
         const taskRes = await fetch(`${TOMBSTONE_URL}/tasks/${taskIds[0]}`, { cache: 'no-store' });
@@ -25,9 +35,57 @@ async function sendCommand(command: string) {
         workflowId = taskData?.workflow_id ?? null;
       } catch { /* ignore */ }
     }
+
+    // Strategy 2: Extract workflow ID from response_text (when created_task_ids is empty
+    // due to Tombstone internal ID resolution issues but mission was actually created)
+    if (!workflowId && data?.response_text) {
+      const wfMatch = data.response_text.match(/Workflow ID:\s*([0-9a-f-]{36})/i);
+      if (wfMatch) {
+        workflowId = wfMatch[1];
+        console.log(`[tombstone] Extracted workflowId from response_text: ${workflowId}`);
+      }
+      // Also try to extract task IDs from response_text
+      const taskIdMatch = data.response_text.match(/Task IDs:\s*\[([^\]]+)\]/i);
+      if (taskIdMatch && taskIds.length === 0) {
+        const ids = taskIdMatch[1].split(',').map((s: string) => parseInt(s.trim(), 10)).filter((n: number) => !isNaN(n));
+        if (ids.length > 0) {
+          taskIds.push(...ids);
+          console.log(`[tombstone] Extracted taskIds from response_text: ${ids.join(',')}`);
+        }
+      }
+    }
+
+    // Strategy 3: If still no workflowId, the mission was likely created but IDs weren't
+    // returned properly. Wait briefly for tasks to propagate, then query /tasks.
+    if (!workflowId && data?.ok) {
+      try {
+        console.log('[tombstone] No workflowId from response — waiting 3s then searching /tasks...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const tasksRes = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store' });
+        const allTasks = await tasksRes.json().catch(() => []);
+        if (Array.isArray(allTasks) && allTasks.length > 0) {
+          // Sort by id descending (most recent first)
+          allTasks.sort((a: any, b: any) => (b.id ?? 0) - (a.id ?? 0));
+          const newest = allTasks[0];
+          if (newest?.workflow_id) {
+            workflowId = newest.workflow_id;
+            // Collect all task IDs for this workflow
+            const wfTasks = allTasks.filter((t: any) => t.workflow_id === workflowId);
+            const wfTaskIds = wfTasks.map((t: any) => t.id).filter((id: any) => typeof id === 'number');
+            if (wfTaskIds.length > 0 && taskIds.length === 0) {
+              taskIds.push(...wfTaskIds);
+            }
+            console.log(`[tombstone] Found recent workflow ${workflowId} with ${wfTaskIds.length} tasks`);
+          }
+        }
+      } catch (e: any) {
+        console.warn('[tombstone] Failed to search /tasks fallback:', e.message);
+      }
+    }
+
     return { success: true, data, workflowId, taskIds };
   } catch (err: any) {
-    console.error('Tombstone command error:', err?.message);
+    console.error('Tombstone command error:', err?.message, err?.cause || '');
     return { success: false, data: null, workflowId: null, taskIds: [] };
   }
 }

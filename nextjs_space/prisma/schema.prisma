@@ -468,6 +468,7 @@ model SocialPost {
   tradeAreaZip  String?  // Business ZIP used for the scout query
   briefScore    Float?   // Composite score from trade area ranking
   patternType   String?  // "weather", "trending_local", "gov_meeting", "community_events"
+  tombstoneTaskId String?  // Tombstone content queue task_id — for dedup on import
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -478,6 +479,7 @@ model SocialPost {
   @@index([userId])
   @@index([status])
   @@index([analysisId])
+  @@index([tombstoneTaskId])
   @@index([scheduledFor])
   @@index([createdAt])
 }
