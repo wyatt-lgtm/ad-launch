@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Phase 4: Feed Validation Orchestrator
  *

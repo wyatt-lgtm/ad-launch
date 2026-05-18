@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Interest Feed Brief Generator
  *

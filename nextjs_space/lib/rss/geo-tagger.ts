@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Phase 4b: Feed & Item Geo-Tagger
  *

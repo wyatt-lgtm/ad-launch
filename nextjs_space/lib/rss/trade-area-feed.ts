@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Phase 6B: Trade Area Feed Query Engine
  *

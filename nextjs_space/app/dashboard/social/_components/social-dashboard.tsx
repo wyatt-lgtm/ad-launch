@@ -9,7 +9,7 @@ import {
   Edit3, Trash2, Copy, ExternalLink, Hash, Clock,
   Zap, RefreshCw, ChevronDown, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
-  List, AlertCircle, Sparkles, Building2, Download
+  List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -106,6 +106,14 @@ export default function SocialDashboard() {
   const [polling, setPolling] = useState(false);
   const [pollStatus, setPollStatus] = useState<string | null>(null);
 
+  // Story picker state
+  interface StoryHeadline { id: string; title: string; source: string; pubDate: string; link: string }
+  interface StoryCategory { industry: string; label: string; headlines: StoryHeadline[] }
+  const [storyCategories, setStoryCategories] = useState<StoryCategory[]>([]);
+  const [selectedStoryIds, setSelectedStoryIds] = useState<Set<string>>(new Set());
+  const [scoutBriefData, setScoutBriefData] = useState<any>(null);
+  const [showStoryPicker, setShowStoryPicker] = useState(false);
+
   // Auth guard
   useEffect(() => {
     if (sessionStatus === 'unauthenticated') router.push('/login');
@@ -179,12 +187,13 @@ export default function SocialDashboard() {
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
+  // Phase 1: Scout stories and show the picker
   const scoutForPosts = async () => {
     setScouting(true);
     setScoutError(null);
     setScoutResult(null);
+    setShowStoryPicker(false);
     try {
-      // Step 1: Clark Kent gathers local intelligence (scout only — no post creation)
       const scoutRes = await fetch('/api/rss/clark-kent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -193,48 +202,166 @@ export default function SocialDashboard() {
       const scoutData = await scoutRes.json();
       if (!scoutRes.ok) throw new Error(scoutData.error || 'Scout failed');
 
-      setScoutResult({
-        message: `Scout brief gathered: ${scoutData.meta?.rssItemCount ?? 0} local news items, ${scoutData.meta?.eventCount ?? 0} upcoming events. Tombstone creative workflow will generate posts with artwork.`,
-        meta: scoutData.meta,
-      });
+      // Save full brief for phase 2
+      setScoutBriefData(scoutData.brief);
 
-      // Step 2: Send scout brief to Tombstone for creative processing
-      // This creates a social mission that Zig Ziglar → Ogilvy → Don → Andy → Claude will process
-      const tombstoneRes = await fetch('/api/social/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scoutBrief: scoutData.brief,
-        }),
-      });
-      const tombstoneData = await tombstoneRes.json();
-      if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
+      // Extract top 2 headlines per category for the picker
+      const categories: StoryCategory[] = (scoutData.brief?.interestBrief?.categories || []).map((cat: any) => ({
+        industry: cat.industry,
+        label: cat.label,
+        headlines: (cat.headlines || []).slice(0, 2).map((h: any) => ({
+          id: h.id || `${cat.industry}-${h.title?.slice(0, 20)}`,
+          title: h.title,
+          source: h.source,
+          pubDate: h.pubDate,
+          link: h.link,
+        })),
+      })).filter((c: StoryCategory) => c.headlines.length > 0);
 
-      setScoutResult({
-        message: `Scout brief sent to creative team. ${tombstoneData.taskCount ?? 0} tasks queued — posts with artwork will appear when complete.`,
-        meta: scoutData.meta,
-        socialMissionId: tombstoneData.socialMissionId,
-      });
-
-      // Start auto-polling every 30s up to 5 min to pick up completed results
-      setPollStatus('⏳ Waiting for creative team to finish generating posts...');
-      let attempts = 0;
-      const maxAttempts = 10;
-      const pollInterval = setInterval(async () => {
-        attempts++;
-        const pollResult = await pollMissions(true);
-        if (pollResult?.imported > 0 || pollResult?.status === 'all_imported' || attempts >= maxAttempts) {
-          clearInterval(pollInterval);
-          if (attempts >= maxAttempts && pollResult?.imported === 0) {
-            setPollStatus('Posts are taking longer than expected. Click "Check for Posts" to try again.');
-          }
-        }
-      }, 30000);
+      if (categories.length === 0) {
+        // No interest stories found — fall back to direct generation
+        setScoutResult({
+          message: `No interest stories found. Sending scout brief directly to creative team...`,
+          meta: scoutData.meta,
+        });
+        await sendToTombstone(scoutData.brief, scoutData.meta);
+      } else {
+        // Pre-select all headlines by default
+        const allIds = new Set<string>();
+        categories.forEach(c => c.headlines.forEach(h => allIds.add(h.id)));
+        setSelectedStoryIds(allIds);
+        setStoryCategories(categories);
+        setShowStoryPicker(true);
+        setScoutResult({
+          message: `Clark Kent found ${categories.length} categories with stories. Pick the ones you want posts about.`,
+          meta: scoutData.meta,
+        });
+      }
     } catch (e: any) {
       console.error('Scout error:', e);
       setScoutError(e.message);
     }
     setScouting(false);
+  };
+
+  // Phase 2: Build filtered summary and send to Tombstone
+  const generateFromSelected = async () => {
+    if (!scoutBriefData || selectedStoryIds.size === 0) return;
+    setScouting(true);
+    setScoutError(null);
+    setShowStoryPicker(false);
+
+    try {
+      // Build a filtered scoutSummary with only selected headlines
+      const filteredBrief = { ...scoutBriefData };
+      const lines: string[] = [];
+
+      lines.push(`CONTENT SOURCE MODE: ${filteredBrief.contentSourceMode || 'interests_only'}`);
+      lines.push('');
+
+      // Trade area
+      const ta = filteredBrief.tradeArea;
+      if (ta?.zip || ta?.city) {
+        lines.push(`TRADE AREA: ${ta.city}${ta.state ? ', ' + ta.state : ''} ${ta.zip} (${ta.radiusMiles}mi radius)`);
+      } else {
+        lines.push('TRADE AREA: Not available');
+      }
+
+      // Local RSS (if present in original)
+      if (filteredBrief.rssBrief?.headlines?.length > 0) {
+        const rss = filteredBrief.rssBrief;
+        lines.push('');
+        lines.push(`LOCAL NEWS (${rss.summary.totalItems} items from ${rss.summary.feedsMatched} feeds):`);
+        for (const h of rss.headlines.slice(0, 12)) {
+          lines.push(`  • [${h.sourceType}] "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})`);
+        }
+      }
+
+      // Interest feeds — only include selected headlines
+      if (filteredBrief.interestBrief?.categories?.length > 0) {
+        const selectedCats: { label: string; headlines: any[] }[] = [];
+        let totalSelected = 0;
+        for (const cat of filteredBrief.interestBrief.categories) {
+          const picked = (cat.headlines || []).filter((h: any) => {
+            const hid = h.id || `${cat.industry}-${h.title?.slice(0, 20)}`;
+            return selectedStoryIds.has(hid);
+          });
+          if (picked.length > 0) {
+            selectedCats.push({ label: cat.label, headlines: picked });
+            totalSelected += picked.length;
+          }
+        }
+        if (selectedCats.length > 0) {
+          lines.push('');
+          lines.push(`INTEREST/NATIONAL FEEDS (${totalSelected} selected items, ${selectedCats.length} categories):`);
+          lines.push('');
+          for (const sc of selectedCats) {
+            lines.push(`  ${sc.label} (${sc.headlines.length} items):`);
+            for (const h of sc.headlines) {
+              lines.push(`    • "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})`);
+            }
+            lines.push('');
+          }
+        }
+      }
+
+      // Events
+      if (filteredBrief.upcomingEvents?.length > 0) {
+        lines.push('');
+        lines.push('UPCOMING EVENTS (next 90 days):');
+        for (const e of filteredBrief.upcomingEvents.slice(0, 6)) {
+          lines.push(`  • ${e.name} (${e.date}) — Ideas: ${e.ideas}`);
+        }
+      }
+
+      filteredBrief.scoutSummary = lines.join('\n');
+
+      await sendToTombstone(filteredBrief, null);
+    } catch (e: any) {
+      console.error('Generate error:', e);
+      setScoutError(e.message);
+    }
+    setScouting(false);
+  };
+
+  // Shared: send brief to Tombstone and start polling
+  const sendToTombstone = async (brief: any, meta: any) => {
+    const tombstoneRes = await fetch('/api/social/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scoutBrief: brief }),
+    });
+    const tombstoneData = await tombstoneRes.json();
+    if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
+
+    setScoutResult({
+      message: `Scout brief sent to creative team. ${tombstoneData.taskCount ?? 0} tasks queued — posts with artwork will appear when complete.`,
+      meta: meta,
+      socialMissionId: tombstoneData.socialMissionId,
+    });
+
+    setPollStatus('⏳ Waiting for creative team to finish generating posts...');
+    let attempts = 0;
+    const maxAttempts = 10;
+    const pollInterval = setInterval(async () => {
+      attempts++;
+      const pollResult = await pollMissions(true);
+      if (pollResult?.imported > 0 || pollResult?.status === 'all_imported' || attempts >= maxAttempts) {
+        clearInterval(pollInterval);
+        if (attempts >= maxAttempts && pollResult?.imported === 0) {
+          setPollStatus('Posts are taking longer than expected. Click "Check for Posts" to try again.');
+        }
+      }
+    }, 30000);
+  };
+
+  // Toggle a story selection
+  const toggleStory = (id: string) => {
+    setSelectedStoryIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
   const updatePost = async (id: string, action: string, extra?: any) => {
@@ -441,11 +568,11 @@ export default function SocialDashboard() {
         </div>
         <button
           onClick={scoutForPosts}
-          disabled={scouting}
+          disabled={scouting || showStoryPicker}
           className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
         >
           {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-          {scouting ? 'Generating 9 Posts...' : 'Generate 9 Posts'}
+          {scouting ? 'Scouting Stories...' : 'Scout Stories'}
         </button>
       </div>
 
@@ -494,6 +621,91 @@ export default function SocialDashboard() {
             <button onClick={() => setScoutError(null)} className="ml-auto text-red-400 hover:text-red-600">
               <XCircle className="w-4 h-4" />
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Story Picker ─────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showStoryPicker && storyCategories.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mb-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden"
+          >
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">Pick Your Stories</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Select which headlines to turn into social posts</p>
+              </div>
+              <button
+                onClick={() => { setShowStoryPicker(false); setStoryCategories([]); }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="divide-y divide-gray-50">
+              {storyCategories.map(cat => (
+                <div key={cat.industry} className="px-5 py-3">
+                  <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-2">{cat.label}</p>
+                  <div className="space-y-2">
+                    {cat.headlines.map(h => {
+                      const isSelected = selectedStoryIds.has(h.id);
+                      return (
+                        <button
+                          key={h.id}
+                          onClick={() => toggleStory(h.id)}
+                          className={`w-full text-left flex items-start gap-3 p-3 rounded-lg border transition-all ${
+                            isSelected
+                              ? 'border-blue-300 bg-blue-50'
+                              : 'border-gray-100 bg-gray-50 hover:border-gray-200'
+                          }`}
+                        >
+                          <div className={`mt-0.5 shrink-0 w-5 h-5 rounded flex items-center justify-center ${
+                            isSelected ? 'bg-blue-600 text-white' : 'border-2 border-gray-300'
+                          }`}>
+                            {isSelected && <Check className="w-3.5 h-3.5" />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className={`text-sm leading-snug ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
+                              {h.title}
+                            </p>
+                            <p className="text-xs text-gray-400 mt-0.5 truncate">
+                              {h.source} · {h.pubDate?.split('T')[0] || 'recent'}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="px-5 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
+              <p className="text-xs text-gray-500">
+                {selectedStoryIds.size} of {storyCategories.reduce((s, c) => s + c.headlines.length, 0)} stories selected
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setShowStoryPicker(false); setStoryCategories([]); }}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={generateFromSelected}
+                  disabled={selectedStoryIds.size === 0 || scouting}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
+                >
+                  {scouting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  Generate from Selected
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -592,15 +804,15 @@ export default function SocialDashboard() {
                 <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">No social posts yet</h3>
                 <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
-                  Click &ldquo;Generate 9 Posts&rdquo; to create social media content from local news, your website, and upcoming holidays. Posts with artwork will appear here once the creative team finishes (usually 2-5 minutes).
+                  Click &ldquo;Scout Stories&rdquo; to find trending and relevant news. You&apos;ll pick which stories to turn into social posts with artwork (usually 2-5 minutes).
                 </p>
                 <button
                   onClick={scoutForPosts}
-                  disabled={scouting}
+                  disabled={scouting || showStoryPicker}
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
                 >
                   {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                  {scouting ? 'Generating 9 Posts...' : 'Generate 9 Posts'}
+                  {scouting ? 'Scouting Stories...' : 'Scout Stories'}
                 </button>
               </div>
 

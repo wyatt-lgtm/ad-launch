@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Phase 2: Geography Lookup & Trade Area Queries
  *

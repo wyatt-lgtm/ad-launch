@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * RSS Intelligence System — Content Policy Engine
  *

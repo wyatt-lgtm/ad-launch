@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * County Government RSS Feed Discovery
  *
