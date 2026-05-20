@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, Newspaper, Send, CheckCircle2, XCircle,
@@ -84,6 +84,8 @@ const LANE_LABELS: Record<string, { label: string; color: string; bg: string }> 
 export default function SocialDashboard() {
   const { data: session, status: sessionStatus } = useSession() || {};
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const autoScout = searchParams.get('scout') === '1';
   const bizCtx = useActiveBusiness();
   const [showPicker, setShowPicker] = useState(false);
 
@@ -243,6 +245,18 @@ export default function SocialDashboard() {
     }
     setScouting(false);
   };
+
+  // Auto-trigger scouting when arriving from Content Sources with ?scout=1
+  const autoScoutFired = useRef(false);
+  useEffect(() => {
+    if (autoScout && !loading && !autoScoutFired.current && sessionStatus === 'authenticated' && bizCtx.activeBusiness) {
+      autoScoutFired.current = true;
+      // Clear the query param so refresh doesn't re-trigger
+      router.replace('/dashboard/social', { scroll: false });
+      scoutForPosts();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoScout, loading, sessionStatus, bizCtx.activeBusiness]);
 
   // Phase 2: Build filtered summary and send to Tombstone
   const generateFromSelected = async () => {

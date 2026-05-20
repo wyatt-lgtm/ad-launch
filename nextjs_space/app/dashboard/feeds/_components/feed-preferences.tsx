@@ -178,8 +178,8 @@ export default function FeedPreferences() {
           return;
         }
       }
-      // Navigate to Social Post Queue where user can Scout Stories → pick headlines → generate
-      router.push('/dashboard/social');
+      // Navigate to Social Post Queue with scout flag to auto-trigger scouting
+      router.push('/dashboard/social?scout=1');
     } catch {
       setError('Something went wrong. Please try again.');
       setScouting(false);
