@@ -4,8 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import {
-  Loader2, Check, Rss, ArrowRight, Sparkles, Zap, AlertCircle,
-  Building2, Plus, CheckCircle2, Clock, Newspaper, XCircle,
+  Loader2, Check, Rss, ArrowRight, Sparkles,
+  Building2, Plus,
   MapPin, Globe2, Layers,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
@@ -49,20 +49,6 @@ const MODE_OPTIONS: {
   },
 ];
 
-// ── Generation progress steps ─────────────────────────────────────────────
-interface ProgressStep {
-  id: string;
-  label: string;
-  status: 'pending' | 'active' | 'done' | 'error';
-  detail?: string;
-}
-
-const INITIAL_STEPS: ProgressStep[] = [
-  { id: 'scout',    label: 'Scouting news & events',         status: 'pending' },
-  { id: 'creative', label: 'Sending brief to creative team', status: 'pending' },
-  { id: 'queue',    label: 'Queuing post generation',        status: 'pending' },
-];
-
 export default function FeedPreferences() {
   const { data: session, status } = useSession() || {};
   const router = useRouter();
@@ -80,10 +66,8 @@ export default function FeedPreferences() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
-  // Generation progress state
-  const [generating, setGenerating] = useState(false);
-  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>(INITIAL_STEPS);
-  const [genResult, setGenResult] = useState<{ message: string; type: 'success' | 'error'; taskCount?: number } | null>(null);
+  // Scout Stories navigation state
+  const [scouting, setScouting] = useState(false);
   const lastSavedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -175,100 +159,31 @@ export default function FeedPreferences() {
     }
   };
 
-  // ── Helper to update a single progress step ──────────────────────────────
-  const updateStep = (id: string, updates: Partial<ProgressStep>) => {
-    setProgressSteps(prev =>
-      prev.map(s => s.id === id ? { ...s, ...updates } : s)
-    );
-  };
-
-  // ── Generate Posts ────────────────────────────────────────────────────────
-  const handleGeneratePosts = async () => {
-    // In interests-based modes, require at least one category
+  // ── Scout Stories → save settings if needed, then navigate to Social Post Queue
+  const handleScoutStories = async () => {
     if (contentMode !== 'local_only' && selected.size === 0) {
-      setError('Select at least one content category to generate posts.');
+      setError('Select at least one content category before scouting stories.');
       return;
     }
-    setGenerating(true);
-    setGenResult(null);
+    setScouting(true);
     setError('');
-    setProgressSteps(INITIAL_STEPS.map(s => ({ ...s, status: 'pending' as const })));
-
-    const bizId = bizCtx.activeBusiness?.id;
 
     try {
       // Auto-save if anything changed
       if (needsSave()) {
         const ok = await saveSettings(true);
         if (!ok) {
-          setGenResult({ message: 'Failed to save content settings. Please try again.', type: 'error' });
-          setGenerating(false);
+          setError('Failed to save content settings. Please try again.');
+          setScouting(false);
           return;
         }
       }
-
-      // Step 1: Clark Kent gathers intelligence (passes businessId for mode)
-      updateStep('scout', { status: 'active' });
-      const scoutRes = await fetch('/api/rss/clark-kent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessId: bizId }),
-      });
-      const scoutData = await scoutRes.json();
-      if (!scoutRes.ok) throw new Error(scoutData.error || 'Scout failed');
-
-      const localCount = scoutData.meta?.rssItemCount ?? 0;
-      const interestCount = scoutData.meta?.interestItemCount ?? 0;
-      const eventCount = scoutData.meta?.eventCount ?? 0;
-      const modeLabel = scoutData.meta?.contentSourceMode || contentMode;
-
-      let scoutDetail = '';
-      if (modeLabel === 'local_only') {
-        scoutDetail = `${localCount} local news items, ${eventCount} events`;
-      } else if (modeLabel === 'interests_only') {
-        scoutDetail = `${interestCount} interest items (${scoutData.meta?.interestCategoryCount ?? 0} categories), ${eventCount} events`;
-      } else {
-        scoutDetail = `${localCount} local + ${interestCount} interest items, ${eventCount} events`;
-      }
-      const geo = [scoutData.meta?.city, scoutData.meta?.state].filter(Boolean).join(', ');
-      if (geo) scoutDetail += ` from ${geo}`;
-      updateStep('scout', { status: 'done', detail: scoutDetail });
-
-      // Step 2: Send scout brief to Tombstone creative pipeline
-      updateStep('creative', { status: 'active' });
-      const tombstoneRes = await fetch('/api/social/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scoutBrief: scoutData.brief, businessId: bizId }),
-      });
-      const tombstoneData = await tombstoneRes.json();
-      if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
-      updateStep('creative', {
-        status: 'done',
-        detail: 'Creative team engaged — Zig Ziglar → Ogilvy → Don Draper → Andy Warhol',
-      });
-
-      // Step 3: Queue confirmation
-      updateStep('queue', { status: 'active' });
-      await new Promise(r => setTimeout(r, 600));
-      const taskCount = tombstoneData.taskCount ?? 0;
-      updateStep('queue', {
-        status: 'done',
-        detail: `${taskCount} tasks queued (${modeLabel} mode)`,
-      });
-
-      setGenResult({
-        message: `${taskCount} posts queued! Posts with artwork will appear in your Social Post Queue when the creative team finishes.`,
-        type: 'success',
-        taskCount,
-      });
-    } catch (e: any) {
-      setProgressSteps(prev =>
-        prev.map(s => s.status === 'active' ? { ...s, status: 'error' as const, detail: e.message } : s)
-      );
-      setGenResult({ message: e.message || 'Something went wrong', type: 'error' });
+      // Navigate to Social Post Queue where user can Scout Stories → pick headlines → generate
+      router.push('/dashboard/social');
+    } catch {
+      setError('Something went wrong. Please try again.');
+      setScouting(false);
     }
-    setGenerating(false);
   };
 
   // ── Loading state ─────────────────────────────────────────────────────────
@@ -308,92 +223,6 @@ export default function FeedPreferences() {
   }
 
   const showInterestGrid = contentMode !== 'local_only';
-
-  // ── If generating, show progress panel ────────────────────────────────────
-  if (generating || genResult) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-10">
-        {bizCtx.activeBusiness && (
-          <ActiveBusinessBanner
-            activeBusiness={bizCtx.activeBusiness}
-            businessCount={bizCtx.businesses.length}
-            onSwitch={() => { setShowPicker(true); setGenerating(false); setGenResult(null); }}
-          />
-        )}
-
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            {generating ? (
-              <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-            ) : genResult?.type === 'success' ? (
-              <CheckCircle2 className="w-8 h-8 text-green-600" />
-            ) : (
-              <AlertCircle className="w-8 h-8 text-red-500" />
-            )}
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-1">
-            {generating ? 'Generating Posts...' : genResult?.type === 'success' ? 'Posts Queued!' : 'Generation Failed'}
-          </h1>
-          <p className="text-gray-500 text-sm">
-            {generating
-              ? 'Your website analysis is already done — we\'re creating fresh content from your feeds.'
-              : genResult?.message}
-          </p>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm divide-y divide-gray-100 mb-8">
-          {progressSteps.map((step) => (
-            <div key={step.id} className="px-5 py-4 flex items-start gap-4">
-              <div className="mt-0.5">
-                {step.status === 'done' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
-                {step.status === 'active' && <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />}
-                {step.status === 'pending' && <Clock className="w-5 h-5 text-gray-300" />}
-                {step.status === 'error' && <XCircle className="w-5 h-5 text-red-500" />}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className={`text-sm font-medium ${
-                  step.status === 'done' ? 'text-green-800' :
-                  step.status === 'active' ? 'text-blue-800' :
-                  step.status === 'error' ? 'text-red-800' :
-                  'text-gray-400'
-                }`}>
-                  {step.label}
-                </p>
-                {step.detail && (
-                  <p className={`text-xs mt-0.5 ${
-                    step.status === 'done' ? 'text-green-600' :
-                    step.status === 'error' ? 'text-red-500' :
-                    'text-blue-600'
-                  }`}>
-                    {step.detail}
-                  </p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {!generating && genResult && (
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            {genResult.type === 'success' && (
-              <button
-                onClick={() => router.push('/dashboard/social')}
-                className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors"
-              >
-                <Newspaper className="w-4 h-4" /> Go to Social Post Queue
-              </button>
-            )}
-            <button
-              onClick={() => { setGenResult(null); setProgressSteps(INITIAL_STEPS); }}
-              className="flex items-center gap-2 px-6 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 transition-colors"
-            >
-              <ArrowRight className="w-4 h-4" /> Back to Feeds
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
 
   // ── Normal feed selection UI ──────────────────────────────────────────────
   return (
@@ -523,7 +352,7 @@ export default function FeedPreferences() {
             {error && <span className="text-sm text-red-500">{error}</span>}
             <button
               onClick={() => saveSettings()}
-              disabled={saving || generating}
+              disabled={saving || scouting}
               className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg font-semibold text-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
               {saving ? (
@@ -534,16 +363,16 @@ export default function FeedPreferences() {
               {saving ? 'Saving...' : 'Save Settings'}
             </button>
             <button
-              onClick={handleGeneratePosts}
-              disabled={generating || saving || (contentMode !== 'local_only' && selected.size === 0)}
+              onClick={handleScoutStories}
+              disabled={scouting || saving || (contentMode !== 'local_only' && selected.size === 0)}
               className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 text-white rounded-lg font-semibold text-sm hover:bg-emerald-700 transition-colors disabled:opacity-50"
             >
-              {generating ? (
+              {scouting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <Zap className="w-4 h-4" />
+                <Sparkles className="w-4 h-4" />
               )}
-              {generating ? 'Generating Posts...' : 'Generate Posts'}
+              {scouting ? 'Opening...' : 'Scout Stories'}
             </button>
           </div>
         </div>
