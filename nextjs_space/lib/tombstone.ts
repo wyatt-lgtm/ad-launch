@@ -137,14 +137,20 @@ export async function createLaneMission(
       `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} that connects the business to local news.`,
       `The post should tie the business to local community news in a way that feels natural and relevant.`,
       `Use the business brand colors and voice from the website.`,
-      `\nLocal news context to reference:\n${context}`,
+      ``,
+      `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
+      `${context}`,
+      `--- END RSS STORY METADATA ---`,
     ].join('\n');
   } else if (lane === 'holiday') {
     command = [
       `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} tied to an upcoming holiday or seasonal event.`,
       `The post should connect the business to the holiday/event in a creative, engaging way.`,
       `Use the business brand colors and voice from the website.`,
-      `\nUpcoming events/holidays:\n${context}`,
+      ``,
+      `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
+      `${context}`,
+      `--- END RSS STORY METADATA ---`,
     ].join('\n');
   }
 
@@ -258,6 +264,11 @@ export async function createSocialMissions(
 
 /**
  * Build a Tombstone command for a single story/content item.
+ *
+ * IMPORTANT: The command text includes clearly labeled RSS story metadata
+ * so that Jim Bridger's _extract_rss_story_context() can parse it and
+ * preserve the original RSS title/source/category in story_context,
+ * separate from the business website recon (business_context).
  */
 function buildStoryCommand(
   websiteUrl: string,
@@ -268,16 +279,26 @@ function buildStoryCommand(
   const type = story.type || 'interest';
   const platformStr = platforms.join(', ');
 
+  // Build a consistent RSS metadata block for all story types
+  // so downstream extraction always finds the same format
+  const rssMetaBlock = [
+    ``,
+    `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
+    `Trending headline: "${story.headline}"`,
+    story.source ? `Source: ${story.source}` : '',
+    story.category ? `Category: ${story.category}` : '',
+    story.link ? `RSS URL: ${story.link}` : '',
+    `--- END RSS STORY METADATA ---`,
+  ].filter(Boolean).join('\n');
+
   if (type === 'event') {
     return [
       `review ${websiteUrl} and create 1 social media post tied to an upcoming event/holiday.`,
       `The post should connect the business to this event in a creative, engaging way.`,
       `Use the business brand colors and voice from the website.`,
       `Target platforms: ${platformStr}.`,
-      ``,
-      `Event: ${story.headline}`,
-      story.source ? `Details: ${story.source}` : '',
-    ].filter(Boolean).join('\n');
+      rssMetaBlock,
+    ].join('\n');
   }
 
   if (type === 'local_news') {
@@ -286,11 +307,8 @@ function buildStoryCommand(
       `The post should tie the business to this local community news in a way that feels natural and relevant.`,
       `Use the business brand colors and voice from the website.`,
       `Target platforms: ${platformStr}.`,
-      ``,
-      `Local news headline: "${story.headline}"`,
-      story.source ? `Source: ${story.source}` : '',
-      story.category ? `Topic: ${story.category}` : '',
-    ].filter(Boolean).join('\n');
+      rssMetaBlock,
+    ].join('\n');
   }
 
   if (type === 'business') {
@@ -308,11 +326,8 @@ function buildStoryCommand(
     `The post should show the business's expertise and relevance to this topic — thought leadership style.`,
     `Use the business brand colors and voice from the website.`,
     `Target platforms: ${platformStr}.`,
-    ``,
-    `Trending headline: "${story.headline}"`,
-    story.source ? `Source: ${story.source}` : '',
-    story.category ? `Category: ${story.category}` : '',
-  ].filter(Boolean).join('\n');
+    rssMetaBlock,
+  ].join('\n');
 }
 
 // Legacy single-mission creator (kept for backward compat)
@@ -333,8 +348,8 @@ const DEPT_LABELS: Record<string, { label: string; description: string }> = {
   'research': { label: 'Business Analysis', description: 'Scanning website, extracting brand assets & palette' },
   'marketing': { label: 'Marketing Strategy', description: 'Defining audience, offer framing & keywords' },
   'creative strategy': { label: 'Ad Copywriting', description: 'Writing headlines, body copy & CTAs' },
-  'creative direction': { label: 'Visual Direction', description: 'Creating art direction & image prompt' },
-  'render production': { label: 'Image Generation', description: 'Generating final ad images with GPT 5.1' },
+  'creative direction': { label: 'Visual Direction', description: 'Creating structured render direction for FAL image generation' },
+  'render production': { label: 'Image Generation', description: 'Generating final ad images with gpt-image-1' },
 };
 
 export function getTaskLabel(department: string): { label: string; description: string } {
@@ -725,6 +740,7 @@ export async function getSocialWorkflowResults(workflowIds: string[]) {
                   patternType: asset?.pattern_type ?? asset?.lane ?? null,
                   rssItemTitle: asset?.rss_item_title ?? null,
                   rssItemLink: asset?.rss_item_link ?? null,
+                  sourceAttribution: asset?.source_attribution ?? parsed?.source_attribution ?? null,
                   platforms: asset?.platforms ?? ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
                 });
               }
@@ -743,6 +759,7 @@ export async function getSocialWorkflowResults(workflowIds: string[]) {
                 patternType: parsed.pattern_type ?? null,
                 rssItemTitle: null,
                 rssItemLink: null,
+                sourceAttribution: parsed?.source_attribution ?? null,
                 platforms: parsed.platforms ?? ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
               });
             }
