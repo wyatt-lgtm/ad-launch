@@ -15,7 +15,7 @@ import NextImage from 'next/image';
 // Types
 // ═══════════════════════════════════════════════════════════════
 
-type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads';
+type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit';
 
 interface Overview {
   users: { total: number; confirmed: number; unconfirmed: number; recentSignups: number };
@@ -96,6 +96,7 @@ export default function AdminDashboardMain() {
     { id: 'resets',   label: 'Resets',   icon: Key },
     { id: 'agents',   label: 'Agents',   icon: Cpu },
     { id: 'tasks',    label: 'Tasks',    icon: Activity },
+    { id: 'audit',    label: 'Agent Audit', icon: Eye },
   ];
 
   return (
@@ -168,6 +169,7 @@ export default function AdminDashboardMain() {
         {tab === 'resets' && <ResetsTab />}
         {tab === 'agents' && <AgentsTab />}
         {tab === 'tasks' && <TasksTab />}
+        {tab === 'audit' && <AuditTab />}
       </div>
     </div>
   );
@@ -919,6 +921,291 @@ function TasksTab() {
       <p className="text-xs text-gray-400 mt-3 text-center">
         Showing {tasks.length} tasks • Auto-refreshing every 15 seconds
       </p>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tab: Agent Output Audit
+// ═══════════════════════════════════════════════════════════════
+
+interface AuditStage {
+  taskId: number;
+  agentName: string;
+  departmentLabel: string;
+  sortOrder: number;
+  stepOrder: number | null;
+  status: string;
+  claimedBy: string | null;
+  dependsOnTaskId: number | null;
+  inputFromTaskId: number | null;
+  createdAt: string | null;
+  completedAt: string | null;
+  mission: string | null;
+  summary: string | null;
+  rawOutput: string | null;
+  parsedOutput: any;
+  metadata: Record<string, any> | null;
+  artifactUrl: string | null;
+  retryCount: number;
+  lastError: string | null;
+}
+
+interface AuditData {
+  post: {
+    id: string; caption: string; hashtags: string[];
+    imageUrl: string | null; imagePrompt: string | null;
+    status: string; postType: string; sourceType: string | null;
+    tombstoneTaskId: string; createdAt: string;
+  } | null;
+  workflowId?: string;
+  taskCount?: number;
+  hopkinsNote?: string | null;
+  stages: AuditStage[];
+  error?: string;
+}
+
+const AGENT_COLORS: Record<string, string> = {
+  'Jim Bridger':     'border-emerald-500 bg-emerald-50',
+  'Zig Ziglar':      'border-amber-500 bg-amber-50',
+  'David Ogilvy':    'border-purple-500 bg-purple-50',
+  'Don Draper':      'border-sky-500 bg-sky-50',
+  'Andy Warhol':     'border-rose-500 bg-rose-50',
+  'Claude Hopkins':  'border-gray-400 bg-gray-50',
+  'Wyatt Earp':      'border-yellow-500 bg-yellow-50',
+  'Dispatcher':      'border-gray-300 bg-gray-50',
+};
+
+const AGENT_DOT_COLORS: Record<string, string> = {
+  'Jim Bridger':     'bg-emerald-500',
+  'Zig Ziglar':      'bg-amber-500',
+  'David Ogilvy':    'bg-purple-500',
+  'Don Draper':      'bg-sky-500',
+  'Andy Warhol':     'bg-rose-500',
+  'Claude Hopkins':  'bg-gray-400',
+  'Wyatt Earp':      'bg-yellow-500',
+  'Dispatcher':      'bg-gray-400',
+};
+
+function statusBadge(status: string) {
+  const s = (status || '').toLowerCase();
+  if (s === 'complete' || s === 'completed') return 'bg-green-100 text-green-800';
+  if (s === 'failed' || s === 'error') return 'bg-red-100 text-red-800';
+  if (s.includes('progress') || s === 'running' || s === 'claimed') return 'bg-blue-100 text-blue-800';
+  if (s === 'blocked') return 'bg-yellow-100 text-yellow-800';
+  return 'bg-gray-100 text-gray-700';
+}
+
+function AuditTab() {
+  const [data, setData] = useState<AuditData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<Record<number, string | null>>({});  // taskId → active section
+
+  useEffect(() => {
+    setLoading(true);
+    fetch('/api/admin/agent-audit')
+      .then(r => r.json())
+      .then(setData)
+      .catch(err => setData({ error: err.message, post: null, stages: [] }))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const toggleSection = (taskId: number, section: string) => {
+    setExpanded(prev => ({
+      ...prev,
+      [taskId]: prev[taskId] === section ? null : section,
+    }));
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
+        <span className="ml-3 text-gray-500">Loading audit data…</span>
+      </div>
+    );
+  }
+
+  if (!data || data.error) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+        <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-3" />
+        <p className="text-gray-700 font-medium">Could not load audit data</p>
+        <p className="text-sm text-gray-500 mt-1">{data?.error || 'Unknown error'}</p>
+      </div>
+    );
+  }
+
+  if (!data.post) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+        <Eye className="w-8 h-8 text-gray-400 mx-auto mb-3" />
+        <p className="text-gray-700 font-medium">No social posts linked to Tombstone tasks</p>
+        <p className="text-sm text-gray-500 mt-1">Generate a social post first to see the agent output audit.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Post summary card */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Most Recent Generated Post</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Task #{data.post.tombstoneTaskId} • Workflow: <code className="bg-gray-200 px-1 py-0.5 rounded text-[10px]">{data.workflowId || '—'}</code> • {data.taskCount || 0} pipeline stages
+            </p>
+          </div>
+          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusBadge(data.post.status)}`}>
+            {data.post.status}
+          </span>
+        </div>
+        <div className="p-6 flex gap-6">
+          {data.post.imageUrl && (
+            <div className="w-40 h-40 flex-shrink-0 rounded-lg overflow-hidden bg-gray-100 relative">
+              <NextImage src={data.post.imageUrl} alt="Post image" fill className="object-cover" unoptimized />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-gray-800 line-clamp-4">{data.post.caption}</p>
+            {data.post.hashtags?.length > 0 && (
+              <p className="text-xs text-blue-600 mt-2 truncate">{data.post.hashtags.join(' ')}</p>
+            )}
+            <div className="flex flex-wrap gap-3 mt-3 text-xs text-gray-500">
+              <span>Type: <strong>{data.post.postType}</strong></span>
+              {data.post.sourceType && <span>Source: <strong>{data.post.sourceType}</strong></span>}
+              <span>Created: <strong>{new Date(data.post.createdAt).toLocaleString()}</strong></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Hopkins bypass note */}
+      {data.hopkinsNote && (
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+          <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-amber-800">{data.hopkinsNote}</p>
+        </div>
+      )}
+
+      {/* Pipeline stages */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900 mb-3">Pipeline Stages</h3>
+        <div className="space-y-3">
+          {data.stages.map((stage, i) => {
+            const colorClass = AGENT_COLORS[stage.agentName] || 'border-gray-300 bg-gray-50';
+            const dotColor = AGENT_DOT_COLORS[stage.agentName] || 'bg-gray-400';
+            const activeSection = expanded[stage.taskId] || null;
+
+            return (
+              <div key={stage.taskId} className={`border-l-4 rounded-lg border ${colorClass} overflow-hidden`}>
+                {/* Stage header */}
+                <div className="px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-xs text-gray-400 font-mono w-5">{i + 1}</span>
+                      <div className={`w-2.5 h-2.5 rounded-full ${dotColor}`} />
+                      <span className="text-sm font-semibold text-gray-900">{stage.agentName}</span>
+                      <span className="text-xs text-gray-500">/ {stage.departmentLabel}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${statusBadge(stage.status)}`}>
+                        {stage.status}
+                      </span>
+                      <span className="text-[10px] text-gray-400 font-mono">#{stage.taskId}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-gray-500">
+                    {stage.createdAt && <span>Created: {new Date(stage.createdAt).toLocaleString()}</span>}
+                    {stage.completedAt && <span>Completed: {new Date(stage.completedAt).toLocaleString()}</span>}
+                    {stage.dependsOnTaskId && <span>Depends on: #{stage.dependsOnTaskId}</span>}
+                    {stage.inputFromTaskId && <span>Input from: #{stage.inputFromTaskId}</span>}
+                    {stage.retryCount > 0 && <span className="text-amber-600">Retries: {stage.retryCount}</span>}
+                  </div>
+                  {stage.summary && (
+                    <p className="text-xs text-gray-600 mt-1.5 line-clamp-2">{stage.summary}</p>
+                  )}
+                  {stage.lastError && (
+                    <p className="text-xs text-red-600 mt-1 line-clamp-1">Error: {stage.lastError}</p>
+                  )}
+                </div>
+
+                {/* Expandable sections */}
+                <div className="border-t border-gray-200/60 bg-white/60 flex gap-0">
+                  {(['summary', 'raw', 'parsed', 'metadata', 'artifact'] as const).map(sec => {
+                    const isDisabled =
+                      (sec === 'raw' && !stage.rawOutput) ||
+                      (sec === 'parsed' && !stage.parsedOutput) ||
+                      (sec === 'metadata' && !stage.metadata) ||
+                      (sec === 'artifact' && !stage.artifactUrl);
+
+                    return (
+                      <button
+                        key={sec}
+                        disabled={isDisabled}
+                        onClick={() => toggleSection(stage.taskId, sec)}
+                        className={`px-3 py-1.5 text-[10px] font-medium transition-colors capitalize ${
+                          isDisabled
+                            ? 'text-gray-300 cursor-default'
+                            : activeSection === sec
+                              ? 'text-blue-600 bg-blue-50'
+                              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                        }`}
+                      >
+                        {sec === 'raw' ? 'Raw Output' : sec === 'parsed' ? 'Structured' : sec === 'artifact' ? 'Artifact' : sec.charAt(0).toUpperCase() + sec.slice(1)}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Section content */}
+                {activeSection === 'summary' && (
+                  <div className="px-4 py-3 bg-white border-t border-gray-100">
+                    <p className="text-xs text-gray-700 whitespace-pre-wrap">{stage.summary || stage.mission || 'No summary available'}</p>
+                  </div>
+                )}
+                {activeSection === 'raw' && stage.rawOutput && (
+                  <div className="px-4 py-3 bg-white border-t border-gray-100">
+                    <pre className="text-[10px] text-gray-700 whitespace-pre-wrap break-all max-h-80 overflow-auto font-mono bg-gray-50 rounded p-3">
+                      {stage.rawOutput.length > 8000 ? stage.rawOutput.slice(0, 8000) + '\n\n… [truncated]' : stage.rawOutput}
+                    </pre>
+                  </div>
+                )}
+                {activeSection === 'parsed' && stage.parsedOutput && (
+                  <div className="px-4 py-3 bg-white border-t border-gray-100">
+                    <pre className="text-[10px] text-gray-700 whitespace-pre-wrap break-all max-h-80 overflow-auto font-mono bg-gray-50 rounded p-3">
+                      {JSON.stringify(stage.parsedOutput, null, 2).slice(0, 8000)}
+                    </pre>
+                  </div>
+                )}
+                {activeSection === 'metadata' && stage.metadata && (
+                  <div className="px-4 py-3 bg-white border-t border-gray-100">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {Object.entries(stage.metadata).map(([k, v]) => (
+                        <div key={k} className="bg-gray-50 rounded px-3 py-2">
+                          <p className="text-[10px] text-gray-400 uppercase tracking-wider">{k.replace(/_/g, ' ')}</p>
+                          <p className="text-xs text-gray-800 font-medium mt-0.5">{String(v)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {activeSection === 'artifact' && stage.artifactUrl && (
+                  <div className="px-4 py-3 bg-white border-t border-gray-100">
+                    <p className="text-[10px] text-gray-500 mb-2 break-all font-mono">{stage.artifactUrl}</p>
+                    {(stage.artifactUrl.includes('.png') || stage.artifactUrl.includes('.jpg') || stage.artifactUrl.includes('.webp') || stage.artifactUrl.includes('s3.') || stage.artifactUrl.includes('r2.')) && (
+                      <div className="w-64 h-64 relative rounded-lg overflow-hidden bg-gray-100">
+                        <NextImage src={stage.artifactUrl} alt={`Artifact from ${stage.agentName}`} fill className="object-contain" unoptimized />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
