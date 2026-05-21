@@ -6,7 +6,7 @@ const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xj
 async function sendCommand(command: string) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60000); // 60s timeout for large commands
+    const timer = setTimeout(() => controller.abort(), 120000); // 120s timeout — Tombstone can be slow when cold
     let res: Response;
     try {
       res = await fetch(`${TOMBSTONE_URL}/commands`, {
@@ -225,29 +225,24 @@ export async function createSocialMissions(
   const allTaskIds: number[] = [];
   let successCount = 0;
 
-  // Process in batches of 3 to avoid overwhelming Tombstone
-  const BATCH_SIZE = 3;
-  for (let i = 0; i < stories.length; i += BATCH_SIZE) {
-    const batch = stories.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.all(
-      batch.map(async (story) => {
-        const command = buildStoryCommand(normalizedUrl, story, platforms, mode);
-        console.log(`[tombstone] Sending command for: "${story.headline?.slice(0, 60)}..." (${story.type || 'interest'})`);
-        return sendCommand(command);
-      })
-    );
+  // Process sequentially — Tombstone serialises commands so parallel sends cause timeouts
+  for (let i = 0; i < stories.length; i++) {
+    const story = stories[i];
+    const command = buildStoryCommand(normalizedUrl, story, platforms, mode);
+    console.log(`[tombstone] Sending command ${i + 1}/${stories.length}: "${story.headline?.slice(0, 60)}..." (${story.type || 'interest'})`);
 
-    for (const result of batchResults) {
-      if (result.workflowId) {
-        allWorkflowIds.push(result.workflowId);
-        allTaskIds.push(...result.taskIds);
-        successCount++;
-      }
+    const result = await sendCommand(command);
+    if (result.workflowId) {
+      allWorkflowIds.push(result.workflowId);
+      allTaskIds.push(...result.taskIds);
+      successCount++;
+    } else {
+      console.warn(`[tombstone] Command ${i + 1} failed — no workflowId returned`);
     }
 
-    // Brief pause between batches to let Tombstone process
-    if (i + BATCH_SIZE < stories.length) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
+    // Brief pause between commands to let Tombstone breathe
+    if (i < stories.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
   }
 
