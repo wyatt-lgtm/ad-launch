@@ -56,7 +56,29 @@ export async function POST(
     const businessState = state || analysis.businessState || '';
     const businessZip = zip || analysis.businessZip || '';
     const businessName = name || analysis.businessName || '';
+    const businessAddr = address || analysis.businessAddr || '';
+    const businessPhone = phone || analysis.businessPhone || '';
     console.log(`[confirm-and-launch] Location confirmed for ${analysisId}: ${businessName} in ${businessCity}, ${businessState} ${businessZip}`);
+
+    // Sync confirmed location to the Business record
+    if (analysis.businessId) {
+      try {
+        await prisma.business.update({
+          where: { id: analysis.businessId },
+          data: {
+            ...(businessName ? { businessName } : {}),
+            ...(businessAddr ? { businessAddr } : {}),
+            ...(businessCity ? { businessCity } : {}),
+            ...(businessState ? { businessState } : {}),
+            ...(businessZip ? { businessZip } : {}),
+            ...(businessPhone ? { businessPhone } : {}),
+          },
+        });
+        console.log(`[confirm-and-launch] Business ${analysis.businessId} synced with location`);
+      } catch (bizErr: any) {
+        console.error('[confirm-and-launch] Business sync error (non-fatal):', bizErr?.message);
+      }
+    }
 
     // ── Gather context for news and holiday lanes ────────────────────
     let newsContext = '';
@@ -92,14 +114,14 @@ export async function POST(
       newsContext = `Local community news and events in ${businessCity}, ${businessState}. Focus on small business, community development, or local economy stories.`;
     }
 
-    // ── Launch 3 lane missions in parallel ───────────────────────────
+    // ── Launch 3 lane missions sequentially (Tombstone serialises commands) ──
     console.log(`[confirm-and-launch] Launching 3 lane missions for: ${analysis.websiteUrl}`);
 
-    const [websiteResult, newsResult, holidayResult] = await Promise.all([
-      createLaneMission(analysis.websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`),
-      createLaneMission(analysis.websiteUrl, 'news', newsContext),
-      createLaneMission(analysis.websiteUrl, 'holiday', holidayContext),
-    ]);
+    const websiteResult = await createLaneMission(analysis.websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const newsResult = await createLaneMission(analysis.websiteUrl, 'news', newsContext);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const holidayResult = await createLaneMission(analysis.websiteUrl, 'holiday', holidayContext);
 
     console.log(`[confirm-and-launch] Lane missions created:`, {
       website: { success: websiteResult.success, workflowId: websiteResult.workflowId },

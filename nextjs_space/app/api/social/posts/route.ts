@@ -21,8 +21,11 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 50);
     const offset = parseInt(url.searchParams.get('offset') || '0');
 
+    const businessId = url.searchParams.get('businessId') || undefined;
+
     const where: any = { userId };
     if (status) where.status = status;
+    if (businessId) where.businessId = businessId;
 
     const [posts, total] = await Promise.all([
       prisma.socialPost.findMany({

@@ -7,40 +7,58 @@ import { prisma } from '@/lib/db';
 
 const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
+type AnalysisRef = { id: string; missionId: string | null; socialMissionId: string | null; businessId: string | null };
+
 /**
  * Collect ALL workflow IDs from user's analyses (both missionId lanes and socialMissionId).
  */
-function collectWorkflowIds(analyses: { missionId: string | null; socialMissionId: string | null }[]): string[] {
+function collectWorkflowIds(analyses: AnalysisRef[]): string[] {
   const ids = new Set<string>();
   for (const a of analyses) {
-    // Parse lane-based missionId JSON: {"website":"uuid", "news":"uuid", "holiday":"uuid"}
-    if (a.missionId) {
-      try {
-        const parsed = JSON.parse(a.missionId);
-        if (typeof parsed === 'object' && !Array.isArray(parsed)) {
-          for (const v of Object.values(parsed)) {
-            if (typeof v === 'string' && v.trim()) ids.add(v.trim());
-            else if (Array.isArray(v)) {
-              for (const id of v) if (typeof id === 'string' && id.trim()) ids.add(id.trim());
-            }
+    for (const wf of extractWorkflowsFromAnalysis(a)) ids.add(wf);
+  }
+  return Array.from(ids);
+}
+
+/** Extract individual workflow IDs from an analysis record. */
+function extractWorkflowsFromAnalysis(a: AnalysisRef): string[] {
+  const ids: string[] = [];
+  if (a.missionId) {
+    try {
+      const parsed = JSON.parse(a.missionId);
+      if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const v of Object.values(parsed)) {
+          if (typeof v === 'string' && v.trim()) ids.push(v.trim());
+          else if (Array.isArray(v)) {
+            for (const id of v) if (typeof id === 'string' && id.trim()) ids.push(id.trim());
           }
         }
-      } catch {
-        for (const part of a.missionId.split(',')) {
-          const t = part.trim();
-          if (t) ids.add(t);
-        }
       }
-    }
-    // Also include socialMissionId
-    if (a.socialMissionId) {
-      for (const part of a.socialMissionId.split(',')) {
+    } catch {
+      for (const part of a.missionId.split(',')) {
         const t = part.trim();
-        if (t) ids.add(t);
+        if (t) ids.push(t);
       }
     }
   }
-  return Array.from(ids);
+  if (a.socialMissionId) {
+    for (const part of a.socialMissionId.split(',')) {
+      const t = part.trim();
+      if (t) ids.push(t);
+    }
+  }
+  return ids;
+}
+
+/** Build a map: workflowId → { analysisId, businessId } */
+function buildWorkflowMap(analyses: AnalysisRef[]): Map<string, { analysisId: string; businessId: string | null }> {
+  const map = new Map<string, { analysisId: string; businessId: string | null }>();
+  for (const a of analyses) {
+    for (const wf of extractWorkflowsFromAnalysis(a)) {
+      map.set(wf, { analysisId: a.id, businessId: a.businessId });
+    }
+  }
+  return map;
 }
 
 /**
@@ -65,7 +83,7 @@ export async function POST(req: NextRequest) {
           { socialMissionId: { not: null } },
         ],
       },
-      select: { id: true, missionId: true, socialMissionId: true },
+      select: { id: true, missionId: true, socialMissionId: true, businessId: true },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -74,6 +92,7 @@ export async function POST(req: NextRequest) {
     }
 
     const workflowIds = collectWorkflowIds(analyses);
+    const workflowMap = buildWorkflowMap(analyses);
     if (workflowIds.length === 0) {
       return NextResponse.json({ polled: 0, imported: 0, pending: 0, status: 'no_workflows' });
     }
@@ -164,6 +183,7 @@ export async function POST(req: NextRequest) {
 
           return {
             tombstoneTaskId: String(item.task_id),
+            workflowId: item.workflow_id || null,
             caption: caption + (cta ? `\n\n${cta}` : ''),
             hashtags,
             imageUrl: resolvedImageUrl || null,
@@ -191,13 +211,17 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Use first analysis as default
+    // Map each post to the correct analysis/business via its workflowId
     const defaultAnalysisId = analyses[0].id;
+    const defaultBusinessId = analyses[0].businessId || null;
 
     const createdPosts = await prisma.socialPost.createMany({
-      data: posts.map((post) => ({
+      data: posts.map((post) => {
+        const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
+        return {
         userId,
-        analysisId: defaultAnalysisId,
+        analysisId: ref?.analysisId || defaultAnalysisId,
+        businessId: ref?.businessId || defaultBusinessId,
         caption: post.caption,
         hashtags: post.hashtags,
         imageUrl: post.imageUrl,
@@ -211,7 +235,8 @@ export async function POST(req: NextRequest) {
         platforms: post.platforms,
         status: 'pending_approval',
         tombstoneTaskId: post.tombstoneTaskId || null,
-      })),
+      };
+      }),
       skipDuplicates: true,
     });
 

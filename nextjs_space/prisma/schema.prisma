@@ -44,6 +44,7 @@ model Business {
   user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   analyses      Analysis[]
   feedPreferences BusinessFeedPreference[]
+  socialPosts   SocialPost[]
 
   @@unique([userId, websiteUrl])
   @@index([userId])
@@ -437,6 +438,7 @@ model SocialPost {
   id            String   @id @default(cuid())
   userId        String
   analysisId    String?  // Links to the business analysis (for ZIP context)
+  businessId    String?  // Links to the business this post belongs to
 
   // Content
   caption       String   @db.Text
@@ -475,10 +477,12 @@ model SocialPost {
 
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   analysis      Analysis? @relation(fields: [analysisId], references: [id])
+  business      Business? @relation(fields: [businessId], references: [id])
 
   @@index([userId])
   @@index([status])
   @@index([analysisId])
+  @@index([businessId])
   @@unique([tombstoneTaskId])
   @@index([scheduledFor])
   @@index([createdAt])

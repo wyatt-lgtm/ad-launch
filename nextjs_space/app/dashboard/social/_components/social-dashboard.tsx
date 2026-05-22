@@ -121,11 +121,13 @@ export default function SocialDashboard() {
     if (sessionStatus === 'unauthenticated') router.push('/login');
   }, [sessionStatus, router]);
 
-  // Fetch data
+  // Fetch data — filter by active business when available
+  const activeBusinessId = bizCtx.activeBusiness?.id;
   const fetchPosts = useCallback(async () => {
     try {
       const params = new URLSearchParams();
       if (statusFilter) params.set('status', statusFilter);
+      if (activeBusinessId) params.set('businessId', activeBusinessId);
       params.set('limit', '50');
       const res = await fetch(`/api/social/posts?${params}`);
       const data = await res.json();
@@ -134,7 +136,7 @@ export default function SocialDashboard() {
     } catch (e) {
       console.error('Failed to fetch posts:', e);
     }
-  }, [statusFilter]);
+  }, [statusFilter, activeBusinessId]);
 
   const fetchAccounts = useCallback(async () => {
     try {
