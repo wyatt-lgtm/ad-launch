@@ -327,6 +327,59 @@ function buildStoryCommand(
 }
 
 // Legacy single-mission creator (kept for backward compat)
+/**
+ * Create a Tombstone mission to copy-edit a user-written draft post.
+ * Sends the user's draft text + optional preferences as a Tombstone command.
+ * Returns workflow/task info for polling.
+ */
+export async function createDraftPolishMission(
+  websiteUrl: string,
+  draft: string,
+  options: {
+    platform?: string;
+    tone?: string;
+    cta?: string;
+    offer?: string;
+    artDirection?: string;
+    generateArt?: boolean;
+  } = {},
+) {
+  const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+  const generateArt = options.generateArt !== false;
+
+  const commandParts = [
+    `review ${normalizedUrl} and polish the following user-written social media post draft.`,
+    `This is a COPY EDITING task — do NOT create new content from scratch.`,
+    `Improve the grammar, flow, engagement, and professionalism while keeping the user's voice and intent.`,
+    `Return ONE polished version of the post, a shorter version suitable for Twitter/X, and relevant hashtags.`,
+    generateArt
+      ? `Also create a social media image/artwork that complements this post using the business brand from the website.`
+      : `Do NOT generate any image or artwork for this post.`,
+    ``,
+    `--- USER DRAFT (preserve the core message) ---`,
+    draft,
+    `--- END USER DRAFT ---`,
+  ];
+
+  if (options.platform) commandParts.push(`\nTarget platform: ${options.platform}`);
+  if (options.tone) commandParts.push(`Desired tone: ${options.tone}`);
+  if (options.cta) commandParts.push(`Call-to-action to include: ${options.cta}`);
+  if (options.offer) commandParts.push(`Offer/promotion to highlight: ${options.offer}`);
+  if (options.artDirection) commandParts.push(`Image/art direction notes: ${options.artDirection}`);
+
+  commandParts.push(`\nIMPORTANT: This is intent=copy_edit_user_post, source=user_written_post. Do NOT run RSS scouting or story discovery.`);
+
+  const command = commandParts.join('\n');
+  console.log(`[tombstone] Draft polish mission for: ${normalizedUrl} (art=${generateArt})`);
+
+  const result = await sendCommand(command);
+  return {
+    success: !!result.workflowId,
+    workflowIds: result.workflowId ? [result.workflowId] : [],
+    allTaskIds: result.taskIds,
+  };
+}
+
 export async function createMission(websiteUrl: string) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
   const command = `review ${normalizedUrl} and make facebook ad for the business - minimal design use colors and logo from website`;

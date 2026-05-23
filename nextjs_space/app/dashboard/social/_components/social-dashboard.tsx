@@ -7,9 +7,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, Newspaper, Send, CheckCircle2, XCircle,
   Edit3, Trash2, Copy, ExternalLink, Hash, Clock,
-  Zap, RefreshCw, ChevronDown, Plus, Link2, Unlink,
+  Zap, RefreshCw, ChevronDown, ChevronUp, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
-  List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare
+  List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare,
+  PenLine, Image as ImageIcon
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -112,6 +113,20 @@ export default function SocialDashboard() {
   type ScoutMode = 'local_only' | 'local_plus_interests' | 'interests_only';
   const [scoutMode, setScoutMode] = useState<ScoutMode>('local_plus_interests');
   const [missingLocation, setMissingLocation] = useState(false);
+
+  // Create From My Own Post state
+  const [showDraftForm, setShowDraftForm] = useState(false);
+  const [draftText, setDraftText] = useState('');
+  const [draftPlatform, setDraftPlatform] = useState('');
+  const [draftTone, setDraftTone] = useState('');
+  const [draftCta, setDraftCta] = useState('');
+  const [draftOffer, setDraftOffer] = useState('');
+  const [draftArtDirection, setDraftArtDirection] = useState('');
+  const [draftGenerateArt, setDraftGenerateArt] = useState(true);
+  const [draftSubmitting, setDraftSubmitting] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [draftProgress, setDraftProgress] = useState<string | null>(null);
+  const [showDraftAdvanced, setShowDraftAdvanced] = useState(false);
 
   // Story picker state
   interface StoryCard {
@@ -458,6 +473,94 @@ export default function SocialDashboard() {
     }, 30000);
   };
 
+  // ── Create From My Own Post ─────────────────────────────────────────────
+  const DRAFT_PROGRESS_STEPS = [
+    'Reviewing draft…',
+    'Improving copy…',
+    'Creating art direction…',
+    'Generating final art…',
+    'Preparing download package…',
+  ];
+
+  const submitDraft = async () => {
+    if (!draftText.trim()) {
+      setDraftError('Please enter your draft post text.');
+      return;
+    }
+    setDraftSubmitting(true);
+    setDraftError(null);
+    setDraftProgress(DRAFT_PROGRESS_STEPS[0]);
+
+    try {
+      const res = await fetch('/api/social/create-from-draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          draftText: draftText.trim(),
+          platform: draftPlatform || undefined,
+          tone: draftTone || undefined,
+          cta: draftCta || undefined,
+          offer: draftOffer || undefined,
+          artDirection: draftArtDirection || undefined,
+          generateArt: draftGenerateArt,
+          businessId: activeBusinessId || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit draft');
+
+      // Animate through progress steps
+      let step = 1;
+      const stepInterval = setInterval(() => {
+        if (step < DRAFT_PROGRESS_STEPS.length) {
+          setDraftProgress(DRAFT_PROGRESS_STEPS[step]);
+          step++;
+        } else {
+          clearInterval(stepInterval);
+        }
+      }, draftGenerateArt ? 8000 : 4000);
+
+      // Close form and show poll status
+      setShowDraftForm(false);
+      setScoutResult({
+        message: `Your draft is being polished by the creative team${draftGenerateArt ? ' with artwork' : ''}. The finished post will appear below when ready (~3-5 min).`,
+      });
+      setPollStatus('⏳ Waiting for creative team to finish polishing your draft…');
+
+      // Start polling
+      let attempts = 0;
+      const maxAttempts = 12;
+      const pollInterval = setInterval(async () => {
+        attempts++;
+        const pollResult = await pollMissions(true);
+        if (pollResult?.imported > 0 || pollResult?.status === 'all_imported' || attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          clearInterval(stepInterval);
+          setDraftProgress(null);
+          if (attempts >= maxAttempts && pollResult?.imported === 0) {
+            setPollStatus('Posts are taking longer than expected. Click "Check for Posts" to try again.');
+          }
+        }
+      }, 30000);
+
+      // Reset form
+      setDraftText('');
+      setDraftPlatform('');
+      setDraftTone('');
+      setDraftCta('');
+      setDraftOffer('');
+      setDraftArtDirection('');
+      setDraftGenerateArt(true);
+      setShowDraftAdvanced(false);
+    } catch (e: any) {
+      console.error('Draft submit error:', e);
+      setDraftError(e.message);
+    } finally {
+      setDraftSubmitting(false);
+      setDraftProgress(null);
+    }
+  };
+
   // Toggle a story selection — enforce MAX_STORIES limit
   const toggleStory = (id: string) => {
     setSelectionError(null);
@@ -678,14 +781,28 @@ export default function SocialDashboard() {
           </h1>
           <p className="text-gray-500 mt-1 text-sm">Clark Kent scouts local news and writes posts for your business.</p>
         </div>
-        <button
-          onClick={scoutForPosts}
-          disabled={scouting || showStoryPicker}
-          className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
-        >
-          {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-          {scouting ? 'Scouting Stories...' : 'Scout Stories'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={scoutForPosts}
+            disabled={scouting || showStoryPicker || draftSubmitting}
+            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
+          >
+            {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            {scouting ? 'Scouting...' : 'Scout Stories'}
+          </button>
+          <button
+            onClick={() => setShowDraftForm(v => !v)}
+            disabled={scouting || draftSubmitting}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-colors shadow-sm ${
+              showDraftForm
+                ? 'bg-purple-600 text-white hover:bg-purple-700'
+                : 'bg-white text-purple-700 border border-purple-200 hover:bg-purple-50'
+            } disabled:opacity-60`}
+          >
+            <PenLine className="w-4 h-4" />
+            My Own Post
+          </button>
+        </div>
       </div>
 
       {/* Scout mode selector */}
@@ -711,6 +828,188 @@ export default function SocialDashboard() {
           </button>
         ))}
       </div>
+
+      {/* ── Create From My Own Post Form ─────────────────────────── */}
+      <AnimatePresence>
+        {showDraftForm && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mb-6 bg-white border border-purple-200 rounded-2xl shadow-sm overflow-hidden"
+          >
+            <div className="px-5 py-4 border-b border-purple-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <PenLine className="w-4 h-4 text-purple-600" />
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Create From My Own Post</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Type or paste your draft — we&apos;ll polish the copy and create artwork</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowDraftForm(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              {/* Draft text — required */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">Your Draft Post <span className="text-red-500">*</span></label>
+                <textarea
+                  value={draftText}
+                  onChange={e => setDraftText(e.target.value)}
+                  placeholder="Type or paste your post draft here…"
+                  rows={4}
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">{draftText.length} characters</p>
+              </div>
+
+              {/* Platform + Tone row */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Platform <span className="text-gray-400">(optional)</span></label>
+                  <select
+                    value={draftPlatform}
+                    onChange={e => setDraftPlatform(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                  >
+                    <option value="">Any / All</option>
+                    <option value="facebook">Facebook</option>
+                    <option value="instagram">Instagram</option>
+                    <option value="linkedin">LinkedIn</option>
+                    <option value="twitter">Twitter / X</option>
+                    <option value="tiktok">TikTok</option>
+                    <option value="youtube">YouTube</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Tone <span className="text-gray-400">(optional)</span></label>
+                  <select
+                    value={draftTone}
+                    onChange={e => setDraftTone(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                  >
+                    <option value="">Auto-detect</option>
+                    <option value="professional">Professional</option>
+                    <option value="casual">Casual</option>
+                    <option value="friendly">Friendly</option>
+                    <option value="witty">Witty</option>
+                    <option value="inspirational">Inspirational</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Generate art checkbox */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={draftGenerateArt}
+                  onChange={e => setDraftGenerateArt(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                <ImageIcon className="w-4 h-4 text-gray-500" />
+                <span className="text-sm text-gray-700">Generate final art / image</span>
+              </label>
+
+              {/* Advanced options toggle */}
+              <button
+                type="button"
+                onClick={() => setShowDraftAdvanced(v => !v)}
+                className="flex items-center gap-1 text-xs font-medium text-purple-600 hover:text-purple-800 transition-colors"
+              >
+                {showDraftAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                {showDraftAdvanced ? 'Hide' : 'Show'} advanced options
+              </button>
+
+              <AnimatePresence>
+                {showDraftAdvanced && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="space-y-3 overflow-hidden"
+                  >
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Call-to-Action <span className="text-gray-400">(optional)</span></label>
+                      <input
+                        type="text"
+                        value={draftCta}
+                        onChange={e => setDraftCta(e.target.value)}
+                        placeholder='e.g. "Book your free consultation today"'
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Offer / Promotion <span className="text-gray-400">(optional)</span></label>
+                      <input
+                        type="text"
+                        value={draftOffer}
+                        onChange={e => setDraftOffer(e.target.value)}
+                        placeholder='e.g. "20% off this weekend only"'
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1.5">Image / Art Direction <span className="text-gray-400">(optional)</span></label>
+                      <input
+                        type="text"
+                        value={draftArtDirection}
+                        onChange={e => setDraftArtDirection(e.target.value)}
+                        placeholder='e.g. "Bright summer colors, beach theme, show our logo"'
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Error */}
+              {draftError && (
+                <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-sm text-red-700">{draftError}</p>
+                </div>
+              )}
+
+              {/* Progress */}
+              {draftProgress && (
+                <div className="flex items-center gap-2 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                  <Loader2 className="w-4 h-4 text-purple-600 animate-spin shrink-0" />
+                  <p className="text-sm text-purple-700 font-medium">{draftProgress}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer / submit */}
+            <div className="px-5 py-4 border-t border-purple-100 bg-purple-50/50 flex items-center justify-between">
+              <p className="text-xs text-gray-500">
+                1 polished post will be created{draftGenerateArt ? ' with artwork' : ''}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowDraftForm(false)}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitDraft}
+                  disabled={draftSubmitting || !draftText.trim()}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-60"
+                >
+                  {draftSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  {draftSubmitting ? 'Submitting…' : 'Polish & Create'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Scout result toast */}
       <AnimatePresence>
@@ -1007,7 +1306,7 @@ export default function SocialDashboard() {
                 <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">No social posts yet</h3>
                 <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
-                  Choose a scout mode above, then click &ldquo;Scout Stories&rdquo; to discover local and industry news. You&apos;ll pick up to {MAX_STORIES} stories to turn into social posts with artwork.
+                  Click &ldquo;Scout Stories&rdquo; to discover local and industry news, or click &ldquo;My Own Post&rdquo; to polish your own draft with professional copy editing and artwork.
                 </p>
                 <div className="flex items-center justify-center">
                   <button
