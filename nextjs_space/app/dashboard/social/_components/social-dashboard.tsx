@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
+import GenerationProgress from './generation-progress';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -125,8 +126,14 @@ export default function SocialDashboard() {
   const [draftGenerateArt, setDraftGenerateArt] = useState(true);
   const [draftSubmitting, setDraftSubmitting] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
-  const [draftProgress, setDraftProgress] = useState<string | null>(null);
   const [showDraftAdvanced, setShowDraftAdvanced] = useState(false);
+
+  // Generation progress tracking (shared by both Scout Stories + My Own Post)
+  const [activeWorkflowIds, setActiveWorkflowIds] = useState<string[]>([]);
+  const [activeFlowLabel, setActiveFlowLabel] = useState<string>('Scout Stories');
+  // Stash last submission params for retry
+  const lastScoutBriefRef = useRef<any>(null);
+  const lastDraftParamsRef = useRef<any>(null);
 
   // Story picker state
   interface StoryCard {
@@ -441,8 +448,11 @@ export default function SocialDashboard() {
     setScouting(false);
   };
 
-  // Shared: send brief to Tombstone and start polling
+  // Shared: send brief to Tombstone and show real progress
   const sendToTombstone = async (brief: any, meta: any) => {
+    // Stash for retry
+    lastScoutBriefRef.current = { brief, meta };
+
     const tombstoneRes = await fetch('/api/social/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -451,37 +461,16 @@ export default function SocialDashboard() {
     const tombstoneData = await tombstoneRes.json();
     if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
 
-    const wfCount = tombstoneData.workflowIds?.length || 0;
-    setScoutResult({
-      message: `${wfCount} creative workflow${wfCount !== 1 ? 's' : ''} started — each will produce a unique post with artwork. Posts appear as they finish (~3-5 min each).`,
-      meta: meta,
-      socialMissionId: tombstoneData.socialMissionId,
-    });
+    const wfIds: string[] = tombstoneData.workflowIds || [];
+    if (wfIds.length > 0) {
+      setActiveWorkflowIds(wfIds);
+      setActiveFlowLabel('Scout Stories');
+    }
 
-    setPollStatus('⏳ Waiting for creative team to finish generating posts...');
-    let attempts = 0;
-    const maxAttempts = 10;
-    const pollInterval = setInterval(async () => {
-      attempts++;
-      const pollResult = await pollMissions(true);
-      if (pollResult?.imported > 0 || pollResult?.status === 'all_imported' || attempts >= maxAttempts) {
-        clearInterval(pollInterval);
-        if (attempts >= maxAttempts && pollResult?.imported === 0) {
-          setPollStatus('Posts are taking longer than expected. Click "Check for Posts" to try again.');
-        }
-      }
-    }, 30000);
+    setScoutResult(null);
   };
 
   // ── Create From My Own Post ─────────────────────────────────────────────
-  const DRAFT_PROGRESS_STEPS = [
-    'Reviewing draft…',
-    'Improving copy…',
-    'Creating art direction…',
-    'Generating final art…',
-    'Preparing download package…',
-  ];
-
   const submitDraft = async () => {
     if (!draftText.trim()) {
       setDraftError('Please enter your draft post text.');
@@ -489,61 +478,39 @@ export default function SocialDashboard() {
     }
     setDraftSubmitting(true);
     setDraftError(null);
-    setDraftProgress(DRAFT_PROGRESS_STEPS[0]);
+
+    const params = {
+      draftText: draftText.trim(),
+      platform: draftPlatform || undefined,
+      tone: draftTone || undefined,
+      cta: draftCta || undefined,
+      offer: draftOffer || undefined,
+      artDirection: draftArtDirection || undefined,
+      generateArt: draftGenerateArt,
+      businessId: activeBusinessId || undefined,
+    };
+    lastDraftParamsRef.current = params;
 
     try {
       const res = await fetch('/api/social/create-from-draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          draftText: draftText.trim(),
-          platform: draftPlatform || undefined,
-          tone: draftTone || undefined,
-          cta: draftCta || undefined,
-          offer: draftOffer || undefined,
-          artDirection: draftArtDirection || undefined,
-          generateArt: draftGenerateArt,
-          businessId: activeBusinessId || undefined,
-        }),
+        body: JSON.stringify(params),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit draft');
 
-      // Animate through progress steps
-      let step = 1;
-      const stepInterval = setInterval(() => {
-        if (step < DRAFT_PROGRESS_STEPS.length) {
-          setDraftProgress(DRAFT_PROGRESS_STEPS[step]);
-          step++;
-        } else {
-          clearInterval(stepInterval);
-        }
-      }, draftGenerateArt ? 8000 : 4000);
+      const wfIds: string[] = data.workflowIds || [];
+      if (wfIds.length > 0) {
+        setActiveWorkflowIds(wfIds);
+        setActiveFlowLabel('My Own Post');
+      }
 
-      // Close form and show poll status
+      // Close form
       setShowDraftForm(false);
-      setScoutResult({
-        message: `Your draft is being polished by the creative team${draftGenerateArt ? ' with artwork' : ''}. The finished post will appear below when ready (~3-5 min).`,
-      });
-      setPollStatus('⏳ Waiting for creative team to finish polishing your draft…');
+      setScoutResult(null);
 
-      // Start polling
-      let attempts = 0;
-      const maxAttempts = 12;
-      const pollInterval = setInterval(async () => {
-        attempts++;
-        const pollResult = await pollMissions(true);
-        if (pollResult?.imported > 0 || pollResult?.status === 'all_imported' || attempts >= maxAttempts) {
-          clearInterval(pollInterval);
-          clearInterval(stepInterval);
-          setDraftProgress(null);
-          if (attempts >= maxAttempts && pollResult?.imported === 0) {
-            setPollStatus('Posts are taking longer than expected. Click "Check for Posts" to try again.');
-          }
-        }
-      }, 30000);
-
-      // Reset form
+      // Reset form fields
       setDraftText('');
       setDraftPlatform('');
       setDraftTone('');
@@ -557,8 +524,52 @@ export default function SocialDashboard() {
       setDraftError(e.message);
     } finally {
       setDraftSubmitting(false);
-      setDraftProgress(null);
     }
+  };
+
+  // Retry handlers for GenerationProgress
+  const retryGeneration = async () => {
+    setActiveWorkflowIds([]);
+    if (activeFlowLabel === 'My Own Post' && lastDraftParamsRef.current) {
+      setDraftSubmitting(true);
+      setDraftError(null);
+      try {
+        const res = await fetch('/api/social/create-from-draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(lastDraftParamsRef.current),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Retry failed');
+        if (data.workflowIds?.length > 0) {
+          setActiveWorkflowIds(data.workflowIds);
+        }
+      } catch (e: any) {
+        setDraftError(e.message);
+      } finally {
+        setDraftSubmitting(false);
+      }
+    } else if (lastScoutBriefRef.current) {
+      setScouting(true);
+      setScoutError(null);
+      try {
+        await sendToTombstone(lastScoutBriefRef.current.brief, lastScoutBriefRef.current.meta);
+      } catch (e: any) {
+        setScoutError(e.message);
+      }
+      setScouting(false);
+    }
+  };
+
+  const handleProgressComplete = async () => {
+    setActiveWorkflowIds([]);
+    // Import completed posts
+    await pollMissions(false);
+    await fetchPosts();
+  };
+
+  const handleProgressDismiss = () => {
+    setActiveWorkflowIds([]);
   };
 
   // Toggle a story selection — enforce MAX_STORIES limit
@@ -976,13 +987,7 @@ export default function SocialDashboard() {
                 </div>
               )}
 
-              {/* Progress */}
-              {draftProgress && (
-                <div className="flex items-center gap-2 p-3 bg-purple-50 border border-purple-200 rounded-lg">
-                  <Loader2 className="w-4 h-4 text-purple-600 animate-spin shrink-0" />
-                  <p className="text-sm text-purple-700 font-medium">{draftProgress}</p>
-                </div>
-              )}
+
             </div>
 
             {/* Footer / submit */}
@@ -1008,6 +1013,20 @@ export default function SocialDashboard() {
               </div>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Generation Progress (real Tombstone task tracking) ─────── */}
+      <AnimatePresence>
+        {activeWorkflowIds.length > 0 && (
+          <GenerationProgress
+            key={activeWorkflowIds.join(',')}
+            workflowIds={activeWorkflowIds}
+            flowLabel={activeFlowLabel}
+            onComplete={handleProgressComplete}
+            onRetry={retryGeneration}
+            onDismiss={handleProgressDismiss}
+          />
         )}
       </AnimatePresence>
 
