@@ -61,9 +61,9 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
   draft: { label: 'Draft', color: 'text-gray-600', bg: 'bg-gray-100', icon: Edit3 },
   pending_approval: { label: 'Pending', color: 'text-amber-700', bg: 'bg-amber-50', icon: Clock },
   approved: { label: 'Approved', color: 'text-green-700', bg: 'bg-green-50', icon: CheckCircle2 },
-  published: { label: 'Published', color: 'text-blue-700', bg: 'bg-blue-50', icon: Send },
+  downloaded: { label: 'Downloaded', color: 'text-indigo-700', bg: 'bg-indigo-50', icon: Download },
+  manually_posted: { label: 'Posted', color: 'text-blue-700', bg: 'bg-blue-50', icon: Send },
   rejected: { label: 'Rejected', color: 'text-red-700', bg: 'bg-red-50', icon: XCircle },
-  expired: { label: 'Expired', color: 'text-gray-500', bg: 'bg-gray-50', icon: Clock },
 };
 
 const POST_TYPE_LABELS: Record<string, string> = {
@@ -627,28 +627,80 @@ export default function SocialDashboard() {
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
-  const downloadPost = async (post: SocialPost) => {
+  const downloadImage = async (post: SocialPost) => {
+    if (!post.imageUrl) return;
     setDownloadingId(post.id);
     const slug = (post.caption || 'post').slice(0, 40).replace(/[^a-zA-Z0-9]+/g, '_').replace(/_+$/, '');
+    try {
+      const imgRes = await fetch(post.imageUrl);
+      if (imgRes.ok) {
+        const imgBlob = await imgRes.blob();
+        const ext = imgBlob.type.includes('png') ? 'png' : imgBlob.type.includes('webp') ? 'webp' : 'jpg';
+        const imgUrl = URL.createObjectURL(imgBlob);
+        const imgLink = document.createElement('a');
+        imgLink.href = imgUrl;
+        imgLink.download = `${slug}.${ext}`;
+        document.body.appendChild(imgLink);
+        imgLink.click();
+        document.body.removeChild(imgLink);
+        URL.revokeObjectURL(imgUrl);
+      }
+    } catch (e) {
+      console.warn('Image download failed:', e);
+    }
+    setDownloadingId(null);
+  };
 
-    // Build text content
+  const downloadPostPackage = async (post: SocialPost) => {
+    setDownloadingId(post.id);
+    const slug = (post.caption || 'post').slice(0, 40).replace(/[^a-zA-Z0-9]+/g, '_').replace(/_+$/, '');
+    const imgFilename = post.imageUrl ? `${slug}.jpg` : null;
+
+    // Build comprehensive posting package
     const lines: string[] = [];
-    lines.push('=== CAPTION ===');
+    lines.push('╔══════════════════════════════════════════╗');
+    lines.push('║        SOCIAL POST PACKAGE               ║');
+    lines.push('╚══════════════════════════════════════════╝');
+    lines.push('');
+    lines.push('━━━ POST COPY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     lines.push(post.caption || '');
     if (post.hashtags.length > 0) {
       lines.push('');
-      lines.push('=== HASHTAGS ===');
+      lines.push('━━━ HASHTAGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       lines.push(post.hashtags.join(' '));
     }
-    if (post.postType && post.postType !== 'general') {
+    if (post.rssItemTitle || post.rssItemLink) {
       lines.push('');
-      lines.push(`=== TYPE: ${post.postType} ===`);
+      lines.push('━━━ SOURCE INFO ━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      if (post.rssItemTitle) lines.push(`Headline: ${post.rssItemTitle}`);
+      if (post.rssItemLink) lines.push(`Link: ${post.rssItemLink}`);
     }
-    if (post.platforms.length > 0) {
+    if (imgFilename) {
       lines.push('');
-      lines.push(`=== PLATFORMS: ${post.platforms.join(', ')} ===`);
+      lines.push('━━━ IMAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      lines.push(`Filename: ${imgFilename}`);
+      lines.push('(Image downloaded separately alongside this file)');
     }
     lines.push('');
+    lines.push('━━━ PLATFORMS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push(post.platforms.length > 0 ? post.platforms.join(', ') : 'No specific platform selected');
+    lines.push('');
+    lines.push('━━━ POSTING INSTRUCTIONS ━━━━━━━━━━━━━━━━━━');
+    lines.push('1. Copy the POST COPY text above');
+    lines.push('2. Open your social media platform of choice');
+    lines.push('3. Create a new post and paste the caption');
+    lines.push('4. Upload the image file (if included)');
+    lines.push('5. Add the HASHTAGS to your post');
+    lines.push('6. Review and publish!');
+    if (post.rssItemLink) {
+      lines.push('');
+      lines.push('TIP: You can include the source link in your post');
+      lines.push('to add credibility and drive traffic to the original story.');
+    }
+    lines.push('');
+    lines.push('━━━ DETAILS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    if (post.postType && post.postType !== 'general') lines.push(`Type: ${post.postType}`);
+    if (post.newsAngle) lines.push(`Angle: ${post.newsAngle}`);
     lines.push(`Generated: ${new Date(post.createdAt).toLocaleString()}`);
 
     // Download text file
@@ -656,7 +708,7 @@ export default function SocialDashboard() {
     const textUrl = URL.createObjectURL(textBlob);
     const textLink = document.createElement('a');
     textLink.href = textUrl;
-    textLink.download = `${slug}.txt`;
+    textLink.download = `${slug}_package.txt`;
     document.body.appendChild(textLink);
     textLink.click();
     document.body.removeChild(textLink);
@@ -681,6 +733,11 @@ export default function SocialDashboard() {
       } catch (e) {
         console.warn('Image download failed:', e);
       }
+    }
+
+    // Mark as downloaded
+    if (post.status === 'approved' || post.status === 'draft' || post.status === 'pending_approval') {
+      await updatePost(post.id, 'mark_downloaded');
     }
     setDownloadingId(null);
   };
@@ -770,7 +827,8 @@ export default function SocialDashboard() {
   const linkedCount = accounts.filter(a => a.isActive).length;
   const pendingCount = posts.filter(p => p.status === 'pending_approval').length;
   const approvedCount = posts.filter(p => p.status === 'approved').length;
-  const publishedCount = posts.filter(p => p.status === 'published').length;
+  const postedCount = posts.filter(p => p.status === 'manually_posted').length;
+  const downloadedCount = posts.filter(p => p.status === 'downloaded').length;
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-8">
@@ -1269,8 +1327,8 @@ export default function SocialDashboard() {
         {[
           { label: 'Pending', value: pendingCount, color: 'text-amber-600', bg: 'bg-amber-50' },
           { label: 'Approved', value: approvedCount, color: 'text-green-600', bg: 'bg-green-50' },
-          { label: 'Published', value: publishedCount, color: 'text-blue-600', bg: 'bg-blue-50' },
-          { label: 'Linked Accounts', value: linkedCount, color: 'text-purple-600', bg: 'bg-purple-50' },
+          { label: 'Downloaded', value: downloadedCount, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+          { label: 'Posted', value: postedCount, color: 'text-blue-600', bg: 'bg-blue-50' },
         ].map(stat => (
           <div key={stat.label} className={`${stat.bg} rounded-xl p-4 text-center`}>
             <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
@@ -1303,7 +1361,7 @@ export default function SocialDashboard() {
         <div>
           {/* Filter bar */}
           <div className="flex gap-2 mb-6 flex-wrap">
-            {['', 'pending_approval', 'approved', 'published', 'rejected'].map(s => (
+            {['', 'pending_approval', 'approved', 'downloaded', 'manually_posted', 'rejected'].map(s => (
               <button
                 key={s}
                 onClick={() => { setStatusFilter(s); }}
@@ -1520,44 +1578,58 @@ export default function SocialDashboard() {
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-gray-50">
-                        {/* Copy caption */}
+                        {/* Copy Post Text */}
                         <button
                           onClick={() => copyCaption(post)}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors"
                         >
                           {copiedId === post.id ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-                          {copiedId === post.id ? 'Copied!' : 'Copy Caption'}
+                          {copiedId === post.id ? 'Copied!' : 'Copy Post Text'}
                         </button>
 
-                        {/* Download post (image + text) */}
+                        {/* Download Image (only when image exists) */}
+                        {post.imageUrl && (
+                          <button
+                            onClick={() => downloadImage(post)}
+                            disabled={downloadingId === post.id}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-50"
+                          >
+                            {downloadingId === post.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />}
+                            Download Image
+                          </button>
+                        )}
+
+                        {/* Download Package */}
                         <button
-                          onClick={() => downloadPost(post)}
+                          onClick={() => downloadPostPackage(post)}
                           disabled={downloadingId === post.id}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 rounded-lg text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50"
                         >
                           {downloadingId === post.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                          {downloadingId === post.id ? 'Downloading…' : 'Download'}
+                          Download Package
                         </button>
 
-                        {/* Platform publish buttons */}
-                        {(post.status === 'approved' || post.status === 'published') && post.platforms.map(pid => {
-                          const p = PLATFORMS.find(pl => pl.id === pid);
-                          if (!p) return null;
-                          const Icon = p.icon;
-                          return (
-                            <button
-                              key={pid}
-                              onClick={() => {
-                                openComposer(post, pid);
-                                if (post.status === 'approved') updatePost(post.id, 'publish');
-                              }}
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 ${p.color} text-white rounded-lg text-xs font-medium ${p.hoverColor} transition-all`}
-                            >
-                              <Icon className="w-3.5 h-3.5" />
-                              Post to {p.label}
-                            </button>
-                          );
-                        })}
+                        {/* Mark as Manually Posted — for approved/downloaded posts */}
+                        {(post.status === 'approved' || post.status === 'downloaded') && (
+                          <button
+                            onClick={() => updatePost(post.id, 'mark_manually_posted')}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 rounded-lg text-xs font-medium text-green-700 hover:bg-green-100 transition-colors"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Mark as Posted
+                          </button>
+                        )}
+
+                        {/* Save as Draft — for pending posts */}
+                        {post.status === 'pending_approval' && (
+                          <button
+                            onClick={() => updatePost(post.id, 'save_draft')}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            Save as Draft
+                          </button>
+                        )}
 
                         {/* Time */}
                         <span className="ml-auto text-xs text-gray-400">
@@ -1576,7 +1648,7 @@ export default function SocialDashboard() {
       {/* ── Accounts Tab ─────────────────────────────────────────────────── */}
       {activeTab === 'accounts' && (
         <div>
-          <p className="text-sm text-gray-500 mb-6">Link your social accounts so Clark Kent can tailor posts to each platform. Posts are published by you — we provide the content and open the composer.</p>
+          <p className="text-sm text-gray-500 mb-6">Link your social accounts so posts can be tailored to each platform. Download the post package and manually publish to your accounts — auto-publishing is on the roadmap!</p>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {PLATFORMS.map(platform => {

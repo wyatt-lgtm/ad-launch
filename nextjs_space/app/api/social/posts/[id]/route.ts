@@ -63,6 +63,13 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     } else if (action === 'publish') {
       updateData.status = 'published';
       updateData.publishedAt = new Date();
+    } else if (action === 'save_draft') {
+      updateData.status = 'draft';
+    } else if (action === 'mark_downloaded') {
+      updateData.status = 'downloaded';
+    } else if (action === 'mark_manually_posted') {
+      updateData.status = 'manually_posted';
+      updateData.publishedAt = new Date();
     }
 
     const updated = await prisma.socialPost.update({
