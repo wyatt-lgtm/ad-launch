@@ -83,7 +83,7 @@ export default function LandingContent() {
             className="text-center max-w-3xl mx-auto"
           >
             <div className="inline-flex items-center gap-2 bg-white/10 text-blue-300 px-4 py-1.5 rounded-full text-sm font-medium mb-6 backdrop-blur-sm border border-white/10">
-              <Sparkles className="w-4 h-4" /> 9 sample posts · Completely free
+              <Sparkles className="w-4 h-4" /> 3 ready-to-post creatives · Completely free
             </div>
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white leading-tight mb-6">
               Turn Your Website Into a
@@ -93,7 +93,7 @@ export default function LandingContent() {
             </h1>
             <p className="text-lg sm:text-xl text-slate-400 mb-10 max-w-2xl mx-auto leading-relaxed">
               Enter your website URL and our AI agents will analyze your business, 
-              craft copy, and generate 9 ready-to-post social media creatives.
+              craft copy, and generate 3 ready-to-post social media creatives.
             </p>
           </motion.div>
 

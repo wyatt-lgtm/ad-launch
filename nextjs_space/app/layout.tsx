@@ -11,7 +11,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
   return {
     title: 'Ad Launch - Turn Your Website Into a Social Posting Factory',
-    description: 'Enter your URL and watch AI generate 9 ready-to-post social media creatives from your website, local news, and upcoming holidays.',
+    description: 'Enter your URL and watch AI generate 3 ready-to-post social media creatives from your website, local news, and upcoming holidays.',
     metadataBase: new URL(baseUrl),
     icons: {
       icon: '/favicon.svg',
