@@ -194,7 +194,8 @@ export async function createSocialMissions(
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
   const platforms = options.platforms || ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'];
   const mode = options.contentSourceMode || 'local_plus_interests';
-  const stories = options.stories || [];
+  const MAX_POSTS = 3;
+  const stories = (options.stories || []).slice(0, MAX_POSTS);
 
   // If no individual stories provided, fall back to single command with full brief
   if (stories.length === 0) {

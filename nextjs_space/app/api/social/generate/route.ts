@@ -82,12 +82,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl} stories=${scoutBrief.stories?.length || 0}`);
+    // Enforce max 3 posts — clamp stories array server-side regardless of what frontend sends
+    const MAX_POSTS = 3;
+    const rawStories: any[] = scoutBrief.stories || [];
+    const stories = rawStories.slice(0, MAX_POSTS);
+
+    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl} stories=${stories.length} (raw=${rawStories.length}, max=${MAX_POSTS})`);
 
     // Send to Tombstone creative workflow — one command per story
     const result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary || '', {
       contentSourceMode,
-      stories: scoutBrief.stories || [],
+      stories,
     });
 
     if (!result.success) {

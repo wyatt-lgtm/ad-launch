@@ -115,6 +115,7 @@ export default function SocialDashboard() {
   const [selectedStoryIds, setSelectedStoryIds] = useState<Set<string>>(new Set());
   const [scoutBriefData, setScoutBriefData] = useState<any>(null);
   const [showStoryPicker, setShowStoryPicker] = useState(false);
+  const [postCount, setPostCount] = useState<number>(1); // 1–3 posts max
 
   // Auth guard
   useEffect(() => {
@@ -230,14 +231,20 @@ export default function SocialDashboard() {
         });
         await sendToTombstone(scoutData.brief, scoutData.meta);
       } else {
-        // Pre-select all headlines by default
-        const allIds = new Set<string>();
-        categories.forEach(c => c.headlines.forEach(h => allIds.add(h.id)));
-        setSelectedStoryIds(allIds);
+        // Pre-select first `postCount` headlines
+        const preSelected = new Set<string>();
+        for (const c of categories) {
+          for (const h of c.headlines) {
+            if (preSelected.size >= postCount) break;
+            preSelected.add(h.id);
+          }
+          if (preSelected.size >= postCount) break;
+        }
+        setSelectedStoryIds(preSelected);
         setStoryCategories(categories);
         setShowStoryPicker(true);
         setScoutResult({
-          message: `Clark Kent found ${categories.length} categories with stories. Pick the ones you want posts about.`,
+          message: `Clark Kent found ${categories.length} categories with stories. Pick up to ${postCount} to turn into posts.`,
           meta: scoutData.meta,
         });
       }
@@ -327,10 +334,13 @@ export default function SocialDashboard() {
         return;
       }
 
+      // Final guard: clamp to postCount (max 3)
+      const clampedStories = stories.slice(0, Math.min(postCount, 3));
+
       const brief = {
         ...scoutBriefData,
-        stories,
-        scoutSummary: `Generating ${stories.length} individual posts from selected stories.`,
+        stories: clampedStories,
+        scoutSummary: `Generating ${clampedStories.length} individual post${clampedStories.length !== 1 ? 's' : ''} from selected stories.`,
       };
 
       await sendToTombstone(brief, null);
@@ -373,11 +383,20 @@ export default function SocialDashboard() {
     }, 30000);
   };
 
-  // Toggle a story selection
+  // Toggle a story selection — enforce postCount limit
   const toggleStory = (id: string) => {
     setSelectedStoryIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        if (next.size >= postCount) {
+          // At limit — remove the oldest selection to make room
+          const first = next.values().next().value;
+          if (first) next.delete(first);
+        }
+        next.add(id);
+      }
       return next;
     });
   };
@@ -584,14 +603,45 @@ export default function SocialDashboard() {
           </h1>
           <p className="text-gray-500 mt-1 text-sm">Clark Kent scouts local news and writes posts for your business.</p>
         </div>
-        <button
-          onClick={scoutForPosts}
-          disabled={scouting || showStoryPicker}
-          className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
-        >
-          {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-          {scouting ? 'Scouting Stories...' : 'Scout Stories'}
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Post count selector */}
+          <div className="flex items-center gap-1.5 bg-gray-100 rounded-lg p-1">
+            {[1, 2, 3].map(n => (
+              <button
+                key={n}
+                onClick={() => {
+                  setPostCount(n);
+                  // Trim selection if reducing count
+                  setSelectedStoryIds(prev => {
+                    if (prev.size <= n) return prev;
+                    const trimmed = new Set<string>();
+                    for (const id of prev) {
+                      if (trimmed.size >= n) break;
+                      trimmed.add(id);
+                    }
+                    return trimmed;
+                  });
+                }}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                  postCount === n
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+            <span className="text-xs text-gray-400 pl-1 pr-2">post{postCount !== 1 ? 's' : ''}</span>
+          </div>
+          <button
+            onClick={scoutForPosts}
+            disabled={scouting || showStoryPicker}
+            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
+          >
+            {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            {scouting ? 'Scouting Stories...' : 'Scout Stories'}
+          </button>
+        </div>
       </div>
 
       {/* Scout result toast */}
@@ -705,7 +755,10 @@ export default function SocialDashboard() {
 
             <div className="px-5 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
               <p className="text-xs text-gray-500">
-                {selectedStoryIds.size} of {storyCategories.reduce((s, c) => s + c.headlines.length, 0)} stories selected
+                {selectedStoryIds.size} of {postCount} post{postCount !== 1 ? 's' : ''} selected
+                {selectedStoryIds.size < postCount && (
+                  <span className="text-amber-600 ml-1">— pick {postCount - selectedStoryIds.size} more</span>
+                )}
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -720,7 +773,7 @@ export default function SocialDashboard() {
                   className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
                 >
                   {scouting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                  Generate from Selected
+                  Generate {selectedStoryIds.size} Post{selectedStoryIds.size !== 1 ? 's' : ''}
                 </button>
               </div>
             </div>
@@ -822,16 +875,34 @@ export default function SocialDashboard() {
                 <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">No social posts yet</h3>
                 <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
-                  Click &ldquo;Scout Stories&rdquo; to find trending and relevant news. You&apos;ll pick which stories to turn into social posts with artwork (usually 2-5 minutes).
+                  Choose how many posts to create, then click &ldquo;Scout Stories&rdquo; to find trending and relevant news. You&apos;ll pick which stories to turn into social posts with artwork.
                 </p>
-                <button
-                  onClick={scoutForPosts}
-                  disabled={scouting || showStoryPicker}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
-                >
-                  {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                  {scouting ? 'Scouting Stories...' : 'Scout Stories'}
-                </button>
+                <div className="flex items-center justify-center gap-3">
+                  <div className="flex items-center gap-1.5 bg-gray-100 rounded-lg p-1">
+                    {[1, 2, 3].map(n => (
+                      <button
+                        key={n}
+                        onClick={() => setPostCount(n)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                          postCount === n
+                            ? 'bg-blue-600 text-white shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                    <span className="text-xs text-gray-400 pl-1 pr-2">post{postCount !== 1 ? 's' : ''}</span>
+                  </div>
+                  <button
+                    onClick={scoutForPosts}
+                    disabled={scouting || showStoryPicker}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
+                  >
+                    {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                    {scouting ? 'Scouting Stories...' : 'Scout Stories'}
+                  </button>
+                </div>
               </div>
 
               {/* Link to existing ad assets on Dashboard */}
