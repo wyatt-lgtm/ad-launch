@@ -93,7 +93,10 @@ export default function FeedPreferences() {
   // Load business-level content settings when active business changes
   const loadSettings = useCallback(async () => {
     const bizId = bizCtx.activeBusiness?.id;
-    if (!bizId || status !== 'authenticated') return;
+    if (!bizId || status !== 'authenticated') {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
     try {
