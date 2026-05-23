@@ -109,13 +109,24 @@ export default function SocialDashboard() {
   const [pollStatus, setPollStatus] = useState<string | null>(null);
 
   // Story picker state
-  interface StoryHeadline { id: string; title: string; source: string; pubDate: string; link: string }
-  interface StoryCategory { industry: string; label: string; headlines: StoryHeadline[] }
-  const [storyCategories, setStoryCategories] = useState<StoryCategory[]>([]);
+  interface StoryCard {
+    id: string;
+    title: string;
+    source: string;
+    sourceType: string; // e.g. 'local_news', 'community', 'weather', 'interest', 'event'
+    section: 'local' | 'industry' | 'event'; // grouping
+    pubDate: string;
+    summary: string; // brief description or first-line context
+    relevance: string; // why this story matters for the business
+    link: string;
+    category?: string; // interest category label
+  }
+  const [storyCards, setStoryCards] = useState<StoryCard[]>([]);
   const [selectedStoryIds, setSelectedStoryIds] = useState<Set<string>>(new Set());
   const [scoutBriefData, setScoutBriefData] = useState<any>(null);
   const [showStoryPicker, setShowStoryPicker] = useState(false);
-  const [postCount, setPostCount] = useState<number>(1); // 1–3 posts max
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const MAX_STORIES = 3;
 
   // Auth guard
   useEffect(() => {
@@ -198,6 +209,7 @@ export default function SocialDashboard() {
     setScoutError(null);
     setScoutResult(null);
     setShowStoryPicker(false);
+    setSelectionError(null);
     try {
       const scoutRes = await fetch('/api/rss/clark-kent', {
         method: 'POST',
@@ -209,42 +221,77 @@ export default function SocialDashboard() {
 
       // Save full brief for phase 2
       setScoutBriefData(scoutData.brief);
+      const brief = scoutData.brief;
+      const cards: StoryCard[] = [];
+      const tradeCity = brief?.tradeArea?.city || '';
 
-      // Extract top 2 headlines per category for the picker
-      const categories: StoryCategory[] = (scoutData.brief?.interestBrief?.categories || []).map((cat: any) => ({
-        industry: cat.industry,
-        label: cat.label,
-        headlines: (cat.headlines || []).slice(0, 2).map((h: any) => ({
-          id: h.id || `${cat.industry}-${h.title?.slice(0, 20)}`,
-          title: h.title,
-          source: h.source,
-          pubDate: h.pubDate,
-          link: h.link,
-        })),
-      })).filter((c: StoryCategory) => c.headlines.length > 0);
+      // ── Local RSS stories ──
+      if (brief?.rssBrief?.headlines?.length > 0) {
+        for (const h of brief.rssBrief.headlines.slice(0, 8)) {
+          cards.push({
+            id: h.id || `local-${h.title?.slice(0, 20)}`,
+            title: h.title,
+            source: h.source,
+            sourceType: h.sourceType || 'local_news',
+            section: 'local',
+            pubDate: h.pubDate || '',
+            summary: `${h.sourceType === 'weather' ? 'Weather alert' : 'Local news'} from ${h.source}`,
+            relevance: tradeCity ? `Relevant to your ${tradeCity} trade area` : 'Local trade area news',
+            link: h.link || '',
+          });
+        }
+      }
 
-      if (categories.length === 0) {
-        // No interest stories found — fall back to direct generation
+      // ── Industry/interest stories ──
+      if (brief?.interestBrief?.categories?.length > 0) {
+        for (const cat of brief.interestBrief.categories) {
+          for (const h of (cat.headlines || []).slice(0, 3)) {
+            cards.push({
+              id: h.id || `${cat.industry}-${h.title?.slice(0, 20)}`,
+              title: h.title,
+              source: h.source,
+              sourceType: 'interest',
+              section: 'industry',
+              pubDate: h.pubDate || '',
+              summary: `Industry news in ${cat.label}`,
+              relevance: `Matches your selected interest: ${cat.label}`,
+              link: h.link || '',
+              category: cat.label,
+            });
+          }
+        }
+      }
+
+      // ── Upcoming events ──
+      if (brief?.upcomingEvents?.length > 0) {
+        for (const e of brief.upcomingEvents.slice(0, 4)) {
+          cards.push({
+            id: e.id || `event-${e.name?.slice(0, 20)}`,
+            title: e.name,
+            source: 'Holiday Calendar',
+            sourceType: 'event',
+            section: 'event',
+            pubDate: e.date || '',
+            summary: e.ideas || 'Upcoming holiday or event',
+            relevance: 'Seasonal content opportunity for engagement',
+            link: '',
+          });
+        }
+      }
+
+      if (cards.length === 0) {
         setScoutResult({
-          message: `No interest stories found. Sending scout brief directly to creative team...`,
+          message: 'No stories found. Sending scout brief directly to creative team...',
           meta: scoutData.meta,
         });
-        await sendToTombstone(scoutData.brief, scoutData.meta);
+        await sendToTombstone(brief, scoutData.meta);
       } else {
-        // Pre-select first `postCount` headlines
-        const preSelected = new Set<string>();
-        for (const c of categories) {
-          for (const h of c.headlines) {
-            if (preSelected.size >= postCount) break;
-            preSelected.add(h.id);
-          }
-          if (preSelected.size >= postCount) break;
-        }
-        setSelectedStoryIds(preSelected);
-        setStoryCategories(categories);
+        // Default: nothing selected — user must choose
+        setSelectedStoryIds(new Set());
+        setStoryCards(cards);
         setShowStoryPicker(true);
         setScoutResult({
-          message: `Clark Kent found ${categories.length} categories with stories. Pick up to ${postCount} to turn into posts.`,
+          message: `Clark Kent found ${cards.length} stories across ${new Set(cards.map(c => c.section)).size} categories. Select up to 3 to turn into posts.`,
           meta: scoutData.meta,
         });
       }
@@ -334,8 +381,8 @@ export default function SocialDashboard() {
         return;
       }
 
-      // Final guard: clamp to postCount (max 3)
-      const clampedStories = stories.slice(0, Math.min(postCount, 3));
+      // Final guard: clamp to MAX_STORIES
+      const clampedStories = stories.slice(0, MAX_STORIES);
 
       const brief = {
         ...scoutBriefData,
@@ -383,17 +430,17 @@ export default function SocialDashboard() {
     }, 30000);
   };
 
-  // Toggle a story selection — enforce postCount limit
+  // Toggle a story selection — enforce MAX_STORIES limit
   const toggleStory = (id: string) => {
+    setSelectionError(null);
     setSelectedStoryIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
       } else {
-        if (next.size >= postCount) {
-          // At limit — remove the oldest selection to make room
-          const first = next.values().next().value;
-          if (first) next.delete(first);
+        if (next.size >= MAX_STORIES) {
+          setSelectionError(`You can select up to ${MAX_STORIES} stories. Deselect one first.`);
+          return prev;
         }
         next.add(id);
       }
@@ -604,35 +651,6 @@ export default function SocialDashboard() {
           <p className="text-gray-500 mt-1 text-sm">Clark Kent scouts local news and writes posts for your business.</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Post count selector */}
-          <div className="flex items-center gap-1.5 bg-gray-100 rounded-lg p-1">
-            {[1, 2, 3].map(n => (
-              <button
-                key={n}
-                onClick={() => {
-                  setPostCount(n);
-                  // Trim selection if reducing count
-                  setSelectedStoryIds(prev => {
-                    if (prev.size <= n) return prev;
-                    const trimmed = new Set<string>();
-                    for (const id of prev) {
-                      if (trimmed.size >= n) break;
-                      trimmed.add(id);
-                    }
-                    return trimmed;
-                  });
-                }}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                  postCount === n
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {n}
-              </button>
-            ))}
-            <span className="text-xs text-gray-400 pl-1 pr-2">post{postCount !== 1 ? 's' : ''}</span>
-          </div>
           <button
             onClick={scoutForPosts}
             disabled={scouting || showStoryPicker}
@@ -695,90 +713,138 @@ export default function SocialDashboard() {
 
       {/* ── Story Picker ─────────────────────────────────────────────── */}
       <AnimatePresence>
-        {showStoryPicker && storyCategories.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="mb-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden"
-          >
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-800">Pick Your Stories</h3>
-                <p className="text-xs text-gray-500 mt-0.5">Select which headlines to turn into social posts</p>
-              </div>
-              <button
-                onClick={() => { setShowStoryPicker(false); setStoryCategories([]); }}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <XCircle className="w-5 h-5" />
-              </button>
-            </div>
+        {showStoryPicker && storyCards.length > 0 && (() => {
+          const localCards = storyCards.filter(c => c.section === 'local');
+          const industryCards = storyCards.filter(c => c.section === 'industry');
+          const eventCards = storyCards.filter(c => c.section === 'event');
+          const sections = [
+            { key: 'local', label: '📍 Local Stories', cards: localCards },
+            { key: 'industry', label: '🏢 Industry Stories', cards: industryCards },
+            { key: 'event', label: '🎉 Upcoming Events', cards: eventCards },
+          ].filter(s => s.cards.length > 0);
 
-            <div className="divide-y divide-gray-50">
-              {storyCategories.map(cat => (
-                <div key={cat.industry} className="px-5 py-3">
-                  <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-2">{cat.label}</p>
-                  <div className="space-y-2">
-                    {cat.headlines.map(h => {
-                      const isSelected = selectedStoryIds.has(h.id);
-                      return (
-                        <button
-                          key={h.id}
-                          onClick={() => toggleStory(h.id)}
-                          className={`w-full text-left flex items-start gap-3 p-3 rounded-lg border transition-all ${
-                            isSelected
-                              ? 'border-blue-300 bg-blue-50'
-                              : 'border-gray-100 bg-gray-50 hover:border-gray-200'
-                          }`}
-                        >
-                          <div className={`mt-0.5 shrink-0 w-5 h-5 rounded flex items-center justify-center ${
-                            isSelected ? 'bg-blue-600 text-white' : 'border-2 border-gray-300'
-                          }`}>
-                            {isSelected && <Check className="w-3.5 h-3.5" />}
-                          </div>
-                          <div className="min-w-0">
-                            <p className={`text-sm leading-snug ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
-                              {h.title}
-                            </p>
-                            <p className="text-xs text-gray-400 mt-0.5 truncate">
-                              {h.source} · {h.pubDate?.split('T')[0] || 'recent'}
-                            </p>
-                          </div>
-                        </button>
-                      );
-                    })}
+          return (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mb-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden"
+            >
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Pick Your Stories</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Select up to {MAX_STORIES} stories to turn into social posts</p>
+                </div>
+                <button
+                  onClick={() => { setShowStoryPicker(false); setStoryCards([]); setSelectionError(null); }}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto">
+                {sections.map(sec => (
+                  <div key={sec.key} className="px-5 py-4">
+                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">{sec.label}</p>
+                    <div className="space-y-2">
+                      {sec.cards.map(card => {
+                        const isSelected = selectedStoryIds.has(card.id);
+                        return (
+                          <button
+                            key={card.id}
+                            onClick={() => toggleStory(card.id)}
+                            className={`w-full text-left flex items-start gap-3 p-3 rounded-lg border transition-all ${
+                              isSelected
+                                ? 'border-blue-300 bg-blue-50 shadow-sm'
+                                : 'border-gray-100 bg-gray-50 hover:border-gray-200'
+                            }`}
+                          >
+                            <div className={`mt-0.5 shrink-0 w-5 h-5 rounded flex items-center justify-center ${
+                              isSelected ? 'bg-blue-600 text-white' : 'border-2 border-gray-300'
+                            }`}>
+                              {isSelected && <Check className="w-3.5 h-3.5" />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-sm leading-snug ${isSelected ? 'text-gray-900 font-medium' : 'text-gray-700'}`}>
+                                {card.title}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
+                                {card.source && (
+                                  <span className="text-xs text-gray-500">{card.source}</span>
+                                )}
+                                {card.sourceType && card.sourceType !== 'interest' && card.sourceType !== 'event' && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 font-medium uppercase">
+                                    {card.sourceType.replace(/_/g, ' ')}
+                                  </span>
+                                )}
+                                {card.category && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">
+                                    {card.category}
+                                  </span>
+                                )}
+                                {card.pubDate && (
+                                  <span className="text-xs text-gray-400">{card.pubDate.split('T')[0]}</span>
+                                )}
+                              </div>
+                              {card.summary && (
+                                <p className="text-xs text-gray-500 mt-1 line-clamp-2">{card.summary}</p>
+                              )}
+                              {card.relevance && (
+                                <p className="text-xs text-blue-600 mt-0.5 italic">{card.relevance}</p>
+                              )}
+                              {card.link && (
+                                <a
+                                  href={card.link}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 mt-1"
+                                >
+                                  Source <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="px-5 py-4 border-t border-gray-100 bg-gray-50">
+                {selectionError && (
+                  <p className="text-xs text-red-600 mb-2 font-medium">{selectionError}</p>
+                )}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-gray-500">
+                    {selectedStoryIds.size} of {MAX_STORIES} max selected
+                    {selectedStoryIds.size === 0 && (
+                      <span className="text-amber-600 ml-1">— select at least 1 story</span>
+                    )}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => { setShowStoryPicker(false); setStoryCards([]); setSelectionError(null); }}
+                      className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={generateFromSelected}
+                      disabled={selectedStoryIds.size === 0 || scouting}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
+                    >
+                      {scouting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      Create {selectedStoryIds.size} Post{selectedStoryIds.size !== 1 ? 's' : ''}
+                    </button>
                   </div>
                 </div>
-              ))}
-            </div>
-
-            <div className="px-5 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
-              <p className="text-xs text-gray-500">
-                {selectedStoryIds.size} of {postCount} post{postCount !== 1 ? 's' : ''} selected
-                {selectedStoryIds.size < postCount && (
-                  <span className="text-amber-600 ml-1">— pick {postCount - selectedStoryIds.size} more</span>
-                )}
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { setShowStoryPicker(false); setStoryCategories([]); }}
-                  className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={generateFromSelected}
-                  disabled={selectedStoryIds.size === 0 || scouting}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
-                >
-                  {scouting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                  Generate {selectedStoryIds.size} Post{selectedStoryIds.size !== 1 ? 's' : ''}
-                </button>
               </div>
-            </div>
-          </motion.div>
-        )}
+            </motion.div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* Poll status banner */}
@@ -875,25 +941,9 @@ export default function SocialDashboard() {
                 <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">No social posts yet</h3>
                 <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
-                  Choose how many posts to create, then click &ldquo;Scout Stories&rdquo; to find trending and relevant news. You&apos;ll pick which stories to turn into social posts with artwork.
+                  Click &ldquo;Scout Stories&rdquo; to find trending local and industry news. You&apos;ll pick up to {MAX_STORIES} stories to turn into social posts with artwork.
                 </p>
-                <div className="flex items-center justify-center gap-3">
-                  <div className="flex items-center gap-1.5 bg-gray-100 rounded-lg p-1">
-                    {[1, 2, 3].map(n => (
-                      <button
-                        key={n}
-                        onClick={() => setPostCount(n)}
-                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                          postCount === n
-                            ? 'bg-blue-600 text-white shadow-sm'
-                            : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                    <span className="text-xs text-gray-400 pl-1 pr-2">post{postCount !== 1 ? 's' : ''}</span>
-                  </div>
+                <div className="flex items-center justify-center">
                   <button
                     onClick={scoutForPosts}
                     disabled={scouting || showStoryPicker}
