@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   const start = Date.now();
   try {
     const body = await req.json();
-    const { businessId, analysisId, zip: directZip, radius = 25, _internalUserId } = body;
+    const { businessId, analysisId, zip: directZip, radius = 25, contentSourceMode: modeOverride, _internalUserId } = body;
 
     // Auth: allow internal server-to-server calls with _internalUserId
     let userId: string;
@@ -91,6 +91,12 @@ export async function POST(req: NextRequest) {
         resolvedBusinessId = biz.id;
         contentSourceMode = (biz.contentSourceMode || 'local_plus_interests') as ContentSourceMode;
       }
+    }
+
+    // Allow per-request mode override from the frontend
+    const validModes: ContentSourceMode[] = ['local_only', 'local_plus_interests', 'interests_only'];
+    if (modeOverride && validModes.includes(modeOverride)) {
+      contentSourceMode = modeOverride;
     }
 
     const includeLocal = contentSourceMode !== 'interests_only';
@@ -204,6 +210,7 @@ export async function POST(req: NextRequest) {
       meta: {
         contentSourceMode,
         businessId: resolvedBusinessId,
+        hasLocation: !!(businessZip || businessCity),
         zip: tradeArea.zip,
         city: tradeArea.city,
         state: tradeArea.state,

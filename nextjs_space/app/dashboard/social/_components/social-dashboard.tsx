@@ -108,18 +108,23 @@ export default function SocialDashboard() {
   const [polling, setPolling] = useState(false);
   const [pollStatus, setPollStatus] = useState<string | null>(null);
 
+  // Scouting mode
+  type ScoutMode = 'local_only' | 'local_plus_interests' | 'interests_only';
+  const [scoutMode, setScoutMode] = useState<ScoutMode>('local_plus_interests');
+  const [missingLocation, setMissingLocation] = useState(false);
+
   // Story picker state
   interface StoryCard {
     id: string;
     title: string;
     source: string;
-    sourceType: string; // e.g. 'local_news', 'community', 'weather', 'interest', 'event'
-    section: 'local' | 'industry' | 'event'; // grouping
+    sourceType: 'local' | 'industry' | 'national'; // unified source_type
+    section: 'local' | 'industry' | 'event'; // grouping for display
     pubDate: string;
-    summary: string; // brief description or first-line context
-    relevance: string; // why this story matters for the business
+    summary: string;
+    relevance: string;
     link: string;
-    category?: string; // interest category label
+    category?: string;
   }
   const [storyCards, setStoryCards] = useState<StoryCard[]>([]);
   const [selectedStoryIds, setSelectedStoryIds] = useState<Set<string>>(new Set());
@@ -210,11 +215,18 @@ export default function SocialDashboard() {
     setScoutResult(null);
     setShowStoryPicker(false);
     setSelectionError(null);
+    setMissingLocation(false);
     try {
+      const scoutBody: Record<string, any> = {
+        contentSourceMode: scoutMode,
+      };
+      // Pass businessId if available so Clark Kent uses the right business
+      if (activeBusinessId) scoutBody.businessId = activeBusinessId;
+
       const scoutRes = await fetch('/api/rss/clark-kent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(scoutBody),
       });
       const scoutData = await scoutRes.json();
       if (!scoutRes.ok) throw new Error(scoutData.error || 'Scout failed');
@@ -222,17 +234,26 @@ export default function SocialDashboard() {
       // Save full brief for phase 2
       setScoutBriefData(scoutData.brief);
       const brief = scoutData.brief;
+      const meta = scoutData.meta;
       const cards: StoryCard[] = [];
       const tradeCity = brief?.tradeArea?.city || '';
+      const includesLocal = scoutMode !== 'interests_only';
+      const includesInterests = scoutMode !== 'local_only';
+      const hasLocation = meta?.hasLocation ?? !!(brief?.tradeArea?.zip || brief?.tradeArea?.city);
 
-      // ── Local RSS stories ──
-      if (brief?.rssBrief?.headlines?.length > 0) {
+      // Track if location is missing when local was requested
+      if (includesLocal && !hasLocation) {
+        setMissingLocation(true);
+      }
+
+      // ── Local RSS stories (only when mode includes local) ──
+      if (includesLocal && brief?.rssBrief?.headlines?.length > 0) {
         for (const h of brief.rssBrief.headlines.slice(0, 8)) {
           cards.push({
             id: h.id || `local-${h.title?.slice(0, 20)}`,
             title: h.title,
             source: h.source,
-            sourceType: h.sourceType || 'local_news',
+            sourceType: 'local',
             section: 'local',
             pubDate: h.pubDate || '',
             summary: `${h.sourceType === 'weather' ? 'Weather alert' : 'Local news'} from ${h.source}`,
@@ -242,15 +263,15 @@ export default function SocialDashboard() {
         }
       }
 
-      // ── Industry/interest stories ──
-      if (brief?.interestBrief?.categories?.length > 0) {
+      // ── Industry/interest stories (only when mode includes interests) ──
+      if (includesInterests && brief?.interestBrief?.categories?.length > 0) {
         for (const cat of brief.interestBrief.categories) {
           for (const h of (cat.headlines || []).slice(0, 3)) {
             cards.push({
               id: h.id || `${cat.industry}-${h.title?.slice(0, 20)}`,
               title: h.title,
               source: h.source,
-              sourceType: 'interest',
+              sourceType: 'industry',
               section: 'industry',
               pubDate: h.pubDate || '',
               summary: `Industry news in ${cat.label}`,
@@ -262,14 +283,14 @@ export default function SocialDashboard() {
         }
       }
 
-      // ── Upcoming events ──
+      // ── Upcoming events (always shown — classified as national) ──
       if (brief?.upcomingEvents?.length > 0) {
         for (const e of brief.upcomingEvents.slice(0, 4)) {
           cards.push({
             id: e.id || `event-${e.name?.slice(0, 20)}`,
             title: e.name,
             source: 'Holiday Calendar',
-            sourceType: 'event',
+            sourceType: 'national',
             section: 'event',
             pubDate: e.date || '',
             summary: e.ideas || 'Upcoming holiday or event',
@@ -279,20 +300,27 @@ export default function SocialDashboard() {
         }
       }
 
-      if (cards.length === 0) {
+      // Always show the picker — even if cards are empty (so user sees missing-location message)
+      setSelectedStoryIds(new Set());
+      setStoryCards(cards);
+      setShowStoryPicker(true);
+
+      if (cards.length > 0) {
+        const sectionNames = [...new Set(cards.map(c => c.section))];
         setScoutResult({
-          message: 'No stories found. Sending scout brief directly to creative team...',
-          meta: scoutData.meta,
+          message: `Clark Kent found ${cards.length} stories across ${sectionNames.length} ${sectionNames.length === 1 ? 'category' : 'categories'}. Select up to ${MAX_STORIES} to turn into posts.`,
+          meta,
         });
-        await sendToTombstone(brief, scoutData.meta);
-      } else {
-        // Default: nothing selected — user must choose
-        setSelectedStoryIds(new Set());
-        setStoryCards(cards);
-        setShowStoryPicker(true);
+      } else if (includesLocal && !hasLocation) {
+        // Local-only mode with no location
         setScoutResult({
-          message: `Clark Kent found ${cards.length} stories across ${new Set(cards.map(c => c.section)).size} categories. Select up to 3 to turn into posts.`,
-          meta: scoutData.meta,
+          message: 'No location found on your business profile. Complete your profile to discover local stories.',
+          meta,
+        });
+      } else {
+        setScoutResult({
+          message: 'No stories found for the selected scouting mode. Try a different mode or check your content settings.',
+          meta,
         });
       }
     } catch (e: any) {
@@ -642,7 +670,7 @@ export default function SocialDashboard() {
       )}
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Newspaper className="w-6 h-6 text-blue-600" />
@@ -650,16 +678,38 @@ export default function SocialDashboard() {
           </h1>
           <p className="text-gray-500 mt-1 text-sm">Clark Kent scouts local news and writes posts for your business.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <button
+          onClick={scoutForPosts}
+          disabled={scouting || showStoryPicker}
+          className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
+        >
+          {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+          {scouting ? 'Scouting Stories...' : 'Scout Stories'}
+        </button>
+      </div>
+
+      {/* Scout mode selector */}
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-gray-500 mr-1">Scout mode:</span>
+        {([
+          { value: 'local_only' as ScoutMode, label: '📍 Local Only', desc: 'Local news from your trade area' },
+          { value: 'local_plus_interests' as ScoutMode, label: '📍+🏢 Local + Categories', desc: 'Local news plus your selected industries' },
+          { value: 'interests_only' as ScoutMode, label: '🏢 Categories Only', desc: 'Industry news from your selected categories' },
+        ]).map(mode => (
           <button
-            onClick={scoutForPosts}
-            disabled={scouting || showStoryPicker}
-            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
+            key={mode.value}
+            onClick={() => setScoutMode(mode.value)}
+            disabled={scouting}
+            title={mode.desc}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
+              scoutMode === mode.value
+                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+            } disabled:opacity-60`}
           >
-            {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            {scouting ? 'Scouting Stories...' : 'Scout Stories'}
+            {mode.label}
           </button>
-        </div>
+        ))}
       </div>
 
       {/* Scout result toast */}
@@ -713,15 +763,17 @@ export default function SocialDashboard() {
 
       {/* ── Story Picker ─────────────────────────────────────────────── */}
       <AnimatePresence>
-        {showStoryPicker && storyCards.length > 0 && (() => {
+        {showStoryPicker && (() => {
           const localCards = storyCards.filter(c => c.section === 'local');
           const industryCards = storyCards.filter(c => c.section === 'industry');
           const eventCards = storyCards.filter(c => c.section === 'event');
+          const includesLocal = scoutMode !== 'interests_only';
+          const includesInterests = scoutMode !== 'local_only';
           const sections = [
-            { key: 'local', label: '📍 Local Stories', cards: localCards },
-            { key: 'industry', label: '🏢 Industry Stories', cards: industryCards },
+            ...(includesLocal ? [{ key: 'local', label: '📍 Local Stories', cards: localCards }] : []),
+            ...(includesInterests ? [{ key: 'industry', label: '🏢 Industry Stories', cards: industryCards }] : []),
             { key: 'event', label: '🎉 Upcoming Events', cards: eventCards },
-          ].filter(s => s.cards.length > 0);
+          ];
 
           return (
             <motion.div
@@ -747,9 +799,25 @@ export default function SocialDashboard() {
                 {sections.map(sec => (
                   <div key={sec.key} className="px-5 py-4">
                     <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">{sec.label}</p>
+
+                    {/* Missing location message for Local section */}
+                    {sec.key === 'local' && missingLocation && sec.cards.length === 0 && (
+                      <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 text-sm text-amber-800">
+                        <MapPin className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+                        Complete your business profile location to discover local stories.
+                      </div>
+                    )}
+
+                    {/* Empty state for sections with cards expected but none found */}
+                    {sec.cards.length === 0 && !(sec.key === 'local' && missingLocation) && (
+                      <p className="text-xs text-gray-400 italic py-2">No stories found in this category.</p>
+                    )}
+
                     <div className="space-y-2">
                       {sec.cards.map(card => {
                         const isSelected = selectedStoryIds.has(card.id);
+                        const typeBadgeMap: Record<string, { bg: string; text: string }> = { local: { bg: 'bg-green-100', text: 'text-green-700' }, industry: { bg: 'bg-purple-100', text: 'text-purple-700' }, national: { bg: 'bg-gray-200', text: 'text-gray-600' } };
+                        const typeBadge = typeBadgeMap[card.sourceType] || typeBadgeMap.national;
                         return (
                           <button
                             key={card.id}
@@ -773,11 +841,9 @@ export default function SocialDashboard() {
                                 {card.source && (
                                   <span className="text-xs text-gray-500">{card.source}</span>
                                 )}
-                                {card.sourceType && card.sourceType !== 'interest' && card.sourceType !== 'event' && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 font-medium uppercase">
-                                    {card.sourceType.replace(/_/g, ' ')}
-                                  </span>
-                                )}
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium uppercase ${typeBadge.bg} ${typeBadge.text}`}>
+                                  {card.sourceType}
+                                </span>
                                 {card.category && (
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">
                                     {card.category}
@@ -941,7 +1007,7 @@ export default function SocialDashboard() {
                 <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">No social posts yet</h3>
                 <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
-                  Click &ldquo;Scout Stories&rdquo; to find trending local and industry news. You&apos;ll pick up to {MAX_STORIES} stories to turn into social posts with artwork.
+                  Choose a scout mode above, then click &ldquo;Scout Stories&rdquo; to discover local and industry news. You&apos;ll pick up to {MAX_STORIES} stories to turn into social posts with artwork.
                 </p>
                 <div className="flex items-center justify-center">
                   <button
