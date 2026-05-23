@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   Loader2, Check, Rss, ArrowRight, Sparkles,
   Building2, Plus,
-  MapPin, Globe2, Layers,
+  MapPin, Globe2, Layers, Mail, Clock, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -70,6 +70,20 @@ export default function FeedPreferences() {
   const [scouting, setScouting] = useState(false);
   const lastSavedRef = useRef<Set<string>>(new Set());
 
+  // Daily Scout Email settings
+  const [showScoutEmail, setShowScoutEmail] = useState(false);
+  const [scoutEmailEnabled, setScoutEmailEnabled] = useState(false);
+  const [scoutRecipient, setScoutRecipient] = useState('');
+  const [scoutSendTime, setScoutSendTime] = useState('14:00');
+  const [scoutIncludeLocal, setScoutIncludeLocal] = useState(true);
+  const [scoutIncludeIndustry, setScoutIncludeIndustry] = useState(true);
+  const [scoutIncludeNational, setScoutIncludeNational] = useState(true);
+  const [scoutMaxStories, setScoutMaxStories] = useState(10);
+  const [scoutEmailSaving, setScoutEmailSaving] = useState(false);
+  const [scoutEmailSaved, setScoutEmailSaved] = useState(false);
+  const [scoutEmailError, setScoutEmailError] = useState('');
+  const [scoutEmailLoaded, setScoutEmailLoaded] = useState(false);
+
   useEffect(() => {
     if (status === 'unauthenticated') {
       router.replace('/login');
@@ -109,6 +123,62 @@ export default function FeedPreferences() {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  // Load scout email settings when business changes
+  const loadScoutEmailSettings = useCallback(async () => {
+    const bizId = bizCtx.activeBusiness?.id;
+    if (!bizId || status !== 'authenticated') return;
+    try {
+      const res = await fetch(`/api/businesses/${bizId}/scout-email-settings`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const s = data.settings;
+      setScoutEmailEnabled(s.enabled ?? false);
+      setScoutRecipient(s.recipientEmail ?? '');
+      setScoutSendTime(s.sendTimeUtc ?? '14:00');
+      setScoutIncludeLocal(s.includeLocal ?? true);
+      setScoutIncludeIndustry(s.includeIndustry ?? true);
+      setScoutIncludeNational(s.includeNational ?? true);
+      setScoutMaxStories(s.maxStories ?? 10);
+      setScoutEmailLoaded(true);
+    } catch {}
+  }, [bizCtx.activeBusiness?.id, status]);
+
+  useEffect(() => {
+    loadScoutEmailSettings();
+  }, [loadScoutEmailSettings]);
+
+  const saveScoutEmailSettings = async () => {
+    const bizId = bizCtx.activeBusiness?.id;
+    if (!bizId) return;
+    setScoutEmailSaving(true);
+    setScoutEmailError('');
+    setScoutEmailSaved(false);
+    try {
+      const res = await fetch(`/api/businesses/${bizId}/scout-email-settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: scoutEmailEnabled,
+          recipientEmail: scoutRecipient,
+          sendTimeUtc: scoutSendTime,
+          includeLocal: scoutIncludeLocal,
+          includeIndustry: scoutIncludeIndustry,
+          includeNational: scoutIncludeNational,
+          maxStories: scoutMaxStories,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Failed to save');
+      }
+      setScoutEmailSaved(true);
+    } catch (e: any) {
+      setScoutEmailError(e.message || 'Failed to save');
+    } finally {
+      setScoutEmailSaving(false);
+    }
+  };
 
   const toggle = (key: string) => {
     setSaved(false);
@@ -378,13 +448,144 @@ export default function FeedPreferences() {
         </div>
       </div>
 
-      <p className="text-center text-xs text-gray-400">
+      <p className="text-center text-xs text-gray-400 mb-8">
         {contentMode === 'local_only'
           ? 'Posts will be generated using hyper-local news from your business\'s trade area and upcoming events.'
           : contentMode === 'interests_only'
             ? 'Posts will be generated using national interest feeds and upcoming events — no ZIP code required.'
             : 'Your selected feeds will be mixed with local news, giving your content a national-trending angle alongside hyper-local stories.'}
       </p>
+
+      {/* ── Daily Scout Report Email Settings ──────────────────────────── */}
+      {bizCtx.activeBusiness && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-6">
+          <button
+            onClick={() => setShowScoutEmail(!showScoutEmail)}
+            className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <Mail className="w-5 h-5 text-blue-600" />
+              <div className="text-left">
+                <h3 className="text-sm font-semibold text-gray-800">Daily Scout Report Email</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {scoutEmailEnabled ? 'Enabled — receiving daily story recommendations' : 'Get story recommendations delivered to your inbox'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {scoutEmailEnabled && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold">ON</span>
+              )}
+              {showScoutEmail ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+            </div>
+          </button>
+
+          {showScoutEmail && (
+            <div className="px-5 pb-5 border-t border-gray-100 pt-4 space-y-4">
+              {/* Enable toggle */}
+              <label className="flex items-center gap-3 cursor-pointer">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={scoutEmailEnabled}
+                    onChange={(e) => { setScoutEmailEnabled(e.target.checked); setScoutEmailSaved(false); }}
+                    className="sr-only"
+                  />
+                  <div className={`w-10 h-6 rounded-full transition-colors ${
+                    scoutEmailEnabled ? 'bg-blue-600' : 'bg-gray-300'
+                  }`}>
+                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform mt-1 ${
+                      scoutEmailEnabled ? 'translate-x-5' : 'translate-x-1'
+                    }`} />
+                  </div>
+                </div>
+                <span className="text-sm font-medium text-gray-700">Enable Daily Scout Report</span>
+              </label>
+
+              {/* Recipient email */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Recipient email</label>
+                <input
+                  type="email"
+                  value={scoutRecipient}
+                  onChange={(e) => { setScoutRecipient(e.target.value); setScoutEmailSaved(false); }}
+                  placeholder="you@business.com"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Send time */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" /> Preferred send time (UTC)
+                </label>
+                <input
+                  type="time"
+                  value={scoutSendTime}
+                  onChange={(e) => { setScoutSendTime(e.target.value); setScoutEmailSaved(false); }}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Story sections to include */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">Include in report</label>
+                <div className="flex flex-wrap gap-3">
+                  {[
+                    { label: '📍 Local Stories', checked: scoutIncludeLocal, setter: setScoutIncludeLocal },
+                    { label: '🏢 Industry Stories', checked: scoutIncludeIndustry, setter: setScoutIncludeIndustry },
+                    { label: '🎉 National & Events', checked: scoutIncludeNational, setter: setScoutIncludeNational },
+                  ].map(opt => (
+                    <label key={opt.label} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={opt.checked}
+                        onChange={(e) => { opt.setter(e.target.checked); setScoutEmailSaved(false); }}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm text-gray-700">{opt.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Max stories */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Max stories per report</label>
+                <select
+                  value={scoutMaxStories}
+                  onChange={(e) => { setScoutMaxStories(Number(e.target.value)); setScoutEmailSaved(false); }}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  {[5, 10, 15, 20, 25].map(n => (
+                    <option key={n} value={n}>{n} stories</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Save button */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={saveScoutEmailSettings}
+                  disabled={scoutEmailSaving}
+                  className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {scoutEmailSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                  {scoutEmailSaving ? 'Saving...' : 'Save Email Settings'}
+                </button>
+                {scoutEmailSaved && (
+                  <span className="text-sm text-green-600 font-medium flex items-center gap-1">
+                    <Check className="w-4 h-4" /> Saved!
+                  </span>
+                )}
+                {scoutEmailError && (
+                  <span className="text-sm text-red-500">{scoutEmailError}</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

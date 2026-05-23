@@ -10,50 +10,83 @@ datasource db {
 }
 
 model User {
-  id                String     @id @default(cuid())
-  email             String     @unique
+  id                String               @id @default(cuid())
+  email             String               @unique
   password          String
-  confirmed         Boolean    @default(false)
-  confirmationToken String?    @unique
-  freeAdsUsed       Int        @default(0)
-  paidAdsCount      Int        @default(0)
-  role              String     @default("user") // "user", "admin"
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  confirmed         Boolean              @default(false)
+  confirmationToken String?              @unique
+  freeAdsUsed       Int                  @default(0)
+  paidAdsCount      Int                  @default(0)
+  role              String               @default("user")
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
   analyses          Analysis[]
   businesses        Business[]
+  passwordResets    PasswordResetToken[]
   socialAccounts    SocialAccount[]
   socialPosts       SocialPost[]
   feedPreferences   UserFeedPreference[]
-  passwordResets    PasswordResetToken[]
 }
 
 model Business {
-  id            String     @id @default(cuid())
-  userId        String
-  websiteUrl    String
-  businessName  String?
-  businessAddr  String?
-  businessCity  String?
-  businessState String?
-  businessZip   String?
-  businessPhone String?
-  contentSourceMode String @default("local_plus_interests") // "local_only" | "local_plus_interests" | "interests_only"
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  analyses      Analysis[]
-  feedPreferences BusinessFeedPreference[]
-  socialPosts   SocialPost[]
+  id                String                   @id @default(cuid())
+  userId            String
+  websiteUrl        String
+  businessName      String?
+  businessAddr      String?
+  businessCity      String?
+  businessState     String?
+  businessZip       String?
+  businessPhone     String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  contentSourceMode String                   @default("local_plus_interests")
+  analyses          Analysis[]
+  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedPreferences   BusinessFeedPreference[]
+  socialPosts       SocialPost[]
+  scoutEmailSettings ScoutEmailSettings?
+  scoutEmailHistory  ScoutEmailHistory[]
 
   @@unique([userId, websiteUrl])
   @@index([userId])
 }
 
+model ScoutEmailSettings {
+  id              String   @id @default(cuid())
+  businessId      String   @unique
+  enabled         Boolean  @default(false)
+  recipientEmail  String   @default("")
+  sendTimeUtc     String   @default("14:00")
+  includeLocal    Boolean  @default(true)
+  includeIndustry Boolean  @default(true)
+  includeNational Boolean  @default(true)
+  maxStories      Int      @default(10)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([enabled])
+}
+
+model ScoutEmailHistory {
+  id          String   @id @default(cuid())
+  businessId  String
+  storyTitle  String
+  storyLink   String   @default("")
+  storySource String   @default("")
+  sourceType  String   @default("local")
+  sentAt      DateTime @default(now())
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, sentAt])
+  @@index([businessId, storyTitle])
+}
+
 model BusinessFeedPreference {
   id         String   @id @default(cuid())
   businessId String
-  industry   String   // matches RssFeed.industry values
+  industry   String
   enabled    Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -79,7 +112,7 @@ model PasswordResetToken {
 model UserFeedPreference {
   id        String   @id @default(cuid())
   userId    String
-  industry  String   // matches RssFeed.industry values
+  industry  String
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -90,33 +123,30 @@ model UserFeedPreference {
 }
 
 model Analysis {
-  id         String   @id @default(cuid())
-  userId     String?
-  businessId String?
-  websiteUrl String
-  missionId        String?
-  socialMissionId  String?   // Tombstone workflow ID for social content (Clark Kent scout → Zig → creative chain)
-  status           String   @default("pending")
-  results    Json?    @db.JsonB
-  seoData    Json?    @db.JsonB
-  postingPlan Json?   @db.JsonB
-
-  // Business location — auto-extracted during audit, user-confirmed
-  businessName  String?
-  businessAddr  String?           // Full street address
-  businessCity  String?
-  businessState String?           // 2-letter state code (e.g. "CO")
-  businessZip   String?           // 5-digit ZIP
-  businessPhone String?
-  geoConfirmed  Boolean  @default(false)  // User has confirmed/corrected
-  geoSource     String?           // "schema_org", "footer_parse", "contact_page", "user_input", "research_pipeline"
-
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  user        User?    @relation(fields: [userId], references: [id])
-  business    Business? @relation(fields: [businessId], references: [id])
-  ads         Ad[]
-  socialPosts SocialPost[]
+  id              String       @id @default(cuid())
+  userId          String?
+  websiteUrl      String
+  missionId       String?
+  status          String       @default("pending")
+  results         Json?
+  seoData         Json?
+  postingPlan     Json?
+  businessName    String?
+  businessAddr    String?
+  businessCity    String?
+  businessState   String?
+  businessZip     String?
+  businessPhone   String?
+  geoConfirmed    Boolean      @default(false)
+  geoSource       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  socialMissionId String?
+  businessId      String?
+  ads             Ad[]
+  business        Business?    @relation(fields: [businessId], references: [id])
+  user            User?        @relation(fields: [userId], references: [id])
+  socialPosts     SocialPost[]
 
   @@index([userId])
   @@index([businessId])
@@ -127,59 +157,49 @@ model Analysis {
 }
 
 model Ad {
-  id              String   @id @default(cuid())
-  analysisId      String
-  imageUrl        String?
-  watermarkedUrl  String?
-  caption         String?  @db.Text
-  headline        String?
-  watermarked     Boolean  @default(true)
-  lane            String?  // "website" | "news" | "holiday"
-  createdAt       DateTime @default(now())
-  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  analysisId     String
+  imageUrl       String?
+  watermarkedUrl String?
+  caption        String?
+  headline       String?
+  watermarked    Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  lane           String?
+  analysis       Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
 
   @@index([analysisId])
 }
 
-// ═══════════════════════════════════════════════════════════════
-// RSS INTELLIGENCE SYSTEM — Content Policy
-// ═══════════════════════════════════════════════════════════════
-
 model ContentPolicy {
   id          String   @id @default(cuid())
-  category    String   @unique  // e.g. "sexual_adult", "political_opinion", "violence_graphic"
-  action      String             // "hard_block", "soft_filter", "allow"
-  label       String?            // Human-readable label: "Sexual / Adult Content"
-  description String?  @db.Text  // Detailed description of what this policy covers
-  keywords    String[] @default([]) // Keyword patterns for fast matching
+  category    String   @unique
+  action      String
+  label       String?
+  description String?
+  keywords    String[] @default([])
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
-// ═══════════════════════════════════════════════════════════════
-// RSS INTELLIGENCE SYSTEM — Geography Hierarchy
-// State → County → City ↔ ZIP (many-to-many via GeoCityZip)
-// PostGIS-ready: lat/lng stored as Float, geometry column deferred
-// ═══════════════════════════════════════════════════════════════
-
 model GeoState {
   id        String      @id @default(cuid())
-  code      String      @unique  // "CO", "TX", "DC"
-  name      String               // "Colorado", "Texas"
-  fipsCode  String?     @unique  // "08", "48"
-  counties  GeoCounty[]
+  code      String      @unique
+  name      String
+  fipsCode  String?     @unique
   createdAt DateTime    @default(now())
+  counties  GeoCounty[]
 }
 
 model GeoCounty {
   id        String    @id @default(cuid())
-  name      String             // "El Paso County"
-  fipsCode  String?   @unique  // "08041"
+  name      String
+  fipsCode  String?   @unique
   stateId   String
-  state     GeoState  @relation(fields: [stateId], references: [id])
-  cities    GeoCity[]
   createdAt DateTime  @default(now())
+  cities    GeoCity[]
+  state     GeoState  @relation(fields: [stateId], references: [id])
 
   @@index([stateId])
   @@index([name, stateId])
@@ -187,14 +207,14 @@ model GeoCounty {
 
 model GeoCity {
   id         String       @id @default(cuid())
-  name       String                // "Colorado Springs"
+  name       String
   countyId   String
-  county     GeoCounty    @relation(fields: [countyId], references: [id])
-  latitude   Float?                // PostGIS-ready centroid
-  longitude  Float?                // PostGIS-ready centroid
-  population Int?                  // For prioritization / coverage targets
-  cityZips   GeoCityZip[]
+  latitude   Float?
+  longitude  Float?
+  population Int?
   createdAt  DateTime     @default(now())
+  county     GeoCounty    @relation(fields: [countyId], references: [id])
+  cityZips   GeoCityZip[]
 
   @@index([countyId])
   @@index([name, countyId])
@@ -202,22 +222,21 @@ model GeoCity {
 
 model GeoZip {
   id        String       @id @default(cuid())
-  code      String       @unique  // "80903"
+  code      String       @unique
   latitude  Float?
   longitude Float?
-  cityZips  GeoCityZip[]
-  feedGeos  FeedGeo[]
   createdAt DateTime     @default(now())
+  feedGeos  FeedGeo[]
+  cityZips  GeoCityZip[]
 
   @@index([code])
 }
 
-// Many-to-many: a ZIP can span multiple cities, a city has multiple ZIPs
 model GeoCityZip {
   id        String  @id @default(cuid())
   cityId    String
   zipId     String
-  isPrimary Boolean @default(false) // Is this the "main" city for this ZIP?
+  isPrimary Boolean @default(false)
   city      GeoCity @relation(fields: [cityId], references: [id])
   zip       GeoZip  @relation(fields: [zipId], references: [id])
 
@@ -226,74 +245,45 @@ model GeoCityZip {
   @@index([cityId])
 }
 
-// ═══════════════════════════════════════════════════════════════
-// RSS INTELLIGENCE SYSTEM — Feeds
-// ═══════════════════════════════════════════════════════════════
-
 model RssFeed {
-  id                String    @id @default(cuid())
-  url               String    @unique
+  id                String      @id @default(cuid())
+  url               String      @unique
   title             String?
-  description       String?   @db.Text
-  siteUrl           String?            // Homepage of the source
-  language          String?            // "en", "es" — ISO 639-1
-  sourceType        String    @default("unknown")
-    // local_news, gov_meeting, event, weather, school, community,
-    // chamber_of_commerce, police_blotter, sports_local, lifestyle,
-    // church, library, parks_rec, real_estate, local_business, unknown
-  sourceQuality     String    @default("unverified")
-    // official, trusted, community, aggregator, unverified
-  status            String    @default("pending")
-    // pending, active, stale, broken, blocked, retired
-
-  // Scoring
-  freshnessScore    Float?             // 0-100
-  qualityScore      Float?             // 0-100
+  description       String?
+  siteUrl           String?
+  language          String?
+  sourceType        String      @default("unknown")
+  sourceQuality     String      @default("unverified")
+  status            String      @default("pending")
+  freshnessScore    Float?
+  qualityScore      Float?
   lastFetchedAt     DateTime?
-  lastItemDate      DateTime?          // Most recent item publish date
-  fetchErrorCount   Int       @default(0)
-  consecutiveErrors Int       @default(0)
-  avgItemsPerWeek   Float?             // Publishing frequency
-
-  // Deduplication
-  contentHash       String?            // Hash of feed metadata
-  canonicalUrl      String?            // Resolved URL after redirects
-
-  // Discovery metadata
-  discoveredBy      String?            // "manual", "google_search", "sitemap_crawl", "opml_import"
-  discoveryMethod   String?            // "html_link", "path_probe", "curated", "sitemap"
-  feedFormat        String?            // "rss2", "atom", "rss1", "unknown"
-  pilotState        String?            // State code for pilot discovery (e.g. "CO", "TX")
-  discoveredAt      DateTime  @default(now())
-  verifiedBy        String?            // Admin user ID who verified
+  lastItemDate      DateTime?
+  fetchErrorCount   Int         @default(0)
+  consecutiveErrors Int         @default(0)
+  avgItemsPerWeek   Float?
+  contentHash       String?
+  canonicalUrl      String?
+  discoveredBy      String?
+  discoveryMethod   String?
+  feedFormat        String?
+  pilotState        String?
+  discoveredAt      DateTime    @default(now())
+  verifiedBy        String?
   verifiedAt        DateTime?
-
-  // Geo scope — how this feed maps to geography at query time
-  geoScope          String    @default("local")
-    // local    → uses FeedGeo join (ZIP-level)
-    // state    → matches by pilotState (all ZIPs in that state)
-    // national → included in ALL trade area queries
-    // weather  → state-level weather; matches pilotState
-
-  // Industry classification — for national feed opt-in system
-  industry          String?            // "technology", "automotive", "rural_agriculture",
-    // "rodeo_western", "small_business", "weather", "sports",
-    // "home_services", "cybersecurity", "retail_consumer"
-  contentTags       String[] @default([])  // ["news","tips","alerts","how-to","did-you-know"]
-  localizable       Boolean  @default(false) // Can content be repurposed with local framing?
-  updateFrequency   String?            // "daily", "weekly", "multiple_daily"
-
-  // Tombstone integration — agent that last processed this feed
-  lastAgentRun      String?            // e.g. "tombstone_rss_refresh_2026-04-07"
+  geoScope          String      @default("local")
+  lastAgentRun      String?
   lastAgentRunAt    DateTime?
-
-  notes             String?   @db.Text
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  items             RssItem[]
-  feedGeos          FeedGeo[]
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  contentTags       String[]    @default([])
+  industry          String?
+  localizable       Boolean     @default(false)
+  updateFrequency   String?
   feedAudits        FeedAudit[]
+  feedGeos          FeedGeo[]
+  items             RssItem[]
 
   @@index([status])
   @@index([sourceType])
@@ -305,22 +295,17 @@ model RssFeed {
   @@index([industry])
 }
 
-// ═══════════════════════════════════════════════════════════════
-// RSS INTELLIGENCE SYSTEM — Feed ↔ Geography (many-to-many)
-// Separate confirmed vs inferred coverage with confidence scores
-// ═══════════════════════════════════════════════════════════════
-
 model FeedGeo {
   id           String   @id @default(cuid())
   feedId       String
   zipId        String
-  coverageType String   // "confirmed" or "inferred"
-  confidence   Float    @default(0.5) // 0.0–1.0
-  source       String?  // How determined: "manual", "domain_geo", "content_nlp", "about_page"
-  feed         RssFeed  @relation(fields: [feedId], references: [id], onDelete: Cascade)
-  zip          GeoZip   @relation(fields: [zipId], references: [id])
+  coverageType String
+  confidence   Float    @default(0.5)
+  source       String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  feed         RssFeed  @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  zip          GeoZip   @relation(fields: [zipId], references: [id])
 
   @@unique([feedId, zipId])
   @@index([zipId])
@@ -329,44 +314,29 @@ model FeedGeo {
   @@index([confidence])
 }
 
-// ═══════════════════════════════════════════════════════════════
-// RSS INTELLIGENCE SYSTEM — Items (individual articles/entries)
-// ═══════════════════════════════════════════════════════════════
-
 model RssItem {
-  id              String   @id @default(cuid())
+  id              String      @id @default(cuid())
   feedId          String
-  guid            String            // RSS guid or link — dedupe key
+  guid            String
   title           String?
-  description     String?  @db.Text
+  description     String?
   link            String?
   pubDate         DateTime?
   author          String?
-  imageUrl        String?           // Extracted media/enclosure image
-
-  // Content classification
-  contentHash     String?           // Hash for cross-feed dedupe
-  categories      String[] @default([]) // Tags from RSS + our classification
-
-  // Filtering
-  filterStatus    String   @default("pending")
-    // pending, approved, blocked, manual_review
-  filterReason    String?  @db.Text  // Why blocked/approved
-  blockedCategory String?            // Which policy category triggered block
-
-  // Relevance
-  relevanceScore  Float?             // 0-100, local relevance
-
-  // Tombstone integration — flag for agent consumption
-  usedInPost      Boolean  @default(false) // Has Tombstone creative workflow used this?
-  usedAt          DateTime?                // When it was consumed
-  postReference   String?                  // Reference ID back to generated social post
-
-  fetchedAt       DateTime @default(now())
-  createdAt       DateTime @default(now())
-
-  feed            RssFeed    @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  imageUrl        String?
+  contentHash     String?
+  categories      String[]    @default([])
+  filterStatus    String      @default("pending")
+  filterReason    String?
+  blockedCategory String?
+  relevanceScore  Float?
+  usedInPost      Boolean     @default(false)
+  usedAt          DateTime?
+  postReference   String?
+  fetchedAt       DateTime    @default(now())
+  createdAt       DateTime    @default(now())
   itemAudits      ItemAudit[]
+  feed            RssFeed     @relation(fields: [feedId], references: [id], onDelete: Cascade)
 
   @@unique([feedId, guid])
   @@index([feedId])
@@ -376,19 +346,14 @@ model RssItem {
   @@index([usedInPost])
 }
 
-// ═══════════════════════════════════════════════════════════════
-// RSS INTELLIGENCE SYSTEM — Audit Trail
-// Every content decision and feed change is logged
-// ═══════════════════════════════════════════════════════════════
-
 model FeedAudit {
   id          String   @id @default(cuid())
   feedId      String
-  action      String   // "status_change", "geo_assigned", "geo_removed", "quality_recalc", "manual_override", "agent_processed"
-  oldValue    String?  @db.Text
-  newValue    String?  @db.Text
-  reason      String?  @db.Text
-  performedBy String?  // User ID, "system", or "tombstone:<agent_name>"
+  action      String
+  oldValue    String?
+  newValue    String?
+  reason      String?
+  performedBy String?
   createdAt   DateTime @default(now())
   feed        RssFeed  @relation(fields: [feedId], references: [id], onDelete: Cascade)
 
@@ -400,11 +365,11 @@ model FeedAudit {
 model ItemAudit {
   id          String   @id @default(cuid())
   itemId      String
-  action      String   // "auto_blocked", "auto_approved", "manual_approved", "manual_blocked", "reclassified", "used_in_post"
-  category    String?  // Content policy category that triggered action
-  confidence  Float?   // Model confidence for auto-decisions
-  reason      String?  @db.Text
-  performedBy String?  // User ID, "system", or "tombstone:<agent_name>"
+  action      String
+  category    String?
+  confidence  Float?
+  reason      String?
+  performedBy String?
   createdAt   DateTime @default(now())
   item        RssItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
@@ -413,17 +378,13 @@ model ItemAudit {
   @@index([action])
 }
 
-// ═══════════════════════════════════════════════════════════════
-// SOCIAL POST QUEUE — Clark Kent → Creative Pipeline
-// ═══════════════════════════════════════════════════════════════
-
 model SocialAccount {
   id          String   @id @default(cuid())
   userId      String
-  platform    String   // "facebook", "instagram", "youtube", "tiktok", "pinterest", "snapchat"
-  handle      String   // @username or page name
-  profileUrl  String?  // Full URL to profile/page
-  displayName String?  // Friendly display name
+  platform    String
+  handle      String
+  profileUrl  String?
+  displayName String?
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -435,55 +396,40 @@ model SocialAccount {
 }
 
 model SocialPost {
-  id            String   @id @default(cuid())
-  userId        String
-  analysisId    String?  // Links to the business analysis (for ZIP context)
-  businessId    String?  // Links to the business this post belongs to
-
-  // Content
-  caption       String   @db.Text
-  hashtags      String[] @default([])
-  imageUrl      String?  // Generated post image (S3 URL)
-  imagePrompt   String?  @db.Text  // Prompt used to generate image
-
-  // Source RSS item
-  rssItemId     String?  // The RSS item that inspired this post
-  rssItemTitle  String?
-  rssItemLink   String?
-  sourceType    String?  // "local_news", "weather", "community", etc.
-  newsAngle     String?  @db.Text  // Clark Kent's spin/angle description
-
-  // Platform targeting
-  platforms     String[] @default([])  // ["facebook", "instagram"] — which platforms to post to
-  postType      String   @default("general")
-    // general, weather_tip, community_event, trending_news, seasonal, promotion
-
-  // Queue management
-  status        String   @default("draft")
-    // draft, pending_approval, approved, published, rejected, expired
-  scheduledFor  DateTime?  // Optional future scheduling
-  publishedAt   DateTime?
-  rejectedAt    DateTime?
-  rejectReason  String?
-
-  // Clark Kent metadata
-  tradeAreaZip  String?  // Business ZIP used for the scout query
-  briefScore    Float?   // Composite score from trade area ranking
-  patternType   String?  // "weather", "trending_local", "gov_meeting", "community_events"
-  tombstoneTaskId String?  // Tombstone content queue task_id — for dedup on import
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  analysis      Analysis? @relation(fields: [analysisId], references: [id])
-  business      Business? @relation(fields: [businessId], references: [id])
+  id              String    @id @default(cuid())
+  userId          String
+  analysisId      String?
+  caption         String
+  hashtags        String[]  @default([])
+  imageUrl        String?
+  imagePrompt     String?
+  rssItemId       String?
+  rssItemTitle    String?
+  rssItemLink     String?
+  sourceType      String?
+  newsAngle       String?
+  platforms       String[]  @default([])
+  postType        String    @default("general")
+  status          String    @default("draft")
+  scheduledFor    DateTime?
+  publishedAt     DateTime?
+  rejectedAt      DateTime?
+  rejectReason    String?
+  tradeAreaZip    String?
+  briefScore      Float?
+  patternType     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  tombstoneTaskId String?
+  businessId      String?
+  analysis        Analysis? @relation(fields: [analysisId], references: [id])
+  business        Business? @relation(fields: [businessId], references: [id])
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
   @@index([analysisId])
   @@index([businessId])
-  @@unique([tombstoneTaskId])
   @@index([scheduledFor])
   @@index([createdAt])
 }
