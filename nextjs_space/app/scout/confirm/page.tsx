@@ -2,8 +2,8 @@
 
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Suspense, useEffect, useState, useCallback } from 'react';
-import { CheckCircle2, AlertCircle, Clock, ArrowRight, Loader2, Download, Eye } from 'lucide-react';
+import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
+import { CheckCircle2, AlertCircle, Clock, ArrowRight, Loader2, Download, Eye, XCircle } from 'lucide-react';
 
 /* ── Types ─────────────────────────────────── */
 interface PackageStatus {
@@ -16,13 +16,26 @@ interface PackageStatus {
   createdAt: string;
 }
 
-/* ── Polling hook ──────────────────────────── */
+const MAX_POLL_MS = 30 * 60 * 1000; // 30 minutes max polling
+const POLL_INTERVAL_MS = 15_000;     // 15 seconds between polls
+
+/* ── Polling hook with timeout ──────────── */
 function usePackagePolling(packageId: string | null) {
   const [pkg, setPkg] = useState<PackageStatus | null>(null);
   const [polling, setPolling] = useState(!!packageId);
+  const [timedOut, setTimedOut] = useState(false);
+  const startedRef = useRef(Date.now());
 
   const poll = useCallback(async () => {
     if (!packageId) return;
+
+    // Check timeout
+    if (Date.now() - startedRef.current > MAX_POLL_MS) {
+      setPolling(false);
+      setTimedOut(true);
+      return;
+    }
+
     try {
       const res = await fetch(`/api/scout/package-status?id=${packageId}`);
       if (res.ok) {
@@ -37,27 +50,24 @@ function usePackagePolling(packageId: string | null) {
 
   useEffect(() => {
     if (!packageId) return;
-    // Initial fetch
+    startedRef.current = Date.now();
     poll();
     if (!polling) return;
-    const interval = setInterval(poll, 15_000); // every 15s
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [packageId, polling, poll]);
 
-  return { pkg, polling };
+  return { pkg, polling, timedOut };
 }
 
 /* ── Live progress indicator ───────────────── */
-function GeneratingProgress({ pkg, polling }: { pkg: PackageStatus | null; polling: boolean }) {
+function GeneratingProgress({ pkg }: { pkg: PackageStatus | null }) {
   const [dots, setDots] = useState('');
 
   useEffect(() => {
-    if (!polling) return;
     const iv = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 600);
     return () => clearInterval(iv);
-  }, [polling]);
-
-  if (!polling && pkg?.status === 'ready') return null; // handled by ready state below
+  }, []);
 
   const ageMin = pkg ? Math.round((Date.now() - new Date(pkg.createdAt).getTime()) / 60000) : 0;
 
@@ -75,6 +85,36 @@ function GeneratingProgress({ pkg, polling }: { pkg: PackageStatus | null; polli
          ageMin < 5 ? 'Crafting copy and generating artwork' :
          ageMin < 10 ? 'Finishing up — should be ready soon' :
          'Still working — we\'ll email you when it\'s done'}
+      </p>
+    </div>
+  );
+}
+
+/* ── Timed-out state ───────────────────── */
+function TimedOutNotice() {
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+      <div className="flex items-center gap-3 mb-2">
+        <Clock className="w-5 h-5 text-amber-600" />
+        <span className="text-sm font-semibold text-amber-800">Taking longer than expected</span>
+      </div>
+      <p className="text-xs text-amber-700 ml-8">
+        Your post is still being created. We&apos;ll email you when it&apos;s ready — no need to keep this page open.
+      </p>
+    </div>
+  );
+}
+
+/* ── Rejected/failed state ──────────────── */
+function RejectedNotice() {
+  return (
+    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+      <div className="flex items-center gap-3 mb-2">
+        <XCircle className="w-5 h-5 text-red-600" />
+        <span className="text-sm font-semibold text-red-800">Post creation failed</span>
+      </div>
+      <p className="text-xs text-red-700 ml-8">
+        Something went wrong while creating this post. Please try another story from your scout email or the dashboard.
       </p>
     </div>
   );
@@ -119,7 +159,7 @@ function ConfirmContent() {
   const status = params.get('status') || 'success';
   const packageId = params.get('packageId') || '';
 
-  const { pkg, polling } = usePackagePolling(status === 'success' && packageId ? packageId : null);
+  const { pkg, polling, timedOut } = usePackagePolling(status === 'success' && packageId ? packageId : null);
 
   if (status === 'active_workflow') {
     return (
@@ -165,31 +205,44 @@ function ConfirmContent() {
     );
   }
 
-  // Success — show live status
+  // Derive UI state from package status
   const isReady = pkg?.status === 'ready' || pkg?.status === 'downloaded' || pkg?.status === 'draft' || pkg?.status === 'posted';
+  const isRejected = pkg?.status === 'rejected';
+  const isStillGenerating = !pkg || pkg.status === 'generating';
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 text-center">
-        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-          <CheckCircle2 className="w-8 h-8 text-green-600" />
+        <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 ${
+          isReady ? 'bg-green-100' : isRejected ? 'bg-red-100' : 'bg-green-100'
+        }`}>
+          {isReady ? <CheckCircle2 className="w-8 h-8 text-green-600" /> :
+           isRejected ? <XCircle className="w-8 h-8 text-red-600" /> :
+           <CheckCircle2 className="w-8 h-8 text-green-600" />}
         </div>
         <h1 className="text-2xl font-bold text-slate-900 mb-3">
-          {isReady ? 'Your Post is Ready!' : 'We\u2019re Creating Your Post'}
+          {isReady ? 'Your Post is Ready!' :
+           isRejected ? 'Post Could Not Be Created' :
+           timedOut ? 'Post Is Still Being Created' :
+           'We\u2019re Creating Your Post'}
         </h1>
 
-        {!isReady && (
+        {isStillGenerating && !timedOut && (
           <p className="text-slate-600 mb-4">
             Your post is being generated now. We&apos;ll email you when it&apos;s ready, or wait here to see it.
           </p>
         )}
 
-        {/* Live progress or ready state */}
+        {/* Live status area */}
         <div className="mb-6">
           {isReady && pkg ? (
             <ReadyNotice pkg={pkg} />
+          ) : isRejected ? (
+            <RejectedNotice />
+          ) : timedOut ? (
+            <TimedOutNotice />
           ) : packageId ? (
-            <GeneratingProgress pkg={pkg} polling={polling} />
+            <GeneratingProgress pkg={pkg} />
           ) : (
             <p className="text-slate-600">
               Your post is being generated. We&apos;ll email you when it&apos;s ready to review and download.
@@ -199,19 +252,27 @@ function ConfirmContent() {
 
         {!isReady && (
           <div className="bg-slate-50 rounded-lg p-4 mb-6">
-            <p className="text-sm text-slate-500 mb-2">Need more posts today?</p>
-            <p className="text-sm text-slate-700 font-medium">
-              Sign in to review all stories and create up to 3 posts.
-            </p>
+            {isRejected ? (
+              <p className="text-sm text-slate-700 font-medium">
+                Try another story from your scout email, or sign in to browse all stories.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-slate-500 mb-2">Need more posts today?</p>
+                <p className="text-sm text-slate-700 font-medium">
+                  Sign in to review all stories and create up to 3 posts.
+                </p>
+              </>
+            )}
           </div>
         )}
 
         {!isReady && (
           <Link
-            href="/dashboard/social?scout=1"
+            href={isRejected ? '/dashboard/social' : '/dashboard/social?scout=1'}
             className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
           >
-            Review All Stories <ArrowRight className="w-4 h-4" />
+            {isRejected ? 'Go to Dashboard' : 'Review All Stories'} <ArrowRight className="w-4 h-4" />
           </Link>
         )}
       </div>

@@ -25,9 +25,11 @@ import { sendNotificationEmailHelper, buildCompletionEmailHtml } from '@/lib/sco
  *   GitHub Actions (schedule), AWS EventBridge, or any scheduler that can fire HTTP POST.
  *
  * ## Idempotency
+ * - Atomic `updateMany` claim prevents duplicate status transitions (only one runner wins)
  * - `completionEmailSent === true` → skip email (never double-send)
  * - `status !== 'generating'` → skip processing (already handled)
- * - Tombstone errors → log + retry on next cycle (no permanent failure marking for transient issues)
+ * - Also picks up ready-but-email-unsent packages (email retry on failure)
+ * - Tombstone errors → log + retry on next cycle (no permanent failure for transient issues)
  * - Missing workflowId → auto-reject after 2h grace period
  */
 export async function POST(req: NextRequest) {
@@ -42,31 +44,48 @@ export async function POST(req: NextRequest) {
   console.log(`[completion-check][${runId}] Starting sweep`);
 
   try {
-    // Find all generating packages
+    // Find all packages needing attention:
+    // 1. Still generating (need Tombstone status check)
+    // 2. Ready but email not sent (retry failed email sends)
     const packages = await prisma.postPackage.findMany({
-      where: { status: 'generating' },
+      where: {
+        OR: [
+          { status: 'generating' },
+          { status: 'ready', completionEmailSent: false },
+        ],
+      },
       include: {
         business: { select: { businessName: true } },
         user: { select: { email: true } },
       },
     });
 
-    console.log(`[completion-check][${runId}] Found ${packages.length} generating packages`);
+    console.log(`[completion-check][${runId}] Found ${packages.length} packages needing attention`);
 
     if (packages.length === 0) {
       return NextResponse.json({ checked: 0, results: [], runId });
     }
 
     const results: { id: string; status: string; emailSent?: boolean; detail?: string }[] = [];
+    const appUrl = process.env.NEXTAUTH_URL || 'https://connect.launchmarketing.com';
 
     for (const pkg of packages) {
-      // --- Guard: missing workflowId ---
+
+      // ── Branch A: Ready but email not sent (retry path) ──
+      if (pkg.status === 'ready') {
+        const emailResult = await trySendCompletionEmail(pkg, appUrl, runId);
+        results.push(emailResult);
+        continue;
+      }
+
+      // ── Branch B: Generating — needs Tombstone check ──
+
+      // Guard: missing workflowId
       if (!pkg.workflowId) {
         const ageMs = Date.now() - pkg.createdAt.getTime();
         if (ageMs > 2 * 60 * 60 * 1000) {
-          // 2h grace period expired — mark failed
           await prisma.postPackage.update({ where: { id: pkg.id }, data: { status: 'rejected' } });
-          console.warn(`[completion-check][${runId}] Package ${pkg.id}: no workflowId after 2h — marked rejected`);
+          console.warn(`[completion-check][${runId}] Package ${pkg.id} biz=${pkg.businessId}: no workflowId after 2h — marked rejected`);
           results.push({ id: pkg.id, status: 'timed_out_no_workflow', detail: `Age: ${Math.round(ageMs / 60000)}min` });
         } else {
           console.log(`[completion-check][${runId}] Package ${pkg.id}: no workflowId yet, age ${Math.round(ageMs / 60000)}min — will retry`);
@@ -75,24 +94,24 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // --- Query Tombstone ---
+      // Query Tombstone
       let wfResult;
       try {
         wfResult = await getSocialWorkflowResults([pkg.workflowId]);
       } catch (err: any) {
-        // Tombstone unavailable — log and retry next cycle
-        console.error(`[completion-check][${runId}] Package ${pkg.id}: Tombstone query failed — ${err?.message || 'unknown error'}. Will retry.`);
+        console.error(`[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId}: Tombstone query failed — ${err?.message || 'unknown'}. Will retry.`);
         results.push({ id: pkg.id, status: 'tombstone_unavailable', detail: err?.message });
         continue;
       }
 
-      // --- Handle completion ---
+      // Handle: completed with output
       if (wfResult.status === 'completed' && wfResult.posts.length > 0) {
-        const post = wfResult.posts[0]; // Single story = single post
-        const appUrl = process.env.NEXTAUTH_URL || 'https://connect.launchmarketing.com';
+        const post = wfResult.posts[0];
 
-        await prisma.postPackage.update({
-          where: { id: pkg.id },
+        // ATOMIC CLAIM: Only one runner can transition generating → ready.
+        // If another runner already claimed this package, updateMany returns count=0.
+        const claimed = await prisma.postPackage.updateMany({
+          where: { id: pkg.id, status: 'generating' },
           data: {
             status: 'ready',
             postCopy: post.caption || '',
@@ -104,82 +123,129 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        console.log(`[completion-check][${runId}] Package ${pkg.id}: workflow completed, status → ready`);
-
-        // --- Send completion email (idempotent: skip if already sent) ---
-        if (pkg.completionEmailSent) {
-          console.log(`[completion-check][${runId}] Package ${pkg.id}: completion email already sent — skipping`);
-          results.push({ id: pkg.id, status: 'completed', emailSent: false, detail: 'already_sent' });
+        if (claimed.count === 0) {
+          console.log(`[completion-check][${runId}] Package ${pkg.id}: lost atomic claim — another runner handled it`);
+          results.push({ id: pkg.id, status: 'claimed_by_other', detail: 'lost_race' });
           continue;
         }
 
-        if (!pkg.user?.email) {
-          console.warn(`[completion-check][${runId}] Package ${pkg.id}: no user email — skipping notification`);
-          results.push({ id: pkg.id, status: 'completed', emailSent: false, detail: 'no_email' });
-          continue;
-        }
+        console.log(`[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId} biz=${pkg.businessId}: workflow completed, status → ready`);
 
-        const reviewUrl = `${appUrl}/post/${pkg.id}`;
-        const downloadUrl = `${appUrl}/api/post-package/${pkg.id}/download`;
-
-        const html = buildCompletionEmailHtml({
-          businessName: pkg.business?.businessName || 'Your Business',
-          storyTitle: pkg.storyTitle,
-          storySource: pkg.storySource,
-          postCopy: post.caption || '',
-          headline: post.newsAngle || '',
-          imageUrl: post.imageUrl || '',
-          reviewUrl,
-          downloadUrl,
+        // Reload with fresh data for email
+        const freshPkg = await prisma.postPackage.findUnique({
+          where: { id: pkg.id },
+          include: {
+            business: { select: { businessName: true } },
+            user: { select: { email: true } },
+          },
         });
-
-        const emailSent = await sendNotificationEmailHelper({
-          to: pkg.user.email,
-          subject: 'Your Ad Launch post is ready',
-          html,
-          notificationId: process.env.NOTIF_ID_POST_READY || '',
-        });
-
-        if (emailSent) {
-          await prisma.postPackage.update({
-            where: { id: pkg.id },
-            data: { completionEmailSent: true },
-          });
-          console.log(`[completion-check][${runId}] Package ${pkg.id}: completion email sent to ${pkg.user.email}`);
+        if (freshPkg) {
+          const emailResult = await trySendCompletionEmail(freshPkg, appUrl, runId);
+          results.push(emailResult);
         } else {
-          console.error(`[completion-check][${runId}] Package ${pkg.id}: email send failed — will retry next cycle`);
+          results.push({ id: pkg.id, status: 'completed', emailSent: false, detail: 'package_vanished' });
         }
-
-        results.push({ id: pkg.id, status: 'completed', emailSent });
 
       } else if (wfResult.status === 'error') {
-        // Permanent failure from Tombstone
         const ageMs = Date.now() - pkg.createdAt.getTime();
         if (ageMs > 4 * 60 * 60 * 1000) {
-          // Only mark rejected after 4h of error state (in case Tombstone recovers)
           await prisma.postPackage.update({ where: { id: pkg.id }, data: { status: 'rejected' } });
-          console.error(`[completion-check][${runId}] Package ${pkg.id}: Tombstone error after 4h — marked rejected`);
+          console.error(`[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId}: Tombstone error after 4h — marked rejected`);
           results.push({ id: pkg.id, status: 'error_rejected', detail: `Age: ${Math.round(ageMs / 60000)}min` });
         } else {
-          console.warn(`[completion-check][${runId}] Package ${pkg.id}: Tombstone error, age ${Math.round(ageMs / 60000)}min — will retry`);
+          console.warn(`[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId}: Tombstone error, age ${Math.round(ageMs / 60000)}min — will retry`);
           results.push({ id: pkg.id, status: 'error_retrying' });
         }
       } else if (wfResult.status === 'completed' && wfResult.posts.length === 0) {
-        // Completed but no output
-        console.warn(`[completion-check][${runId}] Package ${pkg.id}: workflow completed but 0 posts returned — will retry`);
+        console.warn(`[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId}: workflow completed but 0 posts — will retry`);
         results.push({ id: pkg.id, status: 'completed_no_output' });
       } else {
-        // Still processing
         const ageMs = Date.now() - pkg.createdAt.getTime();
-        console.log(`[completion-check][${runId}] Package ${pkg.id}: still generating (age ${Math.round(ageMs / 60000)}min)`);
+        console.log(`[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId}: still generating (age ${Math.round(ageMs / 60000)}min)`);
         results.push({ id: pkg.id, status: 'still_generating' });
       }
     }
 
-    console.log(`[completion-check][${runId}] Sweep complete: ${JSON.stringify(results.map(r => r.status))}`);
+    console.log(`[completion-check][${runId}] Sweep complete: ${JSON.stringify(results.map(r => `${r.id.slice(0,8)}:${r.status}`))}`);
     return NextResponse.json({ checked: packages.length, results, runId });
   } catch (err: any) {
     console.error(`[completion-check][${runId}] Fatal error:`, err);
     return NextResponse.json({ error: err.message, runId }, { status: 500 });
+  }
+}
+
+/**
+ * Attempt to send a completion email for a ready package.
+ * Uses atomic `updateMany` to claim the email-send right — prevents duplicates.
+ */
+async function trySendCompletionEmail(
+  pkg: {
+    id: string;
+    completionEmailSent: boolean;
+    postCopy: string | null;
+    headline: string | null;
+    imageUrl: string | null;
+    storyTitle: string;
+    storySource: string;
+    businessId: string;
+    business?: { businessName: string | null } | null;
+    user?: { email: string } | null;
+  },
+  appUrl: string,
+  runId: string,
+): Promise<{ id: string; status: string; emailSent?: boolean; detail?: string }> {
+  // Already sent guard
+  if (pkg.completionEmailSent) {
+    return { id: pkg.id, status: 'completed', emailSent: false, detail: 'already_sent' };
+  }
+
+  if (!pkg.user?.email) {
+    console.warn(`[completion-check][${runId}] Package ${pkg.id}: no user email — skipping notification`);
+    return { id: pkg.id, status: 'completed', emailSent: false, detail: 'no_email' };
+  }
+
+  // ATOMIC CLAIM: only one runner can claim the email-send right.
+  // We set completionEmailSent=true FIRST to prevent any other runner from also sending.
+  const emailClaimed = await prisma.postPackage.updateMany({
+    where: { id: pkg.id, completionEmailSent: false },
+    data: { completionEmailSent: true },
+  });
+  if (emailClaimed.count === 0) {
+    console.log(`[completion-check][${runId}] Package ${pkg.id}: email claim lost — another runner sending`);
+    return { id: pkg.id, status: 'completed', emailSent: false, detail: 'email_claimed_by_other' };
+  }
+
+  const reviewUrl = `${appUrl}/post/${pkg.id}`;
+  const downloadUrl = `${appUrl}/api/post-package/${pkg.id}/download`;
+
+  const html = buildCompletionEmailHtml({
+    businessName: pkg.business?.businessName || 'Your Business',
+    storyTitle: pkg.storyTitle,
+    storySource: pkg.storySource,
+    postCopy: pkg.postCopy || '',
+    headline: pkg.headline || '',
+    imageUrl: pkg.imageUrl || '',
+    reviewUrl,
+    downloadUrl,
+  });
+
+  const emailSent = await sendNotificationEmailHelper({
+    to: pkg.user.email,
+    subject: 'Your Ad Launch post is ready',
+    html,
+    notificationId: process.env.NOTIF_ID_POST_READY || '',
+  });
+
+  if (emailSent) {
+    console.log(`[completion-check][${runId}] Package ${pkg.id} biz=${pkg.businessId}: completion email sent to ${pkg.user.email}`);
+    return { id: pkg.id, status: 'completed', emailSent: true };
+  } else {
+    // Email failed — roll back the claim so next cycle can retry
+    await prisma.postPackage.update({
+      where: { id: pkg.id },
+      data: { completionEmailSent: false },
+    });
+    console.error(`[completion-check][${runId}] Package ${pkg.id}: email send failed — rolled back claim, will retry next cycle`);
+    return { id: pkg.id, status: 'completed', emailSent: false, detail: 'send_failed_will_retry' };
   }
 }
