@@ -26,6 +26,8 @@ model User {
   socialAccounts    SocialAccount[]
   socialPosts       SocialPost[]
   feedPreferences   UserFeedPreference[]
+  scoutReports      ScoutReport[]
+  postPackages      PostPackage[]
 }
 
 model Business {
@@ -47,6 +49,8 @@ model Business {
   socialPosts       SocialPost[]
   scoutEmailSettings ScoutEmailSettings?
   scoutEmailHistory  ScoutEmailHistory[]
+  scoutReports       ScoutReport[]
+  postPackages       PostPackage[]
 
   @@unique([userId, websiteUrl])
   @@index([userId])
@@ -376,6 +380,95 @@ model ItemAudit {
   @@index([itemId])
   @@index([createdAt])
   @@index([action])
+}
+
+model ScoutReport {
+  id           String       @id @default(cuid())
+  businessId   String
+  userId       String
+  status       String       @default("sent") // sent, expired
+  storiesCount Int          @default(0)
+  sentAt       DateTime     @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime     @default(now())
+  business     Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stories      ScoutStory[]
+
+  @@index([businessId])
+  @@index([userId])
+  @@index([sentAt])
+}
+
+model ScoutStory {
+  id              String      @id @default(cuid())
+  scoutReportId   String
+  title           String
+  source          String
+  sourceUrl       String      @default("")
+  sourceType      String      @default("local") // local, industry, national
+  pubDate         String      @default("")
+  summary         String      @default("")
+  relevance       String      @default("")
+  suggestedAngle  String      @default("")
+  createdAt       DateTime    @default(now())
+  scoutReport     ScoutReport @relation(fields: [scoutReportId], references: [id], onDelete: Cascade)
+  postPackages    PostPackage[]
+
+  @@index([scoutReportId])
+}
+
+model MagicToken {
+  id            String   @id @default(cuid())
+  token         String   @unique
+  userId        String
+  businessId    String
+  scoutReportId String?
+  storyId       String?
+  action        String   // create_post, review_stories, review_package
+  nonce         String   @unique
+  used          Boolean  @default(false)
+  usedAt        DateTime?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@index([nonce])
+}
+
+model PostPackage {
+  id              String      @id @default(cuid())
+  userId          String
+  businessId      String
+  storyId         String?
+  scoutReportId   String?
+  source          String      @default("daily_scout_email") // daily_scout_email, app_review
+  workflowId      String?
+  status          String      @default("generating") // generating, ready, downloaded, draft, rejected, posted
+  postCopy        String?     @default("")
+  headline        String?     @default("")
+  cta             String?     @default("")
+  hashtags        String[]    @default([])
+  imageUrl        String?     @default("")
+  storyTitle      String      @default("")
+  storySource     String      @default("")
+  storyUrl        String      @default("")
+  storySummary    String      @default("")
+  suggestedAngle  String      @default("")
+  completedAt     DateTime?
+  completionEmailSent Boolean  @default(false)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business        Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  story           ScoutStory? @relation(fields: [storyId], references: [id])
+
+  @@index([userId])
+  @@index([businessId])
+  @@index([workflowId])
+  @@index([status])
+  @@index([completionEmailSent, status])
 }
 
 model SocialAccount {

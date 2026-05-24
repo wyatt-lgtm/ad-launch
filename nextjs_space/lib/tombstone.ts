@@ -326,6 +326,68 @@ function buildStoryCommand(
   ].join('\n');
 }
 
+/**
+ * Create a single-story Tombstone workflow triggered from scout email.
+ * Produces exactly 1 post for 1 story — no multi-post generation.
+ */
+export async function createScoutStoryMission(
+  websiteUrl: string,
+  story: {
+    title: string;
+    source: string;
+    sourceUrl: string;
+    summary: string;
+    relevance: string;
+    suggestedAngle: string;
+    sourceType: string;
+  },
+  meta: {
+    businessId: string;
+    userId: string;
+    scoutReportId: string;
+    storyId: string;
+    postPackageId: string;
+  },
+) {
+  const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+  const type = story.sourceType === 'national' ? 'event' : story.sourceType === 'industry' ? 'interest' : 'local_news';
+
+  const command = [
+    `review ${normalizedUrl} and create 1 social media post based on the story below.`,
+    `This is a single-story post creation from the Daily Scout Email.`,
+    `Create EXACTLY 1 post — do not generate variants or multiple outputs.`,
+    `Use the business brand colors and voice from the website.`,
+    `Target platforms: facebook, instagram.`,
+    ``,
+    `--- SCOUT STORY CONTEXT ---`,
+    `source: daily_scout_email`,
+    `workflow_type: single_story_post`,
+    `max_posts: 1`,
+    `manual_publishing_only: true`,
+    `business_id: ${meta.businessId}`,
+    `post_package_id: ${meta.postPackageId}`,
+    `--- END SCOUT CONTEXT ---`,
+    ``,
+    `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
+    `Trending headline: "${story.title}"`,
+    story.source ? `Source: ${story.source}` : '',
+    story.sourceUrl ? `RSS URL: ${story.sourceUrl}` : '',
+    story.summary ? `Summary: ${story.summary}` : '',
+    story.relevance ? `Relevance: ${story.relevance}` : '',
+    story.suggestedAngle ? `Suggested angle: ${story.suggestedAngle}` : '',
+    `--- END RSS STORY METADATA ---`,
+  ].filter(Boolean).join('\n');
+
+  console.log(`[tombstone] Scout story mission for: ${normalizedUrl} — "${story.title.slice(0, 60)}"`);
+  const result = await sendCommand(command);
+
+  return {
+    success: !!result.workflowId,
+    workflowId: result.workflowId,
+    taskIds: result.taskIds,
+  };
+}
+
 // Legacy single-mission creator (kept for backward compat)
 /**
  * Create a Tombstone mission to copy-edit a user-written draft post.

@@ -6,6 +6,7 @@ import { generateContentBrief } from '@/lib/rss/trade-area-feed';
 import { generateInterestFeedBrief, type InterestFeedBrief } from '@/lib/rss/interest-feed-brief';
 import { getUpcomingEvents } from '@/lib/social/upcoming-events';
 import type { ContentBrief } from '@/lib/rss/trade-area-feed';
+import { generateMagicToken } from '@/lib/magic-token';
 
 /**
  * POST /api/scout/daily-run
@@ -97,9 +98,66 @@ export async function POST(req: NextRequest) {
         // Clamp to maxStories
         const finalStories = freshStories.slice(0, config.maxStories);
 
-        // Build and send email
+        // Create ScoutReport + ScoutStory records
+        const reportExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72h
+        const scoutReport = await prisma.scoutReport.create({
+          data: {
+            businessId: biz.id,
+            userId: biz.userId,
+            status: 'sent',
+            storiesCount: finalStories.length,
+            expiresAt: reportExpiresAt,
+            stories: {
+              create: finalStories.map(s => ({
+                title: s.title,
+                source: s.source,
+                sourceUrl: s.link || '',
+                sourceType: s.sourceType,
+                pubDate: s.pubDate || '',
+                summary: s.summary,
+                relevance: s.relevance,
+                suggestedAngle: s.postAngle,
+              })),
+            },
+          },
+          include: { stories: true },
+        });
+        console.log(`[DailyScout] Created ScoutReport ${scoutReport.id} with ${scoutReport.stories.length} stories`);
+
+        // Generate magic tokens for each story
         const appUrl = process.env.NEXTAUTH_URL || 'https://connect.launchmarketing.com';
-        const htmlBody = buildScoutEmailHtml(biz.businessName || 'Your Business', finalStories, appUrl);
+        const storyTokens: { storyId: string; token: string }[] = [];
+        for (const story of scoutReport.stories) {
+          const token = await generateMagicToken({
+            userId: biz.userId,
+            businessId: biz.id,
+            scoutReportId: scoutReport.id,
+            storyId: story.id,
+            action: 'create_post',
+            expiresInHours: 72,
+          });
+          storyTokens.push({ storyId: story.id, token });
+        }
+
+        // Generate review-all token
+        const reviewToken = await generateMagicToken({
+          userId: biz.userId,
+          businessId: biz.id,
+          scoutReportId: scoutReport.id,
+          action: 'review_stories',
+          expiresInHours: 72,
+        });
+
+        // Build and send email with magic links
+        const htmlBody = buildScoutEmailHtml(
+          biz.businessName || 'Your Business',
+          finalStories,
+          appUrl,
+          scoutReport.stories,
+          storyTokens,
+          reviewToken,
+          scoutReport.id,
+        );
         const emailSent = await sendScoutEmail(config.recipientEmail, biz.businessName || 'Your Business', htmlBody);
 
         // Log sent stories
@@ -253,12 +311,24 @@ function buildScoutEmailHtml(
   businessName: string,
   stories: StoryItem[],
   appUrl: string,
+  dbStories: { id: string; title: string; sourceType: string }[],
+  storyTokens: { storyId: string; token: string }[],
+  reviewToken: string,
+  reportId: string,
 ): string {
+  const tokenMap = new Map(storyTokens.map(t => [t.storyId, t.token]));
+  const dbMap = new Map(dbStories.map(s => [s.title, s]));
+
   const localStories = stories.filter(s => s.sourceType === 'local');
   const industryStories = stories.filter(s => s.sourceType === 'industry');
   const nationalStories = stories.filter(s => s.sourceType === 'national');
 
-  const storyRow = (s: StoryItem) => `
+  const storyRow = (s: StoryItem) => {
+    const dbStory = dbMap.get(s.title);
+    const token = dbStory ? tokenMap.get(dbStory.id) : null;
+    const createPostUrl = token ? `${appUrl}/api/scout/create-post?token=${encodeURIComponent(token)}` : '';
+
+    return `
     <tr>
       <td style="padding: 12px 16px; border-bottom: 1px solid #f1f5f9;">
         <div style="font-weight: 600; color: #1e293b; font-size: 14px; margin-bottom: 4px;">
@@ -270,9 +340,16 @@ function buildScoutEmailHtml(
         <div style="font-size: 13px; color: #475569; margin-bottom: 4px;">${escHtml(s.summary)}</div>
         <div style="font-size: 12px; color: #2563eb; font-style: italic;">${escHtml(s.relevance)}</div>
         <div style="font-size: 12px; color: #059669; margin-top: 4px; font-weight: 500;">💡 Post angle: ${escHtml(s.postAngle)}</div>
+        ${createPostUrl ? `
+        <div style="margin-top: 8px;">
+          <a href="${createPostUrl}" style="display: inline-block; background: #2563eb; color: white; padding: 6px 16px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 12px;">
+            ✨ Create Post
+          </a>
+        </div>` : ''}
       </td>
     </tr>
   `;
+  };
 
   const section = (title: string, emoji: string, items: StoryItem[]) => {
     if (items.length === 0) return '';
@@ -288,6 +365,8 @@ function buildScoutEmailHtml(
     `;
   };
 
+  const reviewAllUrl = `${appUrl}/scout/review/${reportId}?token=${encodeURIComponent(reviewToken)}`;
+
   return `
     <div style="max-width: 600px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #ffffff;">
       <div style="background: #0f172a; color: white; padding: 24px; text-align: center; border-radius: 12px 12px 0 0;">
@@ -298,7 +377,7 @@ function buildScoutEmailHtml(
 
       <div style="padding: 24px;">
         <p style="font-size: 14px; color: #475569; margin: 0 0 20px 0;">
-          Here are today's top story recommendations. Select the ones you like and create posts in Ad Launch.
+          Here are today's top story recommendations. Click <strong>Create Post</strong> on any story to generate a ready-to-post social media package.
         </p>
 
         ${section('Local Stories', '📍', localStories)}
@@ -306,14 +385,17 @@ function buildScoutEmailHtml(
         ${section('National & Events', '🎉', nationalStories)}
 
         <div style="text-align: center; margin-top: 24px;">
-          <a href="${appUrl}/dashboard/social?scout=1" style="display: inline-block; background: #2563eb; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-            Create Posts in Ad Launch →
+          <a href="${reviewAllUrl}" style="display: inline-block; background: #0f172a; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+            📋 Review All Stories
           </a>
+        </div>
+        <div style="text-align: center; margin-top: 10px;">
+          <p style="font-size: 12px; color: #64748b;">Select up to 3 stories and create posts from the full review page.</p>
         </div>
 
         <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-top: 20px;">
           You're receiving this because Daily Scout Report is enabled for ${escHtml(businessName)}.
-          <br/>Manage settings in Ad Launch → Content Sources.
+          <br/>Links expire in 72 hours. Manage settings in Ad Launch → Content Sources.
         </p>
       </div>
     </div>
