@@ -80,48 +80,63 @@ export async function POST(
       }
     }
 
-    // ── Gather context for news and holiday lanes ────────────────────
-    let newsContext = '';
-    let holidayContext = '';
+    // ── Gather context for news and holiday lanes (parallel) ─────────
+    console.log(`[confirm-and-launch] Gathering context for: ${analysis.websiteUrl}`);
+    const contextStart = Date.now();
 
-    // Get upcoming events/holidays
-    try {
-      const events = getUpcomingEvents();
-      if (events.length > 0) {
-        holidayContext = events.slice(0, 5).map(e => `${e.name} (${e.date}): ${e.ideas}`).join('\n');
-      }
-    } catch (err: any) {
-      console.error('[confirm-and-launch] Failed to get upcoming events:', err?.message);
+    // Run RSS brief + events lookup in parallel
+    const [newsContextResult, holidayContextResult] = await Promise.allSettled([
+      // News context from RSS trade area feed
+      (async () => {
+        if (!businessZip) return '';
+        try {
+          const brief = await generateContentBrief(businessZip, 25);
+          if (brief?.headlines && brief.headlines.length > 0) {
+            return brief.headlines.slice(0, 5).map((h: any) =>
+              `${h.title}${h.source ? ` (${h.source})` : ''}`
+            ).join('\n');
+          }
+        } catch (err: any) {
+          console.error('[confirm-and-launch] Failed to get local news:', err?.message);
+        }
+        return '';
+      })(),
+      // Holiday context from upcoming events
+      (async () => {
+        try {
+          const events = getUpcomingEvents();
+          if (events.length > 0) {
+            return events.slice(0, 5).map(e => `${e.name} (${e.date}): ${e.ideas}`).join('\n');
+          }
+        } catch (err: any) {
+          console.error('[confirm-and-launch] Failed to get upcoming events:', err?.message);
+        }
+        return '';
+      })(),
+    ]);
+
+    let newsContext = newsContextResult.status === 'fulfilled' ? newsContextResult.value : '';
+    let holidayContext = holidayContextResult.status === 'fulfilled' ? holidayContextResult.value : '';
+    if (!newsContext) {
+      newsContext = `Local community news and events in ${businessCity}, ${businessState}. Focus on small business, community development, or local economy stories.`;
     }
     if (!holidayContext) {
       holidayContext = 'Spring/Summer seasonal content — fresh starts, outdoor activities, community events';
     }
 
-    // Get local news via RSS trade area feed
-    try {
-      if (businessZip) {
-        const brief = await generateContentBrief(businessZip, 25);
-        if (brief?.headlines && brief.headlines.length > 0) {
-          newsContext = brief.headlines.slice(0, 5).map((h: any) =>
-            `${h.title}${h.source ? ` (${h.source})` : ''}`
-          ).join('\n');
-        }
-      }
-    } catch (err: any) {
-      console.error('[confirm-and-launch] Failed to get local news:', err?.message);
-    }
-    if (!newsContext) {
-      newsContext = `Local community news and events in ${businessCity}, ${businessState}. Focus on small business, community development, or local economy stories.`;
-    }
+    console.log(`[confirm-and-launch] Context gathered in ${Date.now() - contextStart}ms`);
 
-    // ── Launch 3 lane missions sequentially (Tombstone serialises commands) ──
+    // ── Launch 3 lane missions in parallel ───────────────────────────
     console.log(`[confirm-and-launch] Launching 3 lane missions for: ${analysis.websiteUrl}`);
+    const launchStart = Date.now();
 
-    const websiteResult = await createLaneMission(analysis.websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    const newsResult = await createLaneMission(analysis.websiteUrl, 'news', newsContext);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    const holidayResult = await createLaneMission(analysis.websiteUrl, 'holiday', holidayContext);
+    const [websiteResult, newsResult, holidayResult] = await Promise.all([
+      createLaneMission(analysis.websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`),
+      createLaneMission(analysis.websiteUrl, 'news', newsContext),
+      createLaneMission(analysis.websiteUrl, 'holiday', holidayContext),
+    ]);
+
+    console.log(`[confirm-and-launch] Missions launched in ${Date.now() - launchStart}ms`);
 
     console.log(`[confirm-and-launch] Lane missions created:`, {
       website: { success: websiteResult.success, workflowId: websiteResult.workflowId },
