@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { isValidUrl } from '@/lib/email-validation';
 import { extractBusinessAddress } from '@/lib/address-extractor';
-import { lookupBusinessByUrl, PlaceResult } from '@/lib/google-places';
+import { lookupBusinessByUrl, searchPlaces, PlaceResult } from '@/lib/google-places';
 
 /**
  * POST /api/analyze
@@ -110,21 +110,56 @@ export async function POST(request: NextRequest) {
     const hasScrapedAddress = scraped.source !== 'none' && (scraped.city || scraped.zip);
     console.log(`[analyze] Website address extraction: source=${scraped.source}, confidence=${scraped.confidence}, city=${scraped.city}, state=${scraped.state}, zip=${scraped.zip}`);
 
-    // Step 3: If no address found on website, fall back to Google Places
+    // Step 3: Google Places lookup — either as cross-validation or primary source
     let places: PlaceResult[] = [];
-    if (!hasScrapedAddress) {
+    if (hasScrapedAddress) {
+      // Cross-validate scraped address against Google Places for canonical formatting
+      console.log(`[analyze] Address found on website (${scraped.source}), cross-validating with Google Places`);
+      try {
+        // Build a targeted search query: business name + scraped address fragments
+        const queryParts = [
+          scraped.businessName,
+          scraped.address,
+          scraped.city,
+          scraped.state,
+          scraped.zip,
+        ].filter(Boolean);
+        // If we have enough address info, search by address; otherwise search by URL
+        const validationQuery = queryParts.length >= 2
+          ? queryParts.join(' ')
+          : normalizedUrl;
+        const validationResults = await searchPlaces(validationQuery, 3);
+        if (validationResults.length > 0) {
+          places = validationResults;
+          console.log(`[analyze] Google Places cross-validation found ${validationResults.length} results — will prefer canonical address`);
+        } else {
+          console.log(`[analyze] Google Places cross-validation returned no results, keeping scraped address`);
+        }
+      } catch (err: any) {
+        console.warn(`[analyze] Google Places cross-validation failed (non-fatal):`, err?.message);
+      }
+    } else {
+      // No scraped address — Google Places is the primary source
       console.log(`[analyze] No address found on website, falling back to Google Places: ${normalizedUrl}`);
       places = await lookupBusinessByUrl(normalizedUrl);
       console.log(`[analyze] Google Places returned ${places.length} results`);
-    } else {
-      console.log(`[analyze] Address found on website (${scraped.source}), skipping Google Places lookup`);
     }
 
     // Step 4: Create analysis record (no Tombstone yet — user must confirm location first)
     const topPlace = places[0];
 
-    // Resolve business fields from scraped address or Google Places
-    const bizFields = hasScrapedAddress ? {
+    // Resolve business fields: prefer Google Places (canonical) over raw scrape
+    // If both scraped and Google Places exist, Google Places wins for address/city/state/zip
+    // but scraped businessName is kept as fallback if Google doesn't have one.
+    const bizFields = topPlace ? {
+      businessName: topPlace.name || scraped.businessName || undefined,
+      businessAddr: topPlace.formattedAddress || scraped.address || undefined,
+      businessCity: topPlace.city || scraped.city || undefined,
+      businessState: topPlace.state || scraped.state || undefined,
+      businessZip: topPlace.zip || scraped.zip || undefined,
+      businessPhone: topPlace.phone || scraped.phone || undefined,
+      geoSource: hasScrapedAddress ? 'cross_validated' : 'google_places',
+    } : hasScrapedAddress ? {
       businessName: scraped.businessName || undefined,
       businessAddr: scraped.address || undefined,
       businessCity: scraped.city || undefined,
@@ -132,14 +167,6 @@ export async function POST(request: NextRequest) {
       businessZip: scraped.zip || undefined,
       businessPhone: scraped.phone || undefined,
       geoSource: scraped.source,
-    } : topPlace ? {
-      businessName: topPlace.name,
-      businessAddr: topPlace.formattedAddress,
-      businessCity: topPlace.city,
-      businessState: topPlace.state,
-      businessZip: topPlace.zip,
-      businessPhone: topPlace.phone,
-      geoSource: 'google_places',
     } : {};
 
     // Upsert a Business record for this user + URL (if authenticated)
@@ -188,9 +215,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       analysisId: analysis.id,
       status: 'pending_location',
-      // Return scraped address or Google Places results to the frontend
+      // Return scraped address and/or Google Places results to the frontend
+      // When cross-validated, scraped is still sent for reference but places has the canonical data
       scrapedAddress: hasScrapedAddress ? scraped : null,
-      places: hasScrapedAddress ? [] : places.slice(0, 5),
+      places: places.slice(0, 5),
     });
   } catch (err: any) {
     console.error('Analyze error:', err);

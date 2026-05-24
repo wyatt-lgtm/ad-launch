@@ -306,34 +306,38 @@ function LocationStep({
           return;
         }
 
-        // Check for scraped address from website (highest priority)
+        // Check for scraped address from website (kept for reference / fallback)
         const scrapedCache = sessionStorage.getItem(`scraped_${analysisId}`);
         if (scrapedCache) {
           const parsed = JSON.parse(scrapedCache);
           if (parsed?.source && parsed.source !== 'none' && (parsed.city || parsed.zip)) {
             setScrapedAddress(parsed);
-            // Pre-fill manual fields from scraped data
+          }
+        }
+
+        // Check for Google Places results (includes cross-validated results)
+        const cached = sessionStorage.getItem(`places_${analysisId}`);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setPlaces(parsed);
+          if (parsed.length > 0) {
+            setSelected(parsed[0]);
+            // Pre-fill manual fields from Google Places (canonical address)
+            setManualName(parsed[0].name ?? '');
+            setManualAddress(parsed[0].formattedAddress ?? '');
+            setManualCity(parsed[0].city ?? '');
+            setManualState(parsed[0].state ?? '');
+            setManualZip(parsed[0].zip ?? '');
+          }
+        } else if (scrapedCache) {
+          // No Google Places results — fall back to scraped address for manual fields
+          const parsed = JSON.parse(scrapedCache);
+          if (parsed?.source && parsed.source !== 'none' && (parsed.city || parsed.zip)) {
             setManualName(parsed.businessName ?? '');
             setManualAddress(parsed.address ?? '');
             setManualCity(parsed.city ?? '');
             setManualState(parsed.state ?? '');
             setManualZip(parsed.zip ?? '');
-            setLoading(false);
-            return;
-          }
-        }
-
-        // Check for Google Places results
-        const cached = sessionStorage.getItem(`places_${analysisId}`);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          setPlaces(parsed);
-          if (parsed.length > 0) setSelected(parsed[0]);
-          if (parsed[0]) {
-            setManualName(parsed[0].name);
-            setManualCity(parsed[0].city);
-            setManualState(parsed[0].state);
-            setManualZip(parsed[0].zip);
           }
         } else if (data?.businessName) {
           // Pre-fill from analysis record (could be scraped or Google Places)
@@ -431,7 +435,7 @@ function LocationStep({
         </p>
       </div>
 
-      {/* Scraped Address from Website (highest priority) */}
+      {/* Scraped Address from Website (only shown when Google Places couldn't cross-validate) */}
       {scrapedAddress && !showManual && places.length === 0 && (
         <div className="bg-white rounded-xl border-2 border-green-200 p-6 mb-6">
           <div className="flex items-start gap-3 mb-4">
@@ -508,8 +512,8 @@ function LocationStep({
         </div>
       )}
 
-      {/* Google Places Results */}
-      {places.length > 0 && !showManual && !scrapedAddress && (
+      {/* Google Places Results (shown for both pure lookup and cross-validated scraped addresses) */}
+      {places.length > 0 && !showManual && (
         <div className="space-y-3 mb-6">
           {places.map((place) => (
             <button
