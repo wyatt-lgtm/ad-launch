@@ -5,8 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   Loader2, AlertCircle, CheckCircle2, ArrowRight,
-  MapPin, Building2, Globe, Sparkles,
+  MapPin, Building2, Globe, Sparkles, Coins,
 } from 'lucide-react';
+import CreditBadge from '@/app/components/credit-badge';
 
 interface Story {
   id: string;
@@ -22,6 +23,7 @@ interface Story {
 
 interface ReportData {
   id: string;
+  businessId: string;
   businessName: string;
   websiteUrl: string;
   status: string;
@@ -41,6 +43,7 @@ export default function ReviewStoriesPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<string | null>(null);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -81,7 +84,10 @@ export default function ReviewStoriesPage() {
         body: JSON.stringify({ scoutReportId: reportId, storyIds: Array.from(selected) }),
       });
       const data = await res.json();
-      if (res.status === 409) {
+      if (res.status === 402) {
+        setSubmitResult(data.error || 'Not enough credits.');
+        if (typeof data.balance === 'number') setCreditBalance(data.balance);
+      } else if (res.status === 409) {
         setSubmitResult(data.error || 'A post is already being created.');
       } else if (data.success) {
         setSubmitResult('success');
@@ -221,18 +227,36 @@ export default function ReviewStoriesPage() {
         })}
 
         {/* Submit bar */}
-        <div className="sticky bottom-0 bg-white border-t border-slate-200 p-4 -mx-4 mt-8 flex items-center justify-between">
-          <div className="text-sm text-slate-600">
-            {selected.size} of 3 selected
+        <div className="sticky bottom-0 bg-white border-t border-slate-200 p-4 -mx-4 mt-8">
+          {/* Credit info */}
+          {report?.businessId && (
+            <div className="flex items-center justify-between mb-3">
+              <CreditBadge businessId={report.businessId} compact onBalanceLoaded={setCreditBalance} />
+              {selected.size > 0 && (
+                <span className="text-xs text-gray-500 flex items-center gap-1">
+                  <Coins className="w-3 h-3" /> Uses {selected.size} credit{selected.size !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+          )}
+          {creditBalance !== null && creditBalance < selected.size && selected.size > 0 && (
+            <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+              Not enough credits. You need {selected.size} but have {creditBalance}. Recharge coming soon.
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-slate-600">
+              {selected.size} of 3 selected
+            </div>
+            <button
+              onClick={handleSubmit}
+              disabled={selected.size === 0 || selected.size > 3 || submitting || (creditBalance !== null && creditBalance < selected.size)}
+              className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {submitting ? 'Creating...' : `Create ${selected.size} Post${selected.size !== 1 ? 's' : ''}`}
+            </button>
           </div>
-          <button
-            onClick={handleSubmit}
-            disabled={selected.size === 0 || selected.size > 3 || submitting}
-            className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-            {submitting ? 'Creating...' : `Create ${selected.size} Post${selected.size !== 1 ? 's' : ''}`}
-          </button>
         </div>
       </div>
     </div>

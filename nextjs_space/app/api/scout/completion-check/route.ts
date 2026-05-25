@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSocialWorkflowResults } from '@/lib/tombstone';
 import { sendNotificationEmailHelper, buildCompletionEmailHtml } from '@/lib/scout-email';
+import { chargeForPostPackage, refundPostPackage } from '@/lib/credits';
+import { logCosts, estimateImagePostCosts } from '@/lib/cost-ledger';
 
 /**
  * POST /api/scout/completion-check
@@ -130,6 +132,30 @@ export async function POST(req: NextRequest) {
         }
 
         console.log(`[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId} biz=${pkg.businessId}: workflow completed, status → ready`);
+
+        // Charge credits (idempotent — safe on re-runs)
+        try {
+          const chargeResult = await chargeForPostPackage(pkg.businessId, pkg.id, pkg.userId, 'image_post_charge');
+          if (chargeResult.success) {
+            console.log(`[completion-check][${runId}] Package ${pkg.id}: charged 1 credit (balance=${chargeResult.balanceAfter}, alreadyCharged=${chargeResult.alreadyCharged})`);
+          } else {
+            console.warn(`[completion-check][${runId}] Package ${pkg.id}: credit charge failed — ${chargeResult.error}. Package still ready.`);
+          }
+        } catch (chargeErr: any) {
+          console.error(`[completion-check][${runId}] Package ${pkg.id}: credit charge exception — ${chargeErr.message}`);
+        }
+
+        // Log estimated internal costs (non-blocking)
+        try {
+          await logCosts(estimateImagePostCosts({
+            businessId: pkg.businessId,
+            userId: pkg.userId,
+            postPackageId: pkg.id,
+            workflowId: pkg.workflowId || undefined,
+          }));
+        } catch (costErr: any) {
+          console.error(`[completion-check][${runId}] Package ${pkg.id}: cost logging failed — ${costErr.message}`);
+        }
 
         // Reload with fresh data for email
         const freshPkg = await prisma.postPackage.findUnique({

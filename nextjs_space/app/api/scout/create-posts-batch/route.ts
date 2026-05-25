@@ -5,6 +5,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { createScoutStoryMission } from '@/lib/tombstone';
+import { checkCredits, CREDIT_COSTS } from '@/lib/credits';
 
 /**
  * POST /api/scout/create-posts-batch
@@ -60,6 +61,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       error: 'Your previous post is still being created. Please wait for it to complete.',
     }, { status: 409 });
+  }
+
+  // Credit check: need 1 credit per story
+  const totalCost = report.stories.length * CREDIT_COSTS.IMAGE_POST;
+  const creditCheck = await checkCredits(report.business.id, totalCost);
+  if (!creditCheck.allowed) {
+    return NextResponse.json({
+      error: `Not enough credits. You need ${totalCost} credit${totalCost > 1 ? 's' : ''} but have ${creditCheck.balance}.`,
+      balance: creditCheck.balance,
+      required: totalCost,
+    }, { status: 402 });
   }
 
   // Create PostPackages and launch workflows

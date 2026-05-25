@@ -51,6 +51,7 @@ model Business {
   scoutEmailHistory  ScoutEmailHistory[]
   scoutReports       ScoutReport[]
   postPackages       PostPackage[]
+  creditAccount      CreditAccount?
 
   @@unique([userId, websiteUrl])
   @@index([userId])
@@ -458,6 +459,10 @@ model PostPackage {
   suggestedAngle  String      @default("")
   completedAt     DateTime?
   completionEmailSent Boolean  @default(false)
+  // Credit tracking
+  creditChargedAt     DateTime?
+  creditCost          Int?         @default(0)
+  creditTransactionId String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
   user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -469,6 +474,80 @@ model PostPackage {
   @@index([workflowId])
   @@index([status])
   @@index([completionEmailSent, status])
+}
+
+// ─── Credit System ───────────────────────────────────────────────
+
+model CreditAccount {
+  id                      String   @id @default(cuid())
+  businessId              String   @unique
+  creditBalance           Int      @default(0)
+  monthlyCreditAllowance  Int      @default(6)
+  creditsRenewAt          DateTime?
+  creditPlanName          String?  @default("starter")
+  creditStatus            String   @default("active") // active, suspended, cancelled
+  // Stripe-ready placeholders
+  stripeCustomerId        String?
+  stripeSubscriptionId    String?
+  stripePriceId           String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  business                Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  transactions            CreditTransaction[]
+
+  @@index([creditStatus])
+}
+
+model CreditTransaction {
+  id              String   @id @default(cuid())
+  creditAccountId String
+  businessId      String
+  userId          String?
+  postPackageId   String?
+  transactionType String   // monthly_grant, admin_grant, image_post_charge, video_upgrade_charge, recharge_grant, refund, adjustment, failed_generation_refund, recharge_pending
+  amount          Int      // positive = credit added, negative = credit spent
+  balanceAfter    Int
+  reason          String   @default("")
+  idempotencyKey  String?  @unique
+  // Stripe-ready placeholders
+  stripeCheckoutSessionId String?
+  stripePaymentIntentId   String?
+  rechargePackId          String?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  creditAccount   CreditAccount @relation(fields: [creditAccountId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([userId])
+  @@index([postPackageId])
+  @@index([transactionType])
+  @@index([createdAt])
+}
+
+model InternalCostLedger {
+  id                    String   @id @default(cuid())
+  businessId            String?
+  userId                String?
+  postPackageId         String?
+  workflowId            String?
+  taskId                String?
+  provider              String?  // openai, fal, render, cloudflare_r2, abacus
+  costType              String   // llm, image_generation, video_generation, render_runtime, r2_storage, r2_bandwidth, email, other
+  estimatedCostUsd      Decimal  @default(0) @db.Decimal(10, 6)
+  inputTokens           Int?
+  outputTokens          Int?
+  imageCount            Int?
+  videoSeconds          Int?
+  renderRuntimeSeconds  Int?
+  retryCount            Int?
+  metadata              Json?
+  createdAt             DateTime @default(now())
+
+  @@index([businessId])
+  @@index([postPackageId])
+  @@index([workflowId])
+  @@index([costType])
+  @@index([createdAt])
 }
 
 model SocialAccount {

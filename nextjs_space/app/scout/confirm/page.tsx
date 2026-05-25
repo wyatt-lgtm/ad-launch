@@ -183,6 +183,31 @@ function ConfirmContent() {
     );
   }
 
+  if (status === 'insufficient_credits') {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 text-center">
+          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <AlertCircle className="w-8 h-8 text-amber-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 mb-3">Out of Credits</h1>
+          <p className="text-slate-600 mb-4">
+            You don&apos;t have enough credits to create a post right now.
+          </p>
+          <p className="text-sm text-slate-500 mb-6">
+            Recharge coming soon. Contact support to add credits.
+          </p>
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+          >
+            Back to Dashboard <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (status === 'error') {
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white flex items-center justify-center p-4">

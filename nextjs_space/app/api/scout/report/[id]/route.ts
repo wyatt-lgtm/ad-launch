@@ -50,6 +50,7 @@ export async function GET(
 
   return NextResponse.json({
     id: report.id,
+    businessId: report.businessId,
     businessName: report.business?.businessName || '',
     websiteUrl: report.business?.websiteUrl || '',
     status: report.status,

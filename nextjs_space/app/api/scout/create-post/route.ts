@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { verifyMagicToken } from '@/lib/magic-token';
 import { createScoutStoryMission } from '@/lib/tombstone';
+import { canStartGeneration, CREDIT_COSTS } from '@/lib/credits';
 
 /**
  * GET /api/scout/create-post?token=xxx
@@ -50,6 +51,13 @@ export async function GET(req: NextRequest) {
     if (activePackage) {
       console.log(`[create-post] Active workflow exists for business ${businessId}`);
       return NextResponse.redirect(`${appUrl}/scout/confirm?status=active_workflow`);
+    }
+
+    // Credit check
+    const creditCheck = await canStartGeneration(businessId, CREDIT_COSTS.IMAGE_POST);
+    if (!creditCheck.allowed) {
+      console.log(`[create-post] Insufficient credits for business ${businessId}: balance=${creditCheck.balance}`);
+      return NextResponse.redirect(`${appUrl}/scout/confirm?status=insufficient_credits&balance=${creditCheck.balance}`);
     }
 
     // Load story + business

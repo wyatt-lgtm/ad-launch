@@ -9,6 +9,7 @@ import {
   MapPin, Building2, Image as ImageIcon, FileText, Plus,
 } from 'lucide-react';
 import UrlInputForm from '../../components/url-input-form';
+import CreditBadge from '../../components/credit-badge';
 
 interface BusinessItem {
   id: string;
@@ -163,6 +164,11 @@ export default function DashboardContent() {
                     {locationStr}{biz.businessZip ? ` ${biz.businessZip}` : ''}
                   </div>
                 )}
+
+                {/* Credits */}
+                <div className="mb-3">
+                  <CreditBadge businessId={biz.id} compact />
+                </div>
 
                 {/* Stats */}
                 <div className="flex items-center gap-4 text-xs text-gray-400 pt-3 border-t border-gray-100">
