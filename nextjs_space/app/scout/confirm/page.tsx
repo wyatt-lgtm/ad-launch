@@ -195,7 +195,7 @@ function ConfirmContent() {
             You don&apos;t have enough credits to create a post right now.
           </p>
           <p className="text-sm text-slate-500 mb-6">
-            Recharge coming soon. Contact support to add credits.
+            Recharge checkout coming soon. Contact support to add credits.
           </p>
           <Link
             href="/dashboard"

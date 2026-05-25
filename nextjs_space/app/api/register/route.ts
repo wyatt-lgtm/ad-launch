@@ -75,6 +75,17 @@ export async function POST(request: NextRequest) {
           });
 
           console.log(`[register] Business upserted: ${biz.id} for user ${user.id} (${analysis.websiteUrl})`);
+
+          // Auto-grant starter credits (idempotent — safe on every upsert)
+          try {
+            const { grantStarterCredits } = await import('@/lib/credits');
+            const starterResult = await grantStarterCredits(biz.id, { userId: user.id });
+            if (starterResult.success && !starterResult.alreadyCharged) {
+              console.log(`[register] Starter credits granted to business ${biz.id}`);
+            }
+          } catch (creditErr: any) {
+            console.error('[register] Starter credit grant error (non-fatal):', creditErr?.message);
+          }
         }
       } catch (linkErr: any) {
         console.error('[register] Analysis/Business link error (non-fatal):', linkErr?.message);

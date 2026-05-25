@@ -26,6 +26,7 @@ export const RECHARGE_PACKS = [
 export type TransactionType =
   | 'monthly_grant'
   | 'admin_grant'
+  | 'starter_grant'
   | 'image_post_charge'
   | 'video_upgrade_charge'
   | 'recharge_grant'
@@ -435,6 +436,128 @@ export async function grantMonthlyCredits(businessId: string): Promise<ChargeRes
       metadata: { month: monthKey, allowance: account.monthlyCreditAllowance },
     },
   );
+}
+
+// ─── Starter Grant ───────────────────────────────────────────────
+
+/** Grant starter credits once to a new beta business. Idempotent. */
+export async function grantStarterCredits(
+  businessId: string,
+  opts: { userId?: string } = {},
+): Promise<ChargeResult> {
+  const idempotencyKey = `starter-grant:${businessId}`;
+
+  // Fast-path: already granted
+  const existing = await prisma.creditTransaction.findUnique({ where: { idempotencyKey } });
+  if (existing) {
+    return {
+      success: true,
+      transactionId: existing.id,
+      balanceAfter: existing.balanceAfter,
+      alreadyCharged: true,
+    };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // Ensure CreditAccount exists with beta plan defaults
+      let account = await tx.creditAccount.findUnique({ where: { businessId } });
+      if (!account) {
+        account = await tx.creditAccount.create({
+          data: {
+            businessId,
+            creditBalance: 0,
+            monthlyCreditAllowance: DEFAULT_MONTHLY_ALLOWANCE,
+            creditPlanName: 'beta',
+            creditStatus: 'active',
+          },
+        });
+      } else {
+        // Ensure plan fields are set for existing accounts
+        const updates: any = {};
+        if (!account.monthlyCreditAllowance) updates.monthlyCreditAllowance = DEFAULT_MONTHLY_ALLOWANCE;
+        if (!account.creditPlanName || account.creditPlanName === 'starter') updates.creditPlanName = 'beta';
+        if (account.creditStatus !== 'active') updates.creditStatus = 'active';
+        if (Object.keys(updates).length > 0) {
+          account = await tx.creditAccount.update({ where: { id: account.id }, data: updates });
+        }
+      }
+
+      // Double-check idempotency inside transaction
+      const existingTxn = await tx.creditTransaction.findUnique({ where: { idempotencyKey } });
+      if (existingTxn) {
+        return { transactionId: existingTxn.id, balanceAfter: existingTxn.balanceAfter, alreadyCharged: true };
+      }
+
+      const newBalance = account.creditBalance + DEFAULT_MONTHLY_ALLOWANCE;
+      await tx.creditAccount.update({
+        where: { id: account.id },
+        data: { creditBalance: newBalance },
+      });
+
+      const txn = await tx.creditTransaction.create({
+        data: {
+          creditAccountId: account.id,
+          businessId,
+          userId: opts.userId,
+          transactionType: 'starter_grant',
+          amount: DEFAULT_MONTHLY_ALLOWANCE,
+          balanceAfter: newBalance,
+          reason: 'First month beta starter credits',
+          idempotencyKey,
+          metadata: { source: 'automatic_beta_onboarding' },
+        },
+      });
+
+      return { transactionId: txn.id, balanceAfter: newBalance };
+    });
+
+    const alreadyCharged = (result as any).alreadyCharged ?? false;
+    return { success: true, transactionId: result.transactionId, balanceAfter: result.balanceAfter, alreadyCharged };
+  } catch (err: any) {
+    // Handle unique constraint race
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      const existing2 = await prisma.creditTransaction.findUnique({ where: { idempotencyKey } });
+      return {
+        success: true,
+        transactionId: existing2?.id ?? null,
+        balanceAfter: existing2?.balanceAfter ?? 0,
+        alreadyCharged: true,
+      };
+    }
+    console.error(`[credits] Starter grant failed for business ${businessId}:`, err.message);
+    return { success: false, transactionId: null, balanceAfter: 0, error: err.message };
+  }
+}
+
+/** Backfill starter credits for all businesses that don't have one yet. */
+export async function backfillStarterCredits(): Promise<{
+  granted: number;
+  skipped: number;
+  errors: number;
+  details: Array<{ businessId: string; status: string }>;
+}> {
+  const businesses = await prisma.business.findMany({ select: { id: true } });
+  let granted = 0;
+  let skipped = 0;
+  let errors = 0;
+  const details: Array<{ businessId: string; status: string }> = [];
+
+  for (const biz of businesses) {
+    const result = await grantStarterCredits(biz.id);
+    if (!result.success) {
+      errors++;
+      details.push({ businessId: biz.id, status: `error: ${result.error}` });
+    } else if (result.alreadyCharged) {
+      skipped++;
+      details.push({ businessId: biz.id, status: 'skipped' });
+    } else {
+      granted++;
+      details.push({ businessId: biz.id, status: 'granted' });
+    }
+  }
+
+  return { granted, skipped, errors, details };
 }
 
 // ─── Transaction History ─────────────────────────────────────────

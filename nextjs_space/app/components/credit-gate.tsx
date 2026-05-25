@@ -30,7 +30,7 @@ export default function CreditGate({ balance, cost, children, className = '' }: 
                 {isEmpty ? "You're out of credits" : `Not enough credits (need ${cost}, have ${balance})`}
               </p>
               <p className="text-xs text-amber-600 mt-1">
-                Recharge coming soon. Contact support to add credits.
+                Recharge checkout coming soon. Contact support to add credits.
               </p>
             </div>
           </div>

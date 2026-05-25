@@ -94,6 +94,12 @@ export default function CreditBadge({
           <span className="text-xs opacity-70">remaining</span>
         )}
       </div>
+      {showLabel && balance === 6 && (
+        <span className="text-xs text-gray-400 ml-1">6 starter credits included for your first month.</span>
+      )}
+      {showLabel && isEmpty && (
+        <span className="text-xs text-red-500 ml-1">Recharge checkout coming soon. Contact support to add credits.</span>
+      )}
     </div>
   );
 }
