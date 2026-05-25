@@ -969,3 +969,99 @@ export async function enrichAdsWithOutputs(ads: any[]) {
 export async function getMissionResults(missionId: string) {
   return getWorkflowResults([missionId]);
 }
+
+// ── Concept Website Workflow ──────────────────────────────────────────────────
+
+export interface ConceptWebsitePayload {
+  website_url: string;
+  business_name: string;
+  industry: string;
+  location?: string;
+  content_profile?: Record<string, any>;
+  business_id?: string;
+  user_id?: string;
+  google_maps_api_key?: string;
+}
+
+/**
+ * Create a concept-website workflow via the dedicated Tombstone endpoint.
+ * Returns the workflow_id and task_ids for progress tracking.
+ */
+export async function createConceptWebsiteMission(payload: ConceptWebsitePayload) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    let res: Response;
+    try {
+      res = await fetch(`${TOMBSTONE_URL}/workflows/concept-website`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      console.error('[concept-website] Tombstone error:', res.status, data);
+      return { success: false, workflowId: null, taskIds: [], error: data?.detail ?? 'Workflow creation failed' };
+    }
+    return {
+      success: true,
+      workflowId: data.workflow_id as string,
+      taskIds: (data.task_ids ?? []) as number[],
+      missionName: data.mission_name as string,
+      stepCount: data.step_count as number,
+    };
+  } catch (err: any) {
+    console.error('[concept-website] Error creating workflow:', err?.message);
+    return { success: false, workflowId: null, taskIds: [], error: err?.message ?? 'Unknown error' };
+  }
+}
+
+/**
+ * Get status + final HTML for a concept-website workflow.
+ * Reuses getMultiWorkflowStatus for step tracking, then extracts
+ * George Boole's HTML output from the final task when complete.
+ */
+export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: number) {
+  const statusResult = await getMultiWorkflowStatus([workflowId]);
+
+  // Map tasks to concept-website step labels
+  const stepLabels: Record<string, string> = {
+    'Research': 'Brand Asset Recon',
+    'Marketing': 'Website Strategy',
+    'Creative Strategy': 'Copy Deck',
+    'Creative Direction': 'Creative Contract',
+    'Code Execution': 'HTML Generation',
+  };
+
+  const steps = (statusResult.tasks ?? []).map((t: any) => ({
+    ...t,
+    label: stepLabels[t.department] ?? t.label,
+  }));
+
+  let html: string | null = null;
+
+  if (statusResult.status === 'completed' && finalTaskId) {
+    // Fetch George Boole's output to extract HTML
+    const outputs = await getTaskOutputs(finalTaskId);
+    for (const out of outputs) {
+      try {
+        const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+        if (parsed?.html) {
+          html = parsed.html;
+          break;
+        }
+      } catch { /* skip non-JSON outputs */ }
+    }
+  }
+
+  return {
+    ...statusResult,
+    steps,
+    html,
+  };
+}

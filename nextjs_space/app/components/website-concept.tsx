@@ -1,7 +1,7 @@
 'use client';
 
-import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail, ChevronDown, ChevronUp } from 'lucide-react';
-import { useState } from 'react';
+import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail, ChevronDown, ChevronUp, CheckCircle2, Circle, AlertCircle, Clock } from 'lucide-react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 
 interface WebsiteConceptProps {
@@ -9,6 +9,15 @@ interface WebsiteConceptProps {
   locked?: boolean;
   analysisId?: string;
   collapsed?: boolean;
+}
+
+interface WorkflowStep {
+  id: number;
+  department: string;
+  label: string;
+  status: 'waiting' | 'active' | 'complete' | 'error';
+  rawStatus?: string;
+  lastError?: string | null;
 }
 
 function CopyAll({ text }: { text: string }) {
@@ -67,6 +76,67 @@ function SectionCard({ section, icon: Icon, color }: { section: any; icon: any; 
   );
 }
 
+function StepIcon({ status }: { status: WorkflowStep['status'] }) {
+  switch (status) {
+    case 'complete':
+      return <CheckCircle2 className="w-5 h-5 text-green-500" />;
+    case 'active':
+      return <Loader2 className="w-5 h-5 text-violet-500 animate-spin" />;
+    case 'error':
+      return <AlertCircle className="w-5 h-5 text-red-500" />;
+    default:
+      return <Circle className="w-5 h-5 text-gray-300" />;
+  }
+}
+
+function WorkflowProgress({ steps, status }: { steps: WorkflowStep[]; status: string }) {
+  const completedCount = steps.filter(s => s.status === 'complete').length;
+  const totalCount = steps.length || 5;
+  const pct = Math.round((completedCount / totalCount) * 100);
+
+  return (
+    <div className="px-6 py-5 bg-violet-50/50 border-b border-violet-100">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-violet-500" />
+          <span className="text-sm font-semibold text-violet-900">
+            {status === 'completed' ? 'Generation Complete' : 'Generating Concept Website...'}
+          </span>
+        </div>
+        <span className="text-xs font-medium text-violet-600">{pct}%</span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full h-2 bg-violet-100 rounded-full mb-4 overflow-hidden">
+        <div
+          className="h-full bg-gradient-to-r from-violet-500 to-fuchsia-500 rounded-full transition-all duration-700 ease-out"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      {/* Step list */}
+      <div className="space-y-2">
+        {steps.map((step, i) => (
+          <div key={step.id || i} className="flex items-center gap-3">
+            <StepIcon status={step.status} />
+            <span className={`text-sm ${
+              step.status === 'complete' ? 'text-green-700 font-medium' :
+              step.status === 'active' ? 'text-violet-700 font-semibold' :
+              step.status === 'error' ? 'text-red-600 font-medium' :
+              'text-gray-400'
+            }`}>
+              {step.label}
+            </span>
+            {step.status === 'error' && step.lastError && (
+              <span className="text-xs text-red-400 truncate max-w-[200px]">{step.lastError}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function WebsiteConcept({ data, locked = false, analysisId, collapsed = false }: WebsiteConceptProps) {
   const { data: session } = useSession() || {};
   const [expanded, setExpanded] = useState(!collapsed);
@@ -77,12 +147,60 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
 
+  // Workflow progress state
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+  const [workflowStatus, setWorkflowStatus] = useState<string>('');
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const workflowRef = useRef<{ workflowId: string; finalTaskId: number } | null>(null);
+
   const isLoggedIn = !!(session?.user as any)?.email;
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  const pollStatus = useCallback(async () => {
+    const wf = workflowRef.current;
+    if (!wf) return;
+
+    try {
+      const res = await fetch(
+        `/api/concept-site-status?workflowId=${encodeURIComponent(wf.workflowId)}&finalTaskId=${wf.finalTaskId}`,
+      );
+      const result = await res.json().catch(() => ({}));
+
+      if (result.steps?.length) {
+        setWorkflowSteps(result.steps);
+      }
+      setWorkflowStatus(result.status ?? '');
+
+      // Terminal states
+      if (result.status === 'completed') {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+
+        if (result.html) {
+          const blob = new Blob([result.html], { type: 'text/html' });
+          const url = URL.createObjectURL(blob);
+          setGeneratedUrl(url);
+          window.open(url, '_blank');
+        }
+        setGenerating(false);
+      } else if (result.status === 'error') {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        setGenError('One or more generation steps failed. Please try again.');
+        setGenerating(false);
+      }
+    } catch {
+      // Non-fatal — keep polling
+    }
+  }, []);
 
   const handleGenerate = async () => {
     if (!data?.sections?.length || generating) return;
 
-    // If not logged in, require business email
     if (!isLoggedIn) {
       setShowEmailPrompt(true);
       return;
@@ -115,29 +233,71 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     setGenerating(true);
     setGenError('');
     setGeneratedUrl(null);
+    setWorkflowSteps([]);
+    setWorkflowStatus('starting');
+
     try {
       const res = await fetch('/api/generate-concept-site', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          websiteUrl: data.websiteUrl || '',
+          businessName: data.businessName || '',
+          industry: data.industry || '',
+          location: data.location || '',
+          contentProfile: data.contentProfile || {},
+          businessId: data.businessId || '',
+          // Legacy fields for backward compat
           sections: data.sections,
           colorPalette: data.colorPalette,
-          businessName: data.businessName,
         }),
       });
       const result = await res.json().catch(() => ({}));
-      if (res.ok && result.html) {
-        const blob = new Blob([result.html], { type: 'text/html' });
-        const url = URL.createObjectURL(blob);
-        setGeneratedUrl(url);
-        window.open(url, '_blank');
-      } else {
-        setGenError(result.error ?? 'Failed to generate website');
+
+      if (!res.ok || !result.workflowId) {
+        setGenError(result.error ?? 'Failed to start generation');
+        setGenerating(false);
+        setWorkflowStatus('');
+        return;
       }
+
+      // Store workflow info for polling
+      workflowRef.current = {
+        workflowId: result.workflowId,
+        finalTaskId: result.finalTaskId,
+      };
+
+      // Initialize placeholder steps
+      const defaultSteps: WorkflowStep[] = [
+        { id: 1, department: 'Research', label: 'Brand Asset Recon', status: 'waiting' },
+        { id: 2, department: 'Marketing', label: 'Website Strategy', status: 'waiting' },
+        { id: 3, department: 'Creative Strategy', label: 'Copy Deck', status: 'waiting' },
+        { id: 4, department: 'Creative Direction', label: 'Creative Contract', status: 'waiting' },
+        { id: 5, department: 'Code Execution', label: 'HTML Generation', status: 'waiting' },
+      ];
+
+      // If we have real task IDs, use them
+      if (result.taskIds?.length) {
+        result.taskIds.forEach((tid: number, i: number) => {
+          if (defaultSteps[i]) defaultSteps[i].id = tid;
+        });
+      }
+
+      setWorkflowSteps(defaultSteps);
+      setWorkflowStatus('generating');
+
+      // Start polling every 5 seconds
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(pollStatus, 5000);
+
+      // Also do an immediate first poll after 3s
+      setTimeout(pollStatus, 3000);
+
     } catch {
       setGenError('Something went wrong. Please try again.');
+      setGenerating(false);
+      setWorkflowStatus('');
     }
-    setGenerating(false);
   };
 
   if (!data) {
@@ -182,7 +342,12 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         </button>
       </div>
 
-      {/* Email prompt modal — always visible regardless of collapse */}
+      {/* Workflow progress */}
+      {(generating || workflowStatus === 'completed') && workflowSteps.length > 0 && (
+        <WorkflowProgress steps={workflowSteps} status={workflowStatus} />
+      )}
+
+      {/* Email prompt modal */}
       {showEmailPrompt && (
         <div className="p-6 bg-violet-50 border-b border-violet-100">
           <div className="max-w-md mx-auto text-center">
