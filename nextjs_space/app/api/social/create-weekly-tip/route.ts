@@ -79,6 +79,23 @@ export async function POST(req: NextRequest) {
 
     console.log(`[create-weekly-tip] userId=${userId} business=${businessId} topic="${effectiveTopic}" category="${category}"`);
 
+    // Create PostPackage so completion-check cron can track, charge credits, and send email
+    const postPackage = await prisma.postPackage.create({
+      data: {
+        userId,
+        businessId,
+        source: 'weekly_tip',
+        status: 'generating',
+        storyTitle: effectiveTopic,
+        storySource: 'weekly_tip',
+        storyUrl: '',
+        storySummary: `${category} tip for ${audience}`,
+        suggestedAngle: category,
+      },
+    });
+
+    console.log(`[create-weekly-tip] Created PostPackage ${postPackage.id} for topic "${effectiveTopic.slice(0, 50)}"`);
+
     const result = await createWeeklyTipMission(
       business.websiteUrl,
       {
@@ -99,10 +116,24 @@ export async function POST(req: NextRequest) {
     );
 
     if (!result.success) {
+      // Roll back PostPackage on failure
+      await prisma.postPackage.update({
+        where: { id: postPackage.id },
+        data: { status: 'rejected' },
+      });
       return NextResponse.json(
         { error: 'Failed to start creative workflow' },
         { status: 502 },
       );
+    }
+
+    // Attach workflow ID to PostPackage for completion-check tracking
+    const workflowId = result.workflowIds[0] || null;
+    if (workflowId) {
+      await prisma.postPackage.update({
+        where: { id: postPackage.id },
+        data: { workflowId },
+      });
     }
 
     const socialMissionId = result.workflowIds.join(',');
@@ -130,6 +161,7 @@ export async function POST(req: NextRequest) {
       socialMissionId,
       workflowIds: result.workflowIds,
       taskCount: result.allTaskIds.length,
+      postPackageId: postPackage.id,
       source: 'weekly_tip',
       workflow_type: 'evergreen_weekly_tip',
     });

@@ -260,14 +260,17 @@ export async function getWeeklyTipSuggestions(
     topics = topics.filter(t => t.category === category);
   }
 
-  // Add seasonal topics for current month
-  const seasonalTopics = (profile.seasonalTopicMap?.[currentMonth] || []).map((t: string) => ({
-    topic: t,
-    category: 'Seasonal Tip' as string,
-    audience: 'All customers',
-    why_it_fits: `Timely for ${currentMonth}`,
-    suggested_business_tie_in: `Connect this seasonal topic to your ${profile.industry} services`,
-  }));
+  // Add seasonal topics for current month (only when no category filter or 'Seasonal Tip' selected)
+  let seasonalTopics: typeof topics = [];
+  if (!category || category === 'all' || category === 'Seasonal Tip') {
+    seasonalTopics = (profile.seasonalTopicMap?.[currentMonth] || []).map((t: string) => ({
+      topic: t,
+      category: 'Seasonal Tip' as string,
+      audience: 'All customers',
+      why_it_fits: `Timely for ${currentMonth}`,
+      suggested_business_tie_in: `Connect this seasonal topic to your ${profile.industry} services`,
+    }));
+  }
 
   // Combine and deduplicate
   const allTopics = [...seasonalTopics, ...topics];

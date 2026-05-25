@@ -129,7 +129,7 @@ export default function SocialDashboard() {
   const [wtGenerateArt, setWtGenerateArt] = useState(true);
   const [wtSubmitting, setWtSubmitting] = useState(false);
   const [wtError, setWtError] = useState<string | null>(null);
-  const [wtSuggestions, setWtSuggestions] = useState<Array<{topic: string; category: string; angle: string}>>([]);
+  const [wtSuggestions, setWtSuggestions] = useState<Array<{topic: string; category: string; why_it_fits?: string; suggested_business_tie_in?: string}>>([]);
   const [wtLoadingSuggestions, setWtLoadingSuggestions] = useState(false);
   const lastWeeklyTipParamsRef = useRef<any>(null);
 
@@ -1099,7 +1099,7 @@ export default function SocialDashboard() {
                               ? 'bg-amber-100 border-amber-400 text-amber-800'
                               : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-amber-300 hover:bg-amber-50'
                           }`}
-                          title={s.angle}
+                          title={s.why_it_fits || s.suggested_business_tie_in || ''}
                         >
                           {s.topic}
                         </button>
