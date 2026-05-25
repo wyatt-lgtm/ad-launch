@@ -126,53 +126,66 @@ export async function POST(
 
     console.log(`[confirm-and-launch] Context gathered in ${Date.now() - contextStart}ms`);
 
-    // ── Launch 3 lane missions in parallel ───────────────────────────
-    console.log(`[confirm-and-launch] Launching 3 lane missions for: ${analysis.websiteUrl}`);
-    const launchStart = Date.now();
+    // ── Launch 3 lane missions in the background (don't block response) ──
+    console.log(`[confirm-and-launch] Launching 3 lane missions (background) for: ${analysis.websiteUrl}`);
 
-    const [websiteResult, newsResult, holidayResult] = await Promise.all([
-      createLaneMission(analysis.websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`),
-      createLaneMission(analysis.websiteUrl, 'news', newsContext),
-      createLaneMission(analysis.websiteUrl, 'holiday', holidayContext),
-    ]);
+    // Fire-and-forget: launch missions and record workflow IDs
+    // The frontend will redirect immediately and poll for results.
+    const websiteUrl = analysis.websiteUrl;
+    const launchPromise = (async () => {
+      const launchStart = Date.now();
+      try {
+        const [websiteResult, newsResult, holidayResult] = await Promise.all([
+          createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`),
+          createLaneMission(websiteUrl, 'news', newsContext),
+          createLaneMission(websiteUrl, 'holiday', holidayContext),
+        ]);
 
-    console.log(`[confirm-and-launch] Missions launched in ${Date.now() - launchStart}ms`);
+        console.log(`[confirm-and-launch] Missions launched in ${Date.now() - launchStart}ms`);
+        console.log(`[confirm-and-launch] Lane missions created:`, {
+          website: { success: websiteResult.success, workflowId: websiteResult.workflowId },
+          news: { success: newsResult.success, workflowId: newsResult.workflowId },
+          holiday: { success: holidayResult.success, workflowId: holidayResult.workflowId },
+        });
 
-    console.log(`[confirm-and-launch] Lane missions created:`, {
-      website: { success: websiteResult.success, workflowId: websiteResult.workflowId },
-      news: { success: newsResult.success, workflowId: newsResult.workflowId },
-      holiday: { success: holidayResult.success, workflowId: holidayResult.workflowId },
-    });
+        const laneWorkflows: Record<string, string> = {};
+        if (websiteResult.workflowId) laneWorkflows.website = websiteResult.workflowId;
+        if (newsResult.workflowId) laneWorkflows.news = newsResult.workflowId;
+        if (holidayResult.workflowId) laneWorkflows.holiday = holidayResult.workflowId;
 
-    // Collect workflow IDs (store as JSON map so we know which is which)
-    const laneWorkflows: Record<string, string> = {};
-    if (websiteResult.workflowId) laneWorkflows.website = websiteResult.workflowId;
-    if (newsResult.workflowId) laneWorkflows.news = newsResult.workflowId;
-    if (holidayResult.workflowId) laneWorkflows.holiday = holidayResult.workflowId;
+        const allWorkflowIds = Object.values(laneWorkflows);
+        if (allWorkflowIds.length === 0) {
+          console.error('[confirm-and-launch] All lane missions failed');
+          await prisma.analysis.update({
+            where: { id: analysisId },
+            data: { status: 'error' },
+          });
+          return;
+        }
 
-    const allWorkflowIds = Object.values(laneWorkflows);
-    if (allWorkflowIds.length === 0) {
-      console.error('[confirm-and-launch] All lane missions failed');
-      await prisma.analysis.update({
-        where: { id: analysisId },
-        data: { status: 'error' },
-      });
-      return NextResponse.json({ error: 'Failed to start post generation. Please try again.' }, { status: 502 });
-    }
+        const missionId = JSON.stringify(laneWorkflows);
+        await prisma.analysis.update({
+          where: { id: analysisId },
+          data: { missionId },
+        });
+        console.log(`[confirm-and-launch] Workflow IDs saved for ${analysisId}: ${missionId}`);
+      } catch (err: any) {
+        console.error('[confirm-and-launch] Background mission launch error:', err);
+        await prisma.analysis.update({
+          where: { id: analysisId },
+          data: { status: 'error' },
+        }).catch(() => {});
+      }
+    })();
 
-    // Store as JSON so frontend knows which workflow = which lane
-    const missionId = JSON.stringify(laneWorkflows);
-    await prisma.analysis.update({
-      where: { id: analysisId },
-      data: { missionId },
-    });
+    // Don't await — let it run in background while we respond immediately
+    // In serverless, we can give it a small head-start to increase chances
+    // of completion before the function tears down, but don't block.
+    void launchPromise;
 
     return NextResponse.json({
       success: true,
       analysisId,
-      missionId,
-      laneWorkflows,
-      workflowCount: allWorkflowIds.length,
       status: 'processing',
     });
   } catch (err: any) {
