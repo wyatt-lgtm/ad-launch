@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import UrlInputForm from '../../components/url-input-form';
 import CreditBadge from '../../components/credit-badge';
+import BillingSection from '../../components/billing-section';
 
 interface BusinessItem {
   id: string;
@@ -189,6 +190,13 @@ export default function DashboardContent() {
               </motion.div>
             );
           })}
+        </div>
+      )}
+
+      {/* Billing section for first business */}
+      {businesses.length > 0 && (
+        <div className="mt-8">
+          <BillingSection businessId={businesses[0].id} />
         </div>
       )}
     </div>

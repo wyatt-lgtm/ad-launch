@@ -485,17 +485,27 @@ model CreditAccount {
   monthlyCreditAllowance  Int      @default(6)
   creditsRenewAt          DateTime?
   creditPlanName          String?  @default("starter")
-  creditStatus            String   @default("active") // active, suspended, cancelled
-  // Stripe-ready placeholders
+  creditStatus            String   @default("active") // active, suspended, cancelled, billing_issue, past_due, canceled
+  // Stripe Billing
   stripeCustomerId        String?
   stripeSubscriptionId    String?
+  stripeSubscriptionStatus String? // active, trialing, past_due, canceled, unpaid, incomplete, etc.
   stripePriceId           String?
+  trialStartedAt          DateTime?
+  trialEndsAt             DateTime?
+  currentPeriodStart      DateTime?
+  currentPeriodEnd        DateTime?
+  cancelAtPeriodEnd       Boolean  @default(false)
+  lastInvoiceId           String?
+  lastPaymentStatus       String?  // paid, failed, open, etc.
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
   business                Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   transactions            CreditTransaction[]
 
   @@index([creditStatus])
+  @@index([stripeCustomerId])
+  @@index([stripeSubscriptionId])
 }
 
 model CreditTransaction {
@@ -504,7 +514,7 @@ model CreditTransaction {
   businessId      String
   userId          String?
   postPackageId   String?
-  transactionType String   // monthly_grant, admin_grant, image_post_charge, video_upgrade_charge, recharge_grant, refund, adjustment, failed_generation_refund, recharge_pending
+  transactionType String   // monthly_grant, admin_grant, starter_grant, image_post_charge, video_upgrade_charge, recharge_grant, refund, adjustment, failed_generation_refund, recharge_pending
   amount          Int      // positive = credit added, negative = credit spent
   balanceAfter    Int
   reason          String   @default("")
