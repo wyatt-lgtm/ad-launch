@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { CreditCard, Coins, Calendar, AlertTriangle, ExternalLink, Loader2, Shield, Clock } from 'lucide-react';
+import { CreditCard, Coins, Calendar, AlertTriangle, ExternalLink, Loader2, Shield, Clock, History } from 'lucide-react';
+import Link from 'next/link';
 
 interface BillingData {
   hasSubscription: boolean;
@@ -249,6 +250,13 @@ export default function BillingSection({ businessId, className = '' }: BillingSe
           </div>
         )}
 
+        {/* Expiration policy */}
+        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
+          <p className="text-[11px] text-gray-500 leading-relaxed">
+            Monthly credits expire 60 days after they are added. Purchased credits do not expire while your account is active.
+          </p>
+        </div>
+
         {error && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
             <p className="text-xs text-red-700">{error}</p>
@@ -292,6 +300,17 @@ export default function BillingSection({ businessId, className = '' }: BillingSe
               Billing setup is in progress. Contact support to add credits.
             </p>
           )}
+        </div>
+
+        {/* Credit history link */}
+        <div className="pt-1">
+          <Link
+            href="/dashboard/credits"
+            className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
+          >
+            <History className="w-3.5 h-3.5" />
+            View credit history
+          </Link>
         </div>
       </div>
     </div>

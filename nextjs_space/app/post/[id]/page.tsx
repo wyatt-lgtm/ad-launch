@@ -6,7 +6,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import {
   Download, Copy, Check, ExternalLink, ThumbsDown, BookmarkPlus,
-  CheckCircle2, Loader2, AlertCircle, ArrowRight,
+  CheckCircle2, Loader2, AlertCircle, ArrowRight, Video, Coins,
 } from 'lucide-react';
 
 interface PostPackageData {
@@ -254,6 +254,32 @@ export default function PostPackagePage() {
             )}
           </div>
         </div>
+
+        {/* Video Upsell Placeholder */}
+        {(pkg.status === 'ready' || pkg.status === 'downloaded' || pkg.status === 'draft' || pkg.status === 'posted') && (
+          <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-5 mb-4">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                <Video className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-indigo-900">Love this post? Upgrade it to video.</h3>
+                <p className="text-xs text-indigo-600 mt-1">Turn your static post into an eye-catching video for social media.</p>
+                <div className="flex items-center gap-1.5 mt-2 text-xs text-indigo-500">
+                  <Coins className="w-3 h-3" />
+                  Video upgrade uses 3 credits
+                </div>
+                <button
+                  disabled
+                  className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-indigo-200 text-indigo-500 rounded-lg text-sm font-medium cursor-not-allowed"
+                >
+                  <Video className="w-4 h-4" />
+                  Coming Soon
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="text-center mt-6">
           <Link href="/dashboard/social" className="text-blue-600 hover:underline text-sm font-medium">

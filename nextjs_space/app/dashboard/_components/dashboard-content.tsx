@@ -167,8 +167,8 @@ export default function DashboardContent() {
                 )}
 
                 {/* Credits */}
-                <div className="mb-3">
-                  <CreditBadge businessId={biz.id} compact />
+                <div className="mb-3" onClick={e => e.stopPropagation()}>
+                  <CreditBadge businessId={biz.id} />
                 </div>
 
                 {/* Stats */}

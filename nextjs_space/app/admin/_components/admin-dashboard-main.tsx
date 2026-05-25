@@ -15,7 +15,7 @@ import NextImage from 'next/image';
 // Types
 // ═══════════════════════════════════════════════════════════════
 
-type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit';
+type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit' | 'credits';
 
 interface Overview {
   users: { total: number; confirmed: number; unconfirmed: number; recentSignups: number };
@@ -97,6 +97,7 @@ export default function AdminDashboardMain() {
     { id: 'agents',   label: 'Agents',   icon: Cpu },
     { id: 'tasks',    label: 'Tasks',    icon: Activity },
     { id: 'audit',    label: 'Agent Audit', icon: Eye },
+    { id: 'credits',  label: 'Credits',      icon: Shield },
   ];
 
   return (
@@ -170,6 +171,7 @@ export default function AdminDashboardMain() {
         {tab === 'agents' && <AgentsTab />}
         {tab === 'tasks' && <TasksTab />}
         {tab === 'audit' && <AuditTab />}
+        {tab === 'credits' && <CreditsTab />}
       </div>
     </div>
   );
@@ -1223,4 +1225,291 @@ function formatTimeAgo(isoString: string): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tab: Credits
+// ═══════════════════════════════════════════════════════════════
+
+interface CreditAccountRow {
+  id: string;
+  businessId: string;
+  creditBalance: number;
+  monthlyAllowance: number;
+  creditPlanName: string;
+  creditStatus: string;
+  accountClosedAt: string | null;
+  updatedAt: string;
+  business: { businessName: string | null; websiteUrl: string } | null;
+}
+
+interface CreditLotRow {
+  id: string;
+  creditType: string;
+  originalAmount: number;
+  remainingAmount: number;
+  expiresAt: string | null;
+  closureExpiresAt: string | null;
+  createdAt: string;
+}
+
+interface CreditTxRow {
+  id: string;
+  transactionType: string;
+  amount: number;
+  reason: string | null;
+  balanceAfter: number | null;
+  createdAt: string;
+}
+
+function CreditsTab() {
+  const [accounts, setAccounts] = useState<CreditAccountRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedBizId, setSelectedBizId] = useState<string | null>(null);
+  const [lots, setLots] = useState<CreditLotRow[]>([]);
+  const [txns, setTxns] = useState<CreditTxRow[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [view, setView] = useState<'lots' | 'transactions' | 'costs'>('lots');
+  const [costEntries, setCostEntries] = useState<any[]>([]);
+
+  // Load accounts
+  useEffect(() => {
+    fetch('/api/admin/credits/ledger?view=credits&limit=100')
+      .then(r => r.json())
+      .then(d => setAccounts(d.accounts || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Load detail when business selected
+  useEffect(() => {
+    if (!selectedBizId) return;
+    setDetailLoading(true);
+    const loadDetail = async () => {
+      try {
+        const [lotsRes, ledgerRes, costRes] = await Promise.all([
+          fetch(`/api/admin/credits/lots?businessId=${selectedBizId}&includeEmpty=true`),
+          fetch(`/api/admin/credits/ledger?businessId=${selectedBizId}&view=credits&limit=100`),
+          fetch(`/api/admin/credits/ledger?view=costs&limit=100`),
+        ]);
+        if (lotsRes.ok) { const d = await lotsRes.json(); setLots(d.lots || []); }
+        if (ledgerRes.ok) { const d = await ledgerRes.json(); setTxns(d.transactions || []); }
+        if (costRes.ok) { const d = await costRes.json(); setCostEntries(d.entries || []); }
+      } catch { /* silent */ }
+      setDetailLoading(false);
+    };
+    loadDetail();
+  }, [selectedBizId]);
+
+  const handleExpireNow = async () => {
+    if (!selectedBizId) return;
+    if (!confirm('Force-expire all eligible credit lots for this business?')) return;
+    const res = await fetch('/api/admin/credits/expire-now', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId: selectedBizId }),
+    });
+    const d = await res.json();
+    alert(`Expired ${d.expiredCount ?? 0} lots, ${d.totalCreditsExpired ?? 0} credits`);
+    // Reload lots
+    const lr = await fetch(`/api/admin/credits/lots?businessId=${selectedBizId}&includeEmpty=true`);
+    if (lr.ok) { const ld = await lr.json(); setLots(ld.lots || []); }
+  };
+
+  if (loading) {
+    return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-blue-600 animate-spin" /></div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Accounts list */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+        <div className="px-4 py-3 border-b border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-700">Credit Accounts ({accounts.length})</h3>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50 text-left">
+              <th className="px-4 py-3 font-medium text-gray-500">Business</th>
+              <th className="px-4 py-3 font-medium text-gray-500">Balance</th>
+              <th className="px-4 py-3 font-medium text-gray-500">Plan</th>
+              <th className="px-4 py-3 font-medium text-gray-500">Status</th>
+              <th className="px-4 py-3 font-medium text-gray-500">Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map(a => (
+              <tr
+                key={a.id}
+                onClick={() => setSelectedBizId(a.businessId)}
+                className={`border-t border-gray-100 cursor-pointer hover:bg-blue-50 transition-colors ${
+                  selectedBizId === a.businessId ? 'bg-blue-50' : ''
+                }`}
+              >
+                <td className="px-4 py-3">
+                  <p className="font-medium text-gray-900">{a.business?.businessName || 'Unnamed'}</p>
+                  <p className="text-xs text-gray-400 truncate max-w-[200px]">{a.business?.websiteUrl}</p>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`font-bold ${a.creditBalance <= 0 ? 'text-red-600' : 'text-blue-700'}`}>
+                    {a.creditBalance}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-gray-600 capitalize">{a.creditPlanName} ({a.monthlyAllowance}/mo)</td>
+                <td className="px-4 py-3">
+                  <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                    a.creditStatus === 'active' ? 'bg-green-100 text-green-700' :
+                    a.creditStatus === 'canceled' ? 'bg-red-100 text-red-700' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>{a.creditStatus}</span>
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-400">{new Date(a.updatedAt).toLocaleDateString()}</td>
+              </tr>
+            ))}
+            {accounts.length === 0 && (
+              <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No credit accounts</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Detail view */}
+      {selectedBizId && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-gray-700">
+                {accounts.find(a => a.businessId === selectedBizId)?.business?.businessName || 'Detail'}
+              </h3>
+              <div className="flex gap-1 ml-4">
+                {(['lots', 'transactions', 'costs'] as const).map(v => (
+                  <button
+                    key={v}
+                    onClick={() => setView(v)}
+                    className={`px-3 py-1 text-xs font-medium rounded-lg transition-colors ${
+                      view === v ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {v === 'lots' ? 'Credit Lots' : v === 'transactions' ? 'Transactions' : 'Cost Ledger'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={handleExpireNow}
+              className="px-3 py-1 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg border border-amber-200 transition-colors"
+            >
+              Force Expire
+            </button>
+          </div>
+
+          {detailLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 text-blue-600 animate-spin" /></div>
+          ) : view === 'lots' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-left">
+                    <th className="px-4 py-3 font-medium text-gray-500">Type</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Original</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Remaining</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Expires</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Closure Exp</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lots.map(lot => {
+                    const effectiveExpiry = lot.closureExpiresAt || lot.expiresAt;
+                    const isExpired = effectiveExpiry && new Date(effectiveExpiry) < new Date();
+                    return (
+                      <tr key={lot.id} className={`border-t border-gray-100 ${isExpired ? 'opacity-50' : ''} ${lot.remainingAmount <= 0 ? 'bg-gray-50' : ''}`}>
+                        <td className="px-4 py-3 capitalize">{lot.creditType.replace(/_/g, ' ')}</td>
+                        <td className="px-4 py-3 text-gray-700">{lot.originalAmount}</td>
+                        <td className="px-4 py-3">
+                          <span className={`font-semibold ${lot.remainingAmount <= 0 ? 'text-gray-400' : 'text-blue-700'}`}>
+                            {lot.remainingAmount}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500">
+                          {lot.expiresAt ? new Date(lot.expiresAt).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500">
+                          {lot.closureExpiresAt ? new Date(lot.closureExpiresAt).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-400">{new Date(lot.createdAt).toLocaleDateString()}</td>
+                      </tr>
+                    );
+                  })}
+                  {lots.length === 0 && (
+                    <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No credit lots</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : view === 'transactions' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-left">
+                    <th className="px-4 py-3 font-medium text-gray-500">Date</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Type</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Amount</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Reason</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Balance After</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {txns.map(tx => (
+                    <tr key={tx.id} className="border-t border-gray-100">
+                      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{new Date(tx.createdAt).toLocaleString()}</td>
+                      <td className="px-4 py-3 capitalize">{tx.transactionType.replace(/_/g, ' ')}</td>
+                      <td className="px-4 py-3">
+                        <span className={`font-semibold ${tx.amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {tx.amount > 0 ? '+' : ''}{tx.amount}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500 truncate max-w-[250px]">{tx.reason || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{tx.balanceAfter ?? '—'}</td>
+                    </tr>
+                  ))}
+                  {txns.length === 0 && (
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No transactions</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-left">
+                    <th className="px-4 py-3 font-medium text-gray-500">Date</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Provider</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Operation</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Cost ($)</th>
+                    <th className="px-4 py-3 font-medium text-gray-500">Business</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {costEntries.map((e: any, i: number) => (
+                    <tr key={e.id || i} className="border-t border-gray-100">
+                      <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{new Date(e.createdAt).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-gray-700">{e.provider || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{e.operation || '—'}</td>
+                      <td className="px-4 py-3 font-mono text-gray-700">${(e.costUsd ?? 0).toFixed(4)}</td>
+                      <td className="px-4 py-3 text-xs text-gray-400 truncate max-w-[150px]">{e.businessId?.slice(0, 8) || '—'}</td>
+                    </tr>
+                  ))}
+                  {costEntries.length === 0 && (
+                    <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No cost entries</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

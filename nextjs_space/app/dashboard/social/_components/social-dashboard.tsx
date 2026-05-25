@@ -10,7 +10,7 @@ import {
   Zap, RefreshCw, ChevronDown, ChevronUp, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
   List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare,
-  PenLine, Image as ImageIcon
+  PenLine, Image as ImageIcon, Coins, Lock
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -110,6 +110,9 @@ export default function SocialDashboard() {
   const [polling, setPolling] = useState(false);
   const [pollStatus, setPollStatus] = useState<string | null>(null);
 
+  // Credit balance for gating
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+
   // Scouting mode
   type ScoutMode = 'local_only' | 'local_plus_interests' | 'interests_only';
   const [scoutMode, setScoutMode] = useState<ScoutMode>('local_plus_interests');
@@ -162,6 +165,16 @@ export default function SocialDashboard() {
 
   // Fetch data — filter by active business when available
   const activeBusinessId = bizCtx.activeBusiness?.id;
+
+  // Load credit balance
+  useEffect(() => {
+    if (!activeBusinessId) return;
+    fetch(`/api/credits/balance?businessId=${activeBusinessId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setCreditBalance(d.balance ?? 0); })
+      .catch(() => {});
+  }, [activeBusinessId]);
+
   const fetchPosts = useCallback(async () => {
     try {
       const params = new URLSearchParams();
@@ -1049,25 +1062,48 @@ export default function SocialDashboard() {
             </div>
 
             {/* Footer / submit */}
-            <div className="px-5 py-4 border-t border-purple-100 bg-purple-50/50 flex items-center justify-between">
-              <p className="text-xs text-gray-500">
-                1 polished post will be created{draftGenerateArt ? ' with artwork' : ''}
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowDraftForm(false)}
-                  className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={submitDraft}
-                  disabled={draftSubmitting || !draftText.trim()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-60"
-                >
-                  {draftSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                  {draftSubmitting ? 'Submitting…' : 'Polish & Create'}
-                </button>
+            <div className="px-5 py-4 border-t border-purple-100 bg-purple-50/50 space-y-3">
+              {/* Credit info for draft */}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 flex items-center gap-1">
+                  <Coins className="w-3 h-3" />
+                  Image post uses 1 credit
+                </span>
+                {creditBalance !== null && (
+                  <span className={`text-xs font-medium ${creditBalance <= 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                    {creditBalance} credit{creditBalance !== 1 ? 's' : ''} remaining
+                  </span>
+                )}
+              </div>
+              {creditBalance !== null && creditBalance <= 0 && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <Lock className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-800">You&apos;re out of credits</p>
+                    <p className="text-xs text-amber-600 mt-0.5">Add credits to create more posts. Recharge checkout coming soon.</p>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-gray-500">
+                  1 polished post will be created{draftGenerateArt ? ' with artwork' : ''}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowDraftForm(false)}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={submitDraft}
+                    disabled={draftSubmitting || !draftText.trim() || (creditBalance !== null && creditBalance <= 0)}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-60"
+                  >
+                    {draftSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {draftSubmitting ? 'Submitting…' : 'Polish & Create'}
+                  </button>
+                </div>
               </div>
             </div>
           </motion.div>
@@ -1259,6 +1295,29 @@ export default function SocialDashboard() {
                 {selectionError && (
                   <p className="text-xs text-red-600 mb-2 font-medium">{selectionError}</p>
                 )}
+                {/* Credit info */}
+                {selectedStoryIds.size > 0 && (
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="text-xs text-gray-500 flex items-center gap-1">
+                      <Coins className="w-3 h-3" />
+                      Image post uses 1 credit per story
+                    </span>
+                    {creditBalance !== null && (
+                      <span className={`text-xs font-medium ${creditBalance <= 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                        Balance: {creditBalance} credit{creditBalance !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {creditBalance !== null && creditBalance <= 0 && selectedStoryIds.size > 0 && (
+                  <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-2">
+                    <Lock className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-amber-800">You&apos;re out of credits</p>
+                      <p className="text-xs text-amber-600 mt-0.5">Add credits to create more posts. Recharge checkout coming soon.</p>
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-gray-500">
                     {selectedStoryIds.size} of {MAX_STORIES} max selected
@@ -1275,7 +1334,7 @@ export default function SocialDashboard() {
                     </button>
                     <button
                       onClick={generateFromSelected}
-                      disabled={selectedStoryIds.size === 0 || scouting}
+                      disabled={selectedStoryIds.size === 0 || scouting || (creditBalance !== null && creditBalance < selectedStoryIds.size)}
                       className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
                     >
                       {scouting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
