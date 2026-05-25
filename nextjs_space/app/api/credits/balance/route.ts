@@ -44,5 +44,10 @@ export async function GET(req: NextRequest) {
       videoUpgrade: CREDIT_COSTS.VIDEO_UPGRADE,
     },
     rechargePacks: RECHARGE_PACKS,
+    expirationPolicy: {
+      grantExpiryDays: 60,
+      closureExpiryDays: 30,
+      expiringSoonDays: 14,
+    },
   });
 }

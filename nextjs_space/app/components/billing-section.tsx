@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { CreditCard, Coins, Calendar, AlertTriangle, ExternalLink, Loader2, Shield } from 'lucide-react';
+import { CreditCard, Coins, Calendar, AlertTriangle, ExternalLink, Loader2, Shield, Clock } from 'lucide-react';
 
 interface BillingData {
   hasSubscription: boolean;
@@ -28,6 +28,8 @@ interface BillingSectionProps {
 
 export default function BillingSection({ businessId, className = '' }: BillingSectionProps) {
   const [data, setData] = useState<BillingData | null>(null);
+  const [expiringSoon, setExpiringSoon] = useState(0);
+  const [nextExpiration, setNextExpiration] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,10 +40,20 @@ export default function BillingSection({ businessId, className = '' }: BillingSe
 
     async function load() {
       try {
-        const res = await fetch(`/api/billing/status?businessId=${businessId}`);
-        if (!res.ok) throw new Error('Failed to load billing status');
-        const d = await res.json();
+        const [billingRes, balanceRes] = await Promise.all([
+          fetch(`/api/billing/status?businessId=${businessId}`),
+          fetch(`/api/credits/balance?businessId=${businessId}`),
+        ]);
+        if (!billingRes.ok) throw new Error('Failed to load billing status');
+        const d = await billingRes.json();
         if (!cancelled) setData(d);
+        if (balanceRes.ok) {
+          const bal = await balanceRes.json();
+          if (!cancelled) {
+            setExpiringSoon(bal.expiringSoonCredits ?? 0);
+            setNextExpiration(bal.nextExpirationDate ?? null);
+          }
+        }
       } catch (err: any) {
         if (!cancelled) setError(err.message);
       } finally {
@@ -210,6 +222,20 @@ export default function BillingSection({ businessId, className = '' }: BillingSe
                 There's a billing issue. Please update your payment method to continue receiving monthly credits.
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Expiring soon */}
+        {expiringSoon > 0 && nextExpiration && (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-500" />
+              <span className="text-sm text-gray-600">Expiring soon</span>
+            </div>
+            <span className="text-sm font-medium text-amber-600">
+              {expiringSoon} credit{expiringSoon !== 1 ? 's' : ''} by{' '}
+              {new Date(nextExpiration).toLocaleDateString()}
+            </span>
           </div>
         )}
 

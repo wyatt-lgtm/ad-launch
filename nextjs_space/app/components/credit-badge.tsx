@@ -19,6 +19,8 @@ export default function CreditBadge({
   onBalanceLoaded,
 }: CreditBadgeProps) {
   const [balance, setBalance] = useState<number | null>(null);
+  const [expiringSoon, setExpiringSoon] = useState<number>(0);
+  const [nextExpiration, setNextExpiration] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -32,6 +34,8 @@ export default function CreditBadge({
         const data = await res.json();
         if (!cancelled) {
           setBalance(data.balance ?? 0);
+          setExpiringSoon(data.expiringSoonCredits ?? 0);
+          setNextExpiration(data.nextExpirationDate ?? null);
           onBalanceLoaded?.(data.balance ?? 0);
         }
       } catch {
@@ -100,6 +104,19 @@ export default function CreditBadge({
       {showLabel && isEmpty && (
         <span className="text-xs text-red-500 ml-1">Recharge checkout coming soon. Contact support to add credits.</span>
       )}
+      {showLabel && !isEmpty && expiringSoon > 0 && nextExpiration && (
+        <span className="text-xs text-amber-600 ml-1">
+          {expiringSoon} credit{expiringSoon !== 1 ? 's' : ''} expire{expiringSoon === 1 ? 's' : ''}{' '}
+          {formatRelativeDate(nextExpiration)}
+        </span>
+      )}
     </div>
   );
+}
+
+function formatRelativeDate(isoDate: string): string {
+  const diff = Math.ceil((new Date(isoDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  if (diff <= 0) return 'today';
+  if (diff === 1) return 'tomorrow';
+  return `in ${diff} days`;
 }

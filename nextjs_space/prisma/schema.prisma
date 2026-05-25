@@ -498,10 +498,13 @@ model CreditAccount {
   cancelAtPeriodEnd       Boolean  @default(false)
   lastInvoiceId           String?
   lastPaymentStatus       String?  // paid, failed, open, etc.
+  accountClosedAt          DateTime?
+  creditClosureExpiresAt   DateTime?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
   business                Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   transactions            CreditTransaction[]
+  creditLots              CreditLot[]
 
   @@index([creditStatus])
   @@index([stripeCustomerId])
@@ -514,11 +517,14 @@ model CreditTransaction {
   businessId      String
   userId          String?
   postPackageId   String?
-  transactionType String   // monthly_grant, admin_grant, starter_grant, image_post_charge, video_upgrade_charge, recharge_grant, refund, adjustment, failed_generation_refund, recharge_pending
+  transactionType String   // monthly_grant, admin_grant, starter_grant, image_post_charge, video_upgrade_charge, recharge_grant, refund, adjustment, failed_generation_refund, recharge_pending, credit_expired
   amount          Int      // positive = credit added, negative = credit spent
   balanceAfter    Int
   reason          String   @default("")
   idempotencyKey  String?  @unique
+  expiresAt       DateTime?
+  creditLotId     String?
+  relatedCreditLotId String?
   // Stripe-ready placeholders
   stripeCheckoutSessionId String?
   stripePaymentIntentId   String?
@@ -532,6 +538,30 @@ model CreditTransaction {
   @@index([postPackageId])
   @@index([transactionType])
   @@index([createdAt])
+  @@index([creditLotId])
+}
+
+model CreditLot {
+  id                  String   @id @default(cuid())
+  businessId          String
+  creditAccountId     String
+  sourceTransactionId String?
+  creditType          String   // starter, monthly, recharge, admin, refund
+  originalAmount      Int
+  remainingAmount     Int
+  grantedAt           DateTime @default(now())
+  expiresAt           DateTime?
+  closureExpiresAt    DateTime?
+  metadata            Json?
+  createdAt           DateTime @default(now())
+  creditAccount       CreditAccount @relation(fields: [creditAccountId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([creditAccountId])
+  @@index([creditType])
+  @@index([expiresAt])
+  @@index([closureExpiresAt])
+  @@index([remainingAmount])
 }
 
 model InternalCostLedger {

@@ -9,7 +9,7 @@
  */
 import Stripe from 'stripe';
 import { prisma } from '@/lib/db';
-import { grantCredits } from '@/lib/credits';
+import { grantCredits, closeAccountCreditWindow } from '@/lib/credits';
 
 // ─── Stripe Client ───────────────────────────────────────────────
 
@@ -302,6 +302,13 @@ export async function handleSubscriptionDeleted(rawSub: Stripe.Subscription): Pr
       cancelAtPeriodEnd: false,
     },
   });
+
+  // Trigger account closure credit window (sets 30-day expiry on recharge lots)
+  try {
+    await closeAccountCreditWindow(account.businessId);
+  } catch (err: any) {
+    console.error(`[billing] Failed to set closure window for business=${account.businessId}:`, err.message);
+  }
 
   console.log(`[billing] Subscription canceled: account=${account.id}`);
 }
