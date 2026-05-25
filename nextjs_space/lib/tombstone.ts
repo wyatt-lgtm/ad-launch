@@ -388,6 +388,80 @@ export async function createScoutStoryMission(
   };
 }
 
+/**
+ * Create a Tombstone mission for a Weekly Tip post.
+ * Generates an evergreen, educational/value-driven social post based on
+ * the business's content profile rather than external news or RSS stories.
+ */
+export async function createWeeklyTipMission(
+  websiteUrl: string,
+  opts: {
+    topic: string;
+    category: string;
+    audience: string;
+    tone: string;
+    cta?: string;
+    generateArt: boolean;
+    businessName?: string;
+    location?: string;
+    contentPillars: string[];
+    allowedAdjacentTopics: string[];
+    restrictedTopics: string[];
+    brandVoiceSummary: string;
+    industry: string;
+  },
+) {
+  const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+
+  const command = [
+    `review ${normalizedUrl} and create 1 social media post based on the weekly tip topic below.`,
+    `This is an EVERGREEN CONTENT task — do NOT use RSS, news, or external stories.`,
+    `Write a helpful, value-driven post that positions the business as a knowledgeable authority.`,
+    `The post should educate or inform the audience, include a clear takeaway, and feel natural (not salesy).`,
+    opts.generateArt
+      ? `Also create a social media image/artwork that complements this post using the business brand from the website.`
+      : `Do NOT generate any image or artwork for this post.`,
+    `Target platforms: facebook, instagram.`,
+    ``,
+    `--- WEEKLY TIP CONTEXT ---`,
+    `source: weekly_tip`,
+    `workflow_type: evergreen_weekly_tip`,
+    `requires_external_story: false`,
+    `max_posts: 1`,
+    `manual_publishing_only: true`,
+    `--- END WEEKLY TIP CONTEXT ---`,
+    ``,
+    `--- TOPIC ---`,
+    `Topic: ${opts.topic}`,
+    `Category: ${opts.category}`,
+    `Target audience: ${opts.audience}`,
+    `Tone: ${opts.tone}`,
+    opts.cta ? `Call-to-action: ${opts.cta}` : '',
+    `--- END TOPIC ---`,
+    ``,
+    `--- BUSINESS PROFILE ---`,
+    opts.businessName ? `Business name: ${opts.businessName}` : '',
+    opts.industry ? `Industry: ${opts.industry}` : '',
+    opts.location ? `Location: ${opts.location}` : '',
+    opts.contentPillars.length > 0 ? `Content pillars: ${opts.contentPillars.join(', ')}` : '',
+    opts.allowedAdjacentTopics.length > 0 ? `Allowed adjacent topics: ${opts.allowedAdjacentTopics.join(', ')}` : '',
+    opts.restrictedTopics.length > 0 ? `Restricted / off-limits topics: ${opts.restrictedTopics.join(', ')}` : '',
+    opts.brandVoiceSummary ? `Brand voice: ${opts.brandVoiceSummary}` : '',
+    `--- END BUSINESS PROFILE ---`,
+    ``,
+    `IMPORTANT: This is intent=weekly_tip, source=weekly_tip. Do NOT run RSS scouting or story discovery.`,
+  ].filter(Boolean).join('\n');
+
+  console.log(`[tombstone] Weekly tip mission for: ${normalizedUrl} — "${opts.topic.slice(0, 60)}"`);
+  const result = await sendCommand(command);
+
+  return {
+    success: !!result.workflowId,
+    workflowIds: result.workflowId ? [result.workflowId] : [],
+    allTaskIds: result.taskIds,
+  };
+}
+
 // Legacy single-mission creator (kept for backward compat)
 /**
  * Create a Tombstone mission to copy-edit a user-written draft post.

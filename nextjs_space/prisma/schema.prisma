@@ -52,9 +52,28 @@ model Business {
   scoutReports       ScoutReport[]
   postPackages       PostPackage[]
   creditAccount      CreditAccount?
+  contentProfile     BusinessContentProfile?
 
   @@unique([userId, websiteUrl])
   @@index([userId])
+}
+
+model BusinessContentProfile {
+  id                  String   @id @default(cuid())
+  businessId          String   @unique
+  contentPillars      Json     @default("[]")
+  allowedAdjacentTopics Json   @default("[]")
+  seasonalTopicMap    Json     @default("{}")
+  faqTopics           Json     @default("[]")
+  audienceSegments    Json     @default("[]")
+  brandVoiceSummary   String   @default("")
+  restrictedTopics    Json     @default("[]")
+  evergreenTopics     Json     @default("[]")
+  industry            String   @default("")
+  lastEnrichedAt      DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  business            Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 }
 
 model ScoutEmailSettings {

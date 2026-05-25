@@ -10,7 +10,7 @@ import {
   Zap, RefreshCw, ChevronDown, ChevronUp, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
   List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare,
-  PenLine, Image as ImageIcon, Coins, Lock
+  PenLine, Image as ImageIcon, Coins, Lock, Lightbulb
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -117,6 +117,21 @@ export default function SocialDashboard() {
   type ScoutMode = 'local_only' | 'local_plus_interests' | 'interests_only';
   const [scoutMode, setScoutMode] = useState<ScoutMode>('local_plus_interests');
   const [missingLocation, setMissingLocation] = useState(false);
+
+  // Weekly Tip state
+  const [showWeeklyTipForm, setShowWeeklyTipForm] = useState(false);
+  const [wtTopic, setWtTopic] = useState('');
+  const [wtCategory, setWtCategory] = useState('');
+  const [wtAudience, setWtAudience] = useState('All customers');
+  const [wtTone, setWtTone] = useState('Friendly & conversational');
+  const [wtCta, setWtCta] = useState('');
+  const [wtCustomTopic, setWtCustomTopic] = useState('');
+  const [wtGenerateArt, setWtGenerateArt] = useState(true);
+  const [wtSubmitting, setWtSubmitting] = useState(false);
+  const [wtError, setWtError] = useState<string | null>(null);
+  const [wtSuggestions, setWtSuggestions] = useState<Array<{topic: string; category: string; angle: string}>>([]);
+  const [wtLoadingSuggestions, setWtLoadingSuggestions] = useState(false);
+  const lastWeeklyTipParamsRef = useRef<any>(null);
 
   // Create From My Own Post state
   const [showDraftForm, setShowDraftForm] = useState(false);
@@ -483,6 +498,88 @@ export default function SocialDashboard() {
     setScoutResult(null);
   };
 
+  // ── Weekly Tip ─────────────────────────────────────────────────────────
+  const loadWeeklyTipSuggestions = useCallback(async (cat?: string) => {
+    if (!activeBusinessId) return;
+    setWtLoadingSuggestions(true);
+    try {
+      const q = cat ? `?category=${encodeURIComponent(cat)}` : '';
+      const res = await fetch(`/api/businesses/${activeBusinessId}/weekly-tip-suggestions${q}`);
+      if (res.ok) {
+        const data = await res.json();
+        setWtSuggestions(data.suggestions || []);
+      }
+    } catch (e) {
+      console.error('Failed to load tip suggestions', e);
+    } finally {
+      setWtLoadingSuggestions(false);
+    }
+  }, [activeBusinessId]);
+
+  // Load suggestions when form opens or category changes
+  useEffect(() => {
+    if (showWeeklyTipForm && activeBusinessId) {
+      loadWeeklyTipSuggestions(wtCategory || undefined);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showWeeklyTipForm, wtCategory, activeBusinessId]);
+
+  const submitWeeklyTip = async () => {
+    const effectiveTopic = wtCustomTopic.trim() || wtTopic;
+    if (!effectiveTopic) {
+      setWtError('Please select or enter a topic.');
+      return;
+    }
+    if (!wtCategory) {
+      setWtError('Please select a category.');
+      return;
+    }
+    setWtSubmitting(true);
+    setWtError(null);
+
+    const params = {
+      businessId: activeBusinessId,
+      topic: effectiveTopic,
+      category: wtCategory,
+      audience: wtAudience,
+      tone: wtTone,
+      cta: wtCta || undefined,
+      customTopic: wtCustomTopic.trim() || undefined,
+      generateArt: wtGenerateArt,
+    };
+    lastWeeklyTipParamsRef.current = params;
+
+    try {
+      const res = await fetch('/api/social/create-weekly-tip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create weekly tip');
+
+      const wfIds: string[] = data.workflowIds || [];
+      if (wfIds.length > 0) {
+        setActiveWorkflowIds(wfIds);
+        setActiveFlowLabel('Weekly Tip');
+      }
+
+      // Close & reset form
+      setShowWeeklyTipForm(false);
+      setScoutResult(null);
+      setWtTopic('');
+      setWtCategory('');
+      setWtCustomTopic('');
+      setWtCta('');
+      setWtGenerateArt(true);
+    } catch (e: any) {
+      console.error('Weekly tip submit error:', e);
+      setWtError(e.message);
+    } finally {
+      setWtSubmitting(false);
+    }
+  };
+
   // ── Create From My Own Post ─────────────────────────────────────────────
   const submitDraft = async () => {
     if (!draftText.trim()) {
@@ -543,7 +640,26 @@ export default function SocialDashboard() {
   // Retry handlers for GenerationProgress
   const retryGeneration = async () => {
     setActiveWorkflowIds([]);
-    if (activeFlowLabel === 'My Own Post' && lastDraftParamsRef.current) {
+    if (activeFlowLabel === 'Weekly Tip' && lastWeeklyTipParamsRef.current) {
+      setWtSubmitting(true);
+      setWtError(null);
+      try {
+        const res = await fetch('/api/social/create-weekly-tip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(lastWeeklyTipParamsRef.current),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Retry failed');
+        if (data.workflowIds?.length > 0) {
+          setActiveWorkflowIds(data.workflowIds);
+        }
+      } catch (e: any) {
+        setWtError(e.message);
+      } finally {
+        setWtSubmitting(false);
+      }
+    } else if (activeFlowLabel === 'My Own Post' && lastDraftParamsRef.current) {
       setDraftSubmitting(true);
       setDraftError(null);
       try {
@@ -884,6 +1000,18 @@ export default function SocialDashboard() {
             <PenLine className="w-4 h-4" />
             My Own Post
           </button>
+          <button
+            onClick={() => { setShowWeeklyTipForm(v => !v); if (showDraftForm) setShowDraftForm(false); }}
+            disabled={scouting || wtSubmitting}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-colors shadow-sm ${
+              showWeeklyTipForm
+                ? 'bg-amber-600 text-white hover:bg-amber-700'
+                : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50'
+            } disabled:opacity-60`}
+          >
+            <Lightbulb className="w-4 h-4" />
+            Weekly Tip
+          </button>
         </div>
       </div>
 
@@ -910,6 +1038,172 @@ export default function SocialDashboard() {
           </button>
         ))}
       </div>
+
+      {/* ── Weekly Tip Form ─────────────────────────────────────── */}
+      <AnimatePresence>
+        {showWeeklyTipForm && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mb-6 bg-white border border-amber-200 rounded-2xl shadow-sm overflow-hidden"
+          >
+            <div className="px-5 py-4 border-b border-amber-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="w-4 h-4 text-amber-600" />
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Create a Weekly Tip Post</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Share helpful expertise — we&apos;ll craft an engaging post with artwork</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowWeeklyTipForm(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              {/* Category */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">Topic Category <span className="text-red-500">*</span></label>
+                <select
+                  value={wtCategory}
+                  onChange={e => setWtCategory(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                >
+                  <option value="">Select a category…</option>
+                  {['Seasonal Tip','Maintenance Reminder','Customer FAQ','How-To / Checklist','Safety / Preparedness','Problem / Solution','Local Lifestyle','Myth-Busting','Offer Tie-In'].map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Suggested topics */}
+              {wtCategory && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                    Suggested Topic
+                    {wtLoadingSuggestions && <Loader2 className="w-3 h-3 animate-spin inline ml-1" />}
+                  </label>
+                  {wtSuggestions.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {wtSuggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => { setWtTopic(s.topic); setWtCustomTopic(''); }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                            wtTopic === s.topic && !wtCustomTopic
+                              ? 'bg-amber-100 border-amber-400 text-amber-800'
+                              : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-amber-300 hover:bg-amber-50'
+                          }`}
+                          title={s.angle}
+                        >
+                          {s.topic}
+                        </button>
+                      ))}
+                    </div>
+                  ) : !wtLoadingSuggestions ? (
+                    <p className="text-xs text-gray-400">No suggestions yet — select a category or type your own below.</p>
+                  ) : null}
+                </div>
+              )}
+
+              {/* Custom topic override */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">Or type your own topic</label>
+                <input
+                  type="text"
+                  value={wtCustomTopic}
+                  onChange={e => setWtCustomTopic(e.target.value)}
+                  placeholder="e.g. 5 signs your furnace needs maintenance"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Audience + Tone row */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Audience</label>
+                  <select
+                    value={wtAudience}
+                    onChange={e => setWtAudience(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                  >
+                    {['All customers','New customers','Returning customers','Budget-conscious','Premium/high-value','Seasonal/occasional','Local community','Families','Business owners'].map(a => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Tone</label>
+                  <select
+                    value={wtTone}
+                    onChange={e => setWtTone(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                  >
+                    {['Friendly & conversational','Professional & authoritative','Warm & empathetic','Energetic & motivating','Educational & helpful','Casual & relatable'].map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* CTA */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">Call-to-Action <span className="text-gray-400">(optional)</span></label>
+                <input
+                  type="text"
+                  value={wtCta}
+                  onChange={e => setWtCta(e.target.value)}
+                  placeholder="e.g. Call us for a free estimate"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Generate art toggle + submit */}
+              <div className="flex items-center justify-between pt-2">
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={() => setWtGenerateArt(v => !v)}
+                      className="text-amber-600"
+                    >
+                      {wtGenerateArt ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                    </button>
+                    Generate artwork
+                  </label>
+                  {creditBalance !== null && (
+                    <span className={`text-xs font-medium ${creditBalance <= 0 ? 'text-red-600' : 'text-amber-600'}`}>
+                      {creditBalance} credit{creditBalance !== 1 ? 's' : ''} remaining
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {wtError && <p className="text-xs text-red-600">{wtError}</p>}
+                  <button
+                    onClick={submitWeeklyTip}
+                    disabled={wtSubmitting || (!wtTopic && !wtCustomTopic.trim()) || !wtCategory || (creditBalance !== null && creditBalance <= 0)}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors disabled:opacity-60"
+                  >
+                    {wtSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {wtSubmitting ? 'Creating…' : 'Create Tip Post'}
+                  </button>
+                </div>
+              </div>
+              {creditBalance !== null && creditBalance <= 0 && (
+                <div className="flex items-center gap-2 p-2.5 bg-red-50 rounded-lg">
+                  <Lock className="w-3.5 h-3.5 text-red-500" />
+                  <span className="text-xs text-red-700">You need at least 1 credit to create a post. Purchase more in Settings.</span>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Create From My Own Post Form ─────────────────────────── */}
       <AnimatePresence>
@@ -1442,7 +1736,7 @@ export default function SocialDashboard() {
                 <Newspaper className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">No social posts yet</h3>
                 <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
-                  Click &ldquo;Scout Stories&rdquo; to discover local and industry news, or click &ldquo;My Own Post&rdquo; to polish your own draft with professional copy editing and artwork.
+                  Click &ldquo;Scout Stories&rdquo; to discover local and industry news, &ldquo;My Own Post&rdquo; to polish your own draft, or &ldquo;Weekly Tip&rdquo; to share helpful expertise with a professionally crafted post.
                 </p>
                 <div className="flex items-center justify-center">
                   <button
