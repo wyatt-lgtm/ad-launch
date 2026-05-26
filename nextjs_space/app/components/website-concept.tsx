@@ -254,7 +254,30 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
       });
       const result = await res.json().catch(() => ({}));
 
-      if (!res.ok || !result.workflowId) {
+      if (!res.ok) {
+        setGenError(result.error ?? 'Failed to start generation');
+        setGenerating(false);
+        setWorkflowStatus('');
+        return;
+      }
+
+      // ── Direct LLM mode (Tombstone unavailable) ──
+      if (result.mode === 'direct' && result.html) {
+        const blob = new Blob([result.html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        setGeneratedUrl(url);
+        window.open(url, '_blank');
+        setGenerating(false);
+        setWorkflowStatus('completed');
+        // Show a completed single-step progress for visual feedback
+        setWorkflowSteps([
+          { id: 1, department: 'AI', label: 'Direct HTML Generation', status: 'complete' },
+        ]);
+        return;
+      }
+
+      // ── Workflow mode ──
+      if (!result.workflowId) {
         setGenError(result.error ?? 'Failed to start generation');
         setGenerating(false);
         setWorkflowStatus('');
