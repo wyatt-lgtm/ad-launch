@@ -135,11 +135,10 @@ export async function POST(
     const launchPromise = (async () => {
       const launchStart = Date.now();
       try {
-        const [websiteResult, newsResult, holidayResult] = await Promise.all([
-          createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`),
-          createLaneMission(websiteUrl, 'news', newsContext),
-          createLaneMission(websiteUrl, 'holiday', holidayContext),
-        ]);
+        // Sequential to avoid Tombstone race condition that returns duplicate workflow IDs
+        const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`);
+        const newsResult = await createLaneMission(websiteUrl, 'news', newsContext);
+        const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext);
 
         console.log(`[confirm-and-launch] Missions launched in ${Date.now() - launchStart}ms`);
         console.log(`[confirm-and-launch] Lane missions created:`, {
@@ -152,6 +151,13 @@ export async function POST(
         if (websiteResult.workflowId) laneWorkflows.website = websiteResult.workflowId;
         if (newsResult.workflowId) laneWorkflows.news = newsResult.workflowId;
         if (holidayResult.workflowId) laneWorkflows.holiday = holidayResult.workflowId;
+
+        // Safety check: warn if duplicate workflow IDs were returned
+        const wfIds = Object.values(laneWorkflows);
+        const uniqueWfIds = new Set(wfIds);
+        if (uniqueWfIds.size < wfIds.length) {
+          console.warn(`[confirm-and-launch] DUPLICATE workflow IDs detected! Lanes may collide:`, laneWorkflows);
+        }
 
         const allWorkflowIds = Object.values(laneWorkflows);
         if (allWorkflowIds.length === 0) {
