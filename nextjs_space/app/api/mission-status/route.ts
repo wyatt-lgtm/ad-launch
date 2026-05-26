@@ -230,7 +230,11 @@ export async function GET(request: NextRequest) {
         const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl, analysisId);
         const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
         const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl);
-        const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl);
+        const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl, {
+          businessId: analysis.businessId ?? '',
+          location: [analysis.businessCity, analysis.businessState].filter(Boolean).join(', '),
+          industry: results.research?.business_summary?.category ?? '',
+        });
         const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
 
         // Build reverse map: workflowId → lane name
@@ -748,7 +752,7 @@ function buildGoogleAds(research: any, creative: any, websiteUrl: string) {
 /**
  * Build website concept copy from research data.
  */
-function buildWebsiteConcept(research: any, creative: any, websiteUrl: string) {
+function buildWebsiteConcept(research: any, creative: any, websiteUrl: string, extra?: { businessId?: string; location?: string; industry?: string }) {
   const biz = research?.business_summary ?? {};
   const voice = research?.brand_voice ?? {};
   const ads = creative?.ads ?? [];
@@ -819,6 +823,11 @@ function buildWebsiteConcept(research: any, creative: any, websiteUrl: string) {
     businessName,
     sections,
     colorPalette,
+    // Extra fields for Tombstone concept-website workflow
+    websiteUrl: websiteUrl || '',
+    industry: extra?.industry || category || '',
+    location: extra?.location || '',
+    businessId: extra?.businessId || '',
   };
 }
 
