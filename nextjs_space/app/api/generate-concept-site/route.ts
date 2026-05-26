@@ -24,11 +24,26 @@ export async function POST(request: NextRequest) {
       userId,
       sections,
       colorPalette,
+      // New: reference websites + SEO scout
+      referenceSites,
+      referenceInstructions,
+      analyzeCompetitors,
+      primaryKeyword,
+      tradeArea,
+      competitorUrls,
     } = body;
+
+    const warnings: string[] = [];
 
     // ── Try Tombstone workflow first ──────────────────────────────────────
     if (websiteUrl || businessName) {
       try {
+        // Check for search API availability if competitor auto-discovery requested
+        const hasSearchApi = !!(process.env.SERPAPI_API_KEY || process.env.DATAFORSEO_LOGIN || process.env.GOOGLE_CUSTOM_SEARCH_KEY || process.env.BING_SEARCH_API_KEY);
+        if (analyzeCompetitors && !competitorUrls?.length && !hasSearchApi) {
+          warnings.push('No search provider configured; automatic competitor discovery skipped. Provide competitor URLs manually for best results.');
+        }
+
         const result = await createConceptWebsiteMission({
           website_url: websiteUrl || '',
           business_name: businessName || 'the business',
@@ -38,6 +53,17 @@ export async function POST(request: NextRequest) {
           business_id: businessId || '',
           user_id: userId || '',
           google_maps_api_key: process.env.GOOGLE_MAPS_API_KEY || '',
+          // Reference websites
+          reference_sites: referenceSites?.slice(0, 3),
+          reference_instructions: referenceInstructions,
+          inspiration_only: true,
+          do_not_copy_assets: true,
+          // Competitive SEO scout
+          analyze_competitors: !!analyzeCompetitors,
+          primary_keyword: primaryKeyword,
+          trade_area: tradeArea,
+          competitor_urls: competitorUrls,
+          competitor_count: 5,
         });
 
         if (result.success && result.workflowId) {
@@ -48,6 +74,7 @@ export async function POST(request: NextRequest) {
             missionName: result.missionName,
             stepCount: result.stepCount,
             finalTaskId: result.taskIds?.[result.taskIds.length - 1] ?? null,
+            warnings,
           });
         }
         console.warn('[generate-concept-site] Tombstone workflow failed, falling back to direct LLM:', result.error);

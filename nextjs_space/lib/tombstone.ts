@@ -1013,6 +1013,17 @@ export interface ConceptWebsitePayload {
   business_id?: string;
   user_id?: string;
   google_maps_api_key?: string;
+  // Reference websites (design inspiration)
+  reference_sites?: string[];
+  reference_instructions?: string;
+  inspiration_only?: boolean;
+  do_not_copy_assets?: boolean;
+  // Competitive SEO scout
+  analyze_competitors?: boolean;
+  primary_keyword?: string;
+  trade_area?: string;
+  competitor_urls?: string[];
+  competitor_count?: number;
 }
 
 /**

@@ -1,6 +1,6 @@
 'use client';
 
-import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail, ChevronDown, ChevronUp, CheckCircle2, Circle, AlertCircle, Clock } from 'lucide-react';
+import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail, ChevronDown, ChevronUp, CheckCircle2, Circle, AlertCircle, Clock, Plus, Trash2, Search, AlertTriangle } from 'lucide-react';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 
@@ -153,6 +153,18 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const workflowRef = useRef<{ workflowId: string; finalTaskId: number } | null>(null);
 
+  // Reference websites state
+  const [refUrls, setRefUrls] = useState<string[]>(['']);
+  const [refInstructions, setRefInstructions] = useState('');
+  const [showRefSection, setShowRefSection] = useState(false);
+
+  // Competitive SEO scout state
+  const [seoScoutEnabled, setSeoScoutEnabled] = useState(false);
+  const [primaryKeyword, setPrimaryKeyword] = useState('');
+  const [tradeArea, setTradeArea] = useState('');
+  const [competitorUrls, setCompetitorUrls] = useState<string[]>(['']);
+  const [seoWarnings, setSeoWarnings] = useState<string[]>([]);
+
   const isLoggedIn = !!(session?.user as any)?.email;
 
   // Cleanup polling on unmount
@@ -237,6 +249,10 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     setWorkflowStatus('starting');
 
     try {
+      // Build reference sites (filter empty)
+      const validRefUrls = refUrls.map(u => u.trim()).filter(Boolean);
+      const validCompetitorUrls = competitorUrls.map(u => u.trim()).filter(Boolean);
+
       const res = await fetch('/api/generate-concept-site', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,6 +263,14 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           location: data.location || '',
           contentProfile: data.contentProfile || {},
           businessId: data.businessId || '',
+          // Reference websites
+          referenceSites: validRefUrls.length > 0 ? validRefUrls.slice(0, 3) : undefined,
+          referenceInstructions: refInstructions.trim() || undefined,
+          // Competitive SEO scout
+          analyzeCompetitors: seoScoutEnabled,
+          primaryKeyword: primaryKeyword.trim() || undefined,
+          tradeArea: tradeArea.trim() || undefined,
+          competitorUrls: validCompetitorUrls.length > 0 ? validCompetitorUrls : undefined,
           // Legacy fields for backward compat
           sections: data.sections,
           colorPalette: data.colorPalette,
@@ -277,6 +301,11 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
       }
 
       // ── Workflow mode ──
+      // Surface any warnings from backend (e.g., no search API configured)
+      if (result.warnings?.length) {
+        setSeoWarnings(result.warnings);
+      }
+
       if (!result.workflowId) {
         setGenError(result.error ?? 'Failed to start generation');
         setGenerating(false);
@@ -398,6 +427,18 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         </div>
       )}
 
+      {/* SEO warnings */}
+      {seoWarnings.length > 0 && (
+        <div className="px-6 py-3 bg-amber-50 border-b border-amber-100">
+          {seoWarnings.map((w, i) => (
+            <div key={i} className="flex items-center gap-2 text-amber-700 text-sm">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              {w}
+            </div>
+          ))}
+        </div>
+      )}
+
       {genError && (
         <div className="px-6 py-3 bg-red-50 border-b border-red-100">
           <p className="text-red-500 text-sm text-center">{genError}</p>
@@ -414,6 +455,153 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           >
             <ExternalLink className="w-4 h-4" /> Open Generated Website Again
           </a>
+        </div>
+      )}
+
+      {/* ── Optional: Reference Websites ── */}
+      {expanded && !generating && !generatedUrl && (
+        <div className="px-6 pt-5 pb-2 border-b border-gray-100">
+          <button
+            onClick={() => setShowRefSection(!showRefSection)}
+            className="flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-violet-600 transition-colors"
+          >
+            <Globe className="w-4 h-4" />
+            Reference Websites (optional)
+            {showRefSection ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          <p className="text-xs text-gray-400 mt-1">Add up to 3 websites for design inspiration</p>
+
+          {showRefSection && (
+            <div className="mt-3 space-y-3">
+              <p className="text-xs text-gray-500 bg-violet-50 px-3 py-2 rounded-lg">
+                We'll use these for design inspiration only. We won't copy their text, logos, images, or exact layout.
+              </p>
+              {refUrls.map((url, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <input
+                    type="url"
+                    value={url}
+                    onChange={(e) => {
+                      const next = [...refUrls];
+                      next[i] = e.target.value;
+                      setRefUrls(next);
+                    }}
+                    placeholder={`Reference site ${i + 1} (e.g., www.example.com)`}
+                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-300"
+                  />
+                  {refUrls.length > 1 && (
+                    <button
+                      onClick={() => setRefUrls(refUrls.filter((_, j) => j !== i))}
+                      className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {refUrls.length < 3 && (
+                <button
+                  onClick={() => setRefUrls([...refUrls, ''])}
+                  className="flex items-center gap-1 text-xs font-medium text-violet-600 hover:text-violet-800 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add another reference
+                </button>
+              )}
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">What do you like about these sites?</label>
+                <textarea
+                  value={refInstructions}
+                  onChange={(e) => setRefInstructions(e.target.value)}
+                  placeholder="e.g., I like the dark moody feel of the first site and the clean navigation of the second..."
+                  rows={2}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-300 resize-none"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Optional: Competitive SEO Scout ── */}
+      {expanded && !generating && !generatedUrl && (
+        <div className="px-6 pt-4 pb-4 border-b border-gray-100">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={seoScoutEnabled}
+              onChange={(e) => setSeoScoutEnabled(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+            />
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-700">
+              <Search className="w-4 h-4" />
+              Analyze top local organic competitors
+            </span>
+          </label>
+          <p className="text-xs text-gray-400 mt-1 ml-6">Discover SEO patterns from competitors in your area</p>
+
+          {seoScoutEnabled && (
+            <div className="mt-3 ml-6 space-y-3">
+              <p className="text-xs text-gray-500 bg-blue-50 px-3 py-2 rounded-lg">
+                We'll use competitor sites to understand SEO patterns, not to copy their content or design.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Primary keyword</label>
+                  <input
+                    type="text"
+                    value={primaryKeyword}
+                    onChange={(e) => setPrimaryKeyword(e.target.value)}
+                    placeholder={`e.g., ${data?.industry || 'plumber'} near me`}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">Trade area / city</label>
+                  <input
+                    type="text"
+                    value={tradeArea}
+                    onChange={(e) => setTradeArea(e.target.value)}
+                    placeholder={data?.location || 'e.g., Colorado Springs, CO'}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">Competitor URLs (optional — we'll find them if left blank)</label>
+                {competitorUrls.map((url, i) => (
+                  <div key={i} className="flex gap-2 items-center mb-2">
+                    <input
+                      type="url"
+                      value={url}
+                      onChange={(e) => {
+                        const next = [...competitorUrls];
+                        next[i] = e.target.value;
+                        setCompetitorUrls(next);
+                      }}
+                      placeholder={`Competitor ${i + 1}`}
+                      className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    />
+                    {competitorUrls.length > 1 && (
+                      <button
+                        onClick={() => setCompetitorUrls(competitorUrls.filter((_, j) => j !== i))}
+                        className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {competitorUrls.length < 5 && (
+                  <button
+                    onClick={() => setCompetitorUrls([...competitorUrls, ''])}
+                    className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add competitor
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
