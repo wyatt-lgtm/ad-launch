@@ -248,8 +248,14 @@ export async function GET(request: NextRequest) {
         }
 
         // Create ad records IMMEDIATELY with Tombstone images (fast — no GPT-5.1 blocking)
-        const adsToCreate = results.ads;
-        console.log(`[mission-status] Creating ${adsToCreate.length} ads with Tombstone images (fast path)`);
+        // Skip lanes already stored by progressive extraction
+        const existingProgressiveAds = await prisma.ad.findMany({ where: { analysisId: analysis.id } });
+        const existingLaneSet = new Set(existingProgressiveAds.map((a: any) => a.lane).filter(Boolean));
+        const adsToCreate = results.ads.filter((ad: any) => {
+          const lane = wfToLane[ad?.workflowId] ?? null;
+          return !lane || !existingLaneSet.has(lane);
+        });
+        console.log(`[mission-status] Creating ${adsToCreate.length} ads with Tombstone images (fast path), skipping ${existingLaneSet.size} already-stored lanes`);
         for (let i = 0; i < adsToCreate.length; i++) {
           const ad = adsToCreate[i];
           let imageKey = ad?.imageUrl ?? null;
@@ -381,7 +387,6 @@ export async function GET(request: NextRequest) {
     if (mappedStatus === 'error') {
       const failedTask = (statusResult.tasks ?? []).find((t: any) => t.status === 'error' && t.lastError);
       if (failedTask?.lastError) {
-        // Clean up internal error messages for user display
         const raw = failedTask.lastError as string;
         if (raw.includes('terms violation')) {
           errorReason = 'This website could not be analyzed. It may be too large or have access restrictions. Please try a different URL.';
@@ -394,10 +399,86 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // ── Progressive lane results: show completed lane ads while others still generate ──
+    let partialAds: any[] = [];
+    const completedWfSet = new Set(statusResult.completedWorkflows ?? []);
+    if (completedWfSet.size > 0 && Object.keys(laneWorkflows).length > 0) {
+      // Check which lanes have finished (only if we haven't already stored them)
+      const existingAds = analysis.ads ?? [];
+      const existingLanes = new Set(existingAds.map((a: any) => a.lane).filter(Boolean));
+
+      // Build reverse map: workflowId → lane
+      const wfToLane: Record<string, string> = {};
+      for (const [lane, wfIdOrArr] of Object.entries(laneWorkflows)) {
+        if (Array.isArray(wfIdOrArr)) {
+          for (const wfId of wfIdOrArr) wfToLane[wfId] = lane;
+        } else if (wfIdOrArr) {
+          wfToLane[wfIdOrArr as string] = lane;
+        }
+      }
+
+      // Find newly completed lanes (workflow done + no ads stored for that lane yet)
+      const newlyCompletedLaneWfs: string[] = [];
+      for (const wfId of completedWfSet) {
+        const lane = wfToLane[wfId];
+        if (lane && !existingLanes.has(lane)) {
+          newlyCompletedLaneWfs.push(wfId);
+        }
+      }
+
+      if (newlyCompletedLaneWfs.length > 0) {
+        console.log(`[mission-status] Progressive: ${newlyCompletedLaneWfs.length} lanes newly completed, extracting ads`);
+        try {
+          const partialResults = await getWorkflowResults(newlyCompletedLaneWfs);
+          for (const ad of partialResults.ads) {
+            let imageKey = ad?.imageUrl ?? null;
+            if (imageKey && imageKey.startsWith('http') && !imageKey.includes('.s3.')) {
+              try {
+                const parsed = new URL(imageKey);
+                let path = parsed.pathname.replace(/^\/+/, '');
+                if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length);
+                imageKey = path;
+              } catch {}
+            }
+            const created = await prisma.ad.create({
+              data: {
+                analysisId: analysis.id,
+                imageUrl: imageKey,
+                caption: ad?.caption ?? '',
+                headline: ad?.headline ?? 'Ad',
+                watermarked: true,
+                lane: wfToLane[ad?.workflowId] ?? null,
+              },
+            });
+            partialAds.push(created);
+          }
+          if (partialAds.length > 0) {
+            console.log(`[mission-status] Progressive: stored ${partialAds.length} early ads for lanes: ${newlyCompletedLaneWfs.map(w => wfToLane[w]).join(', ')}`);
+            // Fire background image upgrade for the early ads
+            const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+            fetch(`${baseUrl}/api/upgrade-ad-images`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ analysisId }),
+            }).catch(() => {});
+          }
+        } catch (err: any) {
+          console.error('[mission-status] Progressive ad extraction error:', err?.message);
+        }
+      }
+
+      // Also include already-stored partial ads from previous polls
+      if (existingAds.length > 0 || partialAds.length > 0) {
+        const allPartialAds = [...existingAds, ...partialAds];
+        partialAds = await resolveAdImages(allPartialAds);
+      }
+    }
+
     return NextResponse.json({
       status: mappedStatus,
       tasks: statusResult.tasks ?? [],
       laneWorkflows,
+      ...(partialAds.length > 0 ? { ads: partialAds } : {}),
       ...(errorReason ? { errorReason } : {}),
     });
   } catch (err: any) {

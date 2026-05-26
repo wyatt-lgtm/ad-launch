@@ -605,7 +605,22 @@ export async function getMultiWorkflowStatus(workflowIds: string[]) {
     else if (anyFailed && !anyActive && !anyBlocked) overallStatus = 'error';
     else if (anyActive || anyBlocked) overallStatus = 'generating';
 
-    return { success: true, tasks: taskList, status: overallStatus };
+    // Per-workflow completion map: { workflowId: 'completed' | 'generating' | ... }
+    const byWorkflow = new Map<string, any[]>();
+    for (const t of ourTasks) {
+      const wf = t?.workflow_id;
+      if (!byWorkflow.has(wf)) byWorkflow.set(wf, []);
+      byWorkflow.get(wf)!.push(t);
+    }
+    const completedWorkflows: string[] = [];
+    for (const [wfId, wfTasks] of byWorkflow) {
+      const wfStatuses = wfTasks.map((t: any) => (t?.status ?? '').toLowerCase());
+      if (wfStatuses.every((s: string) => s === 'complete' || s === 'completed')) {
+        completedWorkflows.push(wfId);
+      }
+    }
+
+    return { success: true, tasks: taskList, status: overallStatus, completedWorkflows };
   } catch (err: any) {
     console.error('Multi-workflow status error:', err?.message);
     return { success: false, tasks: [], status: 'error' };

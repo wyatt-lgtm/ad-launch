@@ -741,8 +741,10 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         setTasks(data.tasks);
       }
 
+      // Accept partial ads during generation (progressive lane results)
+      if (data?.ads?.length) setAds(data.ads);
+
       if (s === 'completed') {
-        if (data?.ads?.length) setAds(data.ads);
         if (data?.seoData) setSeoData(data.seoData);
         if (data?.postingPlan) setPostingPlan(data.postingPlan);
         if (data?.googleAdsData) setGoogleAdsData(data.googleAdsData);
