@@ -8,6 +8,7 @@ import {
   Download, Copy, Check, ExternalLink, ThumbsDown, BookmarkPlus,
   CheckCircle2, Loader2, AlertCircle, ArrowRight, Video, Coins,
 } from 'lucide-react';
+import AgencyBrief from '@/components/agency-brief';
 
 interface PostPackageData {
   id: string;
@@ -156,6 +157,9 @@ export default function PostPackagePage() {
             {statusBadge.label}
           </span>
         </div>
+
+        {/* Agency Brief */}
+        {pkg.workflowId && <AgencyBrief workflowId={pkg.workflowId} />}
 
         {/* Story source */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-4">
