@@ -856,11 +856,13 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       const allComplete = items.every(i => i.status === 'complete');
       const hasError = items.some(i => i.status === 'error');
       const completeCount = items.filter(i => i.status === 'complete').length;
-      // Only show as "active" if ALL prior-step tasks are complete (strict sequential)
+      // Show as "active" as soon as the prior step finishes — don't wait for the
+      // backend to report the agent has claimed this task. This eliminates the
+      // ~12s visual gap between task completion and next task starting.
       const effectiveStatus: TaskItem['status'] = allComplete
         ? 'complete'
         : hasError ? 'error'
-        : (hasActive && prevAllComplete) ? 'active'
+        : prevAllComplete ? 'active'
         : 'waiting';
       result.push({
         ...items[0],
