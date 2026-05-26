@@ -3,7 +3,7 @@ const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xj
 /**
  * Submit a command to Tombstone OS. Returns created task IDs and workflow info.
  */
-async function sendCommand(command: string) {
+async function sendCommand(command: string, excludeWorkflowIds?: string[]) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120000); // 120s timeout — Tombstone can be slow when cold
@@ -59,16 +59,18 @@ async function sendCommand(command: string) {
     // returned properly. Wait briefly for tasks to propagate, then query /tasks.
     if (!workflowId && data?.ok) {
       try {
-        console.log('[tombstone] No workflowId from response — waiting 3s then searching /tasks...');
+        const excludeSet = new Set(excludeWorkflowIds ?? []);
+        console.log(`[tombstone] No workflowId from response — waiting 3s then searching /tasks... (excluding ${excludeSet.size} known workflows)`);
         await new Promise(resolve => setTimeout(resolve, 3000));
         const tasksRes = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store' });
         const allTasks = await tasksRes.json().catch(() => []);
         if (Array.isArray(allTasks) && allTasks.length > 0) {
           // Sort by id descending (most recent first)
           allTasks.sort((a: any, b: any) => (b.id ?? 0) - (a.id ?? 0));
-          const newest = allTasks[0];
-          if (newest?.workflow_id) {
-            workflowId = newest.workflow_id;
+          // Find newest task whose workflow_id is NOT in the exclude set
+          const candidate = allTasks.find((t: any) => t.workflow_id && !excludeSet.has(t.workflow_id));
+          if (candidate?.workflow_id) {
+            workflowId = candidate.workflow_id;
             // Collect all task IDs for this workflow
             const wfTasks = allTasks.filter((t: any) => t.workflow_id === workflowId);
             const wfTaskIds = wfTasks.map((t: any) => t.id).filter((id: any) => typeof id === 'number');
@@ -76,6 +78,8 @@ async function sendCommand(command: string) {
               taskIds.push(...wfTaskIds);
             }
             console.log(`[tombstone] Found recent workflow ${workflowId} with ${wfTaskIds.length} tasks`);
+          } else {
+            console.warn('[tombstone] No new workflow found (all matched exclude list)');
           }
         }
       } catch (e: any) {
@@ -121,6 +125,7 @@ export async function createLaneMission(
   lane: 'website' | 'news' | 'holiday',
   context: string,
   count: number = 1,
+  excludeWorkflowIds?: string[],
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
 
@@ -138,6 +143,12 @@ export async function createLaneMission(
       `The post should tie the business to local community news in a way that feels natural and relevant.`,
       `Use the business brand colors and voice from the website.`,
       ``,
+      `CTA RULES:`,
+      `- The CTA button MUST relate to the business's actual service/product found on the website.`,
+      `- Good examples: "Get a Free Quote", "Book Now", "Schedule Service", "Shop Now", "Learn More", "Call Today"`,
+      `- NEVER use generic CTAs like "Check Availability" unless the business is actually a booking/reservation service (hotels, rentals, venues).`,
+      `- Read the website to understand what action a customer would take, then make the CTA match that action.`,
+      ``,
       `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
       `${context}`,
       `--- END RSS STORY METADATA ---`,
@@ -148,6 +159,12 @@ export async function createLaneMission(
       `The post should connect the business to the holiday/event in a creative, engaging way.`,
       `Use the business brand colors and voice from the website.`,
       ``,
+      `CTA RULES:`,
+      `- The CTA button MUST relate to the business's actual service/product found on the website.`,
+      `- Good examples: "Get a Free Quote", "Book Now", "Schedule Service", "Shop Now", "Learn More", "Call Today"`,
+      `- NEVER use generic CTAs like "Check Availability" unless the business is actually a booking/reservation service (hotels, rentals, venues).`,
+      `- Read the website to understand what action a customer would take, then make the CTA match that action.`,
+      ``,
       `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
       `${context}`,
       `--- END RSS STORY METADATA ---`,
@@ -155,7 +172,7 @@ export async function createLaneMission(
   }
 
   console.log(`[tombstone] Creating ${lane} lane mission (${count} posts) for: ${normalizedUrl}`);
-  const result = await sendCommand(command);
+  const result = await sendCommand(command, excludeWorkflowIds);
 
   return {
     success: !!result.workflowId,

@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const OPENAI_IMAGE_API = 'https://api.openai.com/v1/chat/completions';
+const IMAGE_API = 'https://apps.abacus.ai/v1/chat/completions';
 
 interface AdBrief {
   businessName: string;
@@ -197,7 +197,7 @@ async function generateWithStrategy(
     console.log(`[test-ad-gen] Starting ${strategyName} with model ${model}...`);
     const startTime = Date.now();
 
-    const res = await fetch(OPENAI_IMAGE_API, {
+    const res = await fetch(IMAGE_API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -254,7 +254,7 @@ export async function POST(request: NextRequest) {
       websiteUrl = 'https://blazinghog.com',
     } = body ?? {};
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.ABACUSAI_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: 'API key not configured' }, { status: 500 });
     }

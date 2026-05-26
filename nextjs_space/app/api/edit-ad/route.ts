@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const OPENAI_IMAGE_API = 'https://api.openai.com/v1/chat/completions';
+const IMAGE_API = 'https://apps.abacus.ai/v1/chat/completions';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Edit prompt is required' }, { status: 400 });
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.ABACUSAI_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: 'Image generation not configured' }, { status: 500 });
     }
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
       '- Incorporate the user\'s specific request while maintaining professional ad quality',
     ].join('\n');
 
-    const res = await fetch(OPENAI_IMAGE_API, {
+    const res = await fetch(IMAGE_API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

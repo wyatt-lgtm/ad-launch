@@ -135,10 +135,14 @@ export async function POST(
     const launchPromise = (async () => {
       const launchStart = Date.now();
       try {
-        // Sequential to avoid Tombstone race condition that returns duplicate workflow IDs
-        const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`);
-        const newsResult = await createLaneMission(websiteUrl, 'news', newsContext);
-        const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext);
+        // Sequential + exclude-list to avoid Tombstone race condition that returns duplicate workflow IDs
+        const usedWorkflowIds: string[] = [];
+        const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds);
+        if (websiteResult.workflowId) usedWorkflowIds.push(websiteResult.workflowId);
+        const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds);
+        if (newsResult.workflowId) usedWorkflowIds.push(newsResult.workflowId);
+        const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds);
+        if (holidayResult.workflowId) usedWorkflowIds.push(holidayResult.workflowId);
 
         console.log(`[confirm-and-launch] Missions launched in ${Date.now() - launchStart}ms`);
         console.log(`[confirm-and-launch] Lane missions created:`, {

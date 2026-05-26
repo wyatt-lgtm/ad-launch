@@ -7,7 +7,7 @@
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { createS3Client, getBucketConfig } from './aws-config';
 
-const OPENAI_IMAGE_API = 'https://api.openai.com/v1/chat/completions';
+const IMAGE_API = 'https://apps.abacus.ai/v1/chat/completions';
 
 export interface AdBrief {
   businessName: string;
@@ -87,9 +87,9 @@ export function buildAdBrief(
  * Returns a public S3 URL.
  */
 export async function generateAdImage(brief: AdBrief): Promise<string | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.ABACUSAI_API_KEY;
   if (!apiKey) {
-    console.error('[generate-ad] No OPENAI_API_KEY');
+    console.error('[generate-ad] No ABACUSAI_API_KEY');
     return null;
   }
 
@@ -139,7 +139,7 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
     console.log(`[generate-ad] Starting GPT-5.1 generation for ${brief.businessName} (${brief.angle ?? 'general'})...`);
     const startTime = Date.now();
 
-    const res = await fetch(OPENAI_IMAGE_API, {
+    const res = await fetch(IMAGE_API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
