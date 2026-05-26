@@ -910,6 +910,11 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
           {isGenerating ? 'Creating Your Posts...' : 'Your Results Are Ready!'}
         </h1>
+        {isGenerating && (
+          <p className="text-blue-600 mt-2 text-base font-medium">
+            First time complete analysis of business may take up to 5 minutes.
+          </p>
+        )}
         <p className="text-gray-500 mt-2 text-sm">
           {isGenerating
             ? 'Our AI agents are analyzing your business and crafting 3 unique posts'
