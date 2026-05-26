@@ -68,6 +68,7 @@ export async function GET(
     suggestedAngle: pkg.suggestedAngle,
     businessName: pkg.business?.businessName || '',
     websiteUrl: pkg.business?.websiteUrl || '',
+    workflowId: pkg.workflowId || null,
     completedAt: pkg.completedAt,
     createdAt: pkg.createdAt,
   });

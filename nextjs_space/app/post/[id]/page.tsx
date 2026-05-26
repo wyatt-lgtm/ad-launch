@@ -25,6 +25,7 @@ interface PostPackageData {
   suggestedAngle: string;
   businessName: string;
   websiteUrl: string;
+  workflowId: string | null;
   completedAt: string | null;
   createdAt: string;
 }
