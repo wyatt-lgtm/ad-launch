@@ -5,6 +5,7 @@ const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xj
  */
 async function sendCommand(command: string, excludeWorkflowIds?: string[]) {
   try {
+    const t0 = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120000); // 120s timeout — Tombstone can be slow when cold
     let res: Response;
@@ -19,9 +20,14 @@ async function sendCommand(command: string, excludeWorkflowIds?: string[]) {
     } finally {
       clearTimeout(timer);
     }
+    const apiLatency = Date.now() - t0;
+    console.log(`[tombstone-latency] POST /commands responded in ${apiLatency}ms (status=${res.status})`);
+    if (apiLatency > 10000) {
+      console.warn(`[tombstone-latency] SLOW: Tombstone /commands took ${apiLatency}ms — possible cold start or worker spin-up`);
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      console.error('Tombstone /commands error:', res.status, data);
+      console.error('Tombstone /commands error:', res.status, data, `latency=${apiLatency}ms`);
       return { success: false, data: null, workflowId: null, taskIds: [] };
     }
     const taskIds: number[] = data?.created_task_ids ?? [];

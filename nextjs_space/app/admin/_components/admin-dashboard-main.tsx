@@ -51,6 +51,7 @@ interface Agent {
   name: string; display_name: string; status: string;
   last_seen: string | null; current_task_id: number | null;
   department: string | null; running: boolean;
+  seconds_since_heartbeat?: number; service_name?: string; instance_id?: string;
 }
 
 interface Task {
@@ -725,8 +726,40 @@ function AgentsTab() {
   const stale = agents.filter(a => a.status === 'stale').length;
   const offline = agents.filter(a => a.status === 'offline').length;
 
+  // Heartbeat freshness alerting — warn if any critical worker is > 120s stale
+  const HEARTBEAT_WARN_SECONDS = 120;
+  const criticalAgents = ['Jim Bridger', 'Andy Warhol', 'David Ogilvy', 'Don Draper', 'Dispatcher'];
+  const staleWorkers = agents.filter(a =>
+    criticalAgents.includes(a.name) &&
+    a.seconds_since_heartbeat != null &&
+    a.seconds_since_heartbeat > HEARTBEAT_WARN_SECONDS
+  );
+
+  const formatHeartbeat = (secs: number | undefined | null) => {
+    if (secs == null) return null;
+    if (secs < 60) return `${Math.round(secs)}s ago`;
+    if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+    return `${Math.round(secs / 3600)}h ago`;
+  };
+
   return (
     <div>
+      {/* Heartbeat freshness warning banner */}
+      {staleWorkers.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-amber-600 text-sm font-semibold">⚠ Heartbeat Warning</span>
+          </div>
+          <p className="text-xs text-amber-700">
+            {staleWorkers.length} worker{staleWorkers.length > 1 ? 's' : ''} with stale heartbeat ({'>'}{HEARTBEAT_WARN_SECONDS}s):{' '}
+            {staleWorkers.map(w => `${w.display_name} (${formatHeartbeat(w.seconds_since_heartbeat)})`).join(', ')}
+          </p>
+          <p className="text-xs text-amber-600 mt-1">
+            New requests may experience delays. Workers may be restarting or under load.
+          </p>
+        </div>
+      )}
+
       {/* Summary bar */}
       <div className="flex items-center gap-6 mb-6 text-sm">
         <span className="flex items-center gap-2">
@@ -750,15 +783,16 @@ function AgentsTab() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {agents.map(agent => {
           const cfg = statusConfig[agent.status] || statusConfig.offline;
+          const hbWarn = agent.seconds_since_heartbeat != null && agent.seconds_since_heartbeat > HEARTBEAT_WARN_SECONDS;
           return (
-            <div key={agent.name} className={`rounded-xl border p-4 ${cfg.bg}`}>
+            <div key={agent.name} className={`rounded-xl border p-4 ${hbWarn ? 'bg-amber-50 border-amber-300' : cfg.bg}`}>
               <div className="flex items-center justify-between mb-2">
-                <h3 className={`text-sm font-semibold ${cfg.color}`}>{agent.display_name}</h3>
-                <span className={`w-3 h-3 rounded-full ${cfg.dot}`} />
+                <h3 className={`text-sm font-semibold ${hbWarn ? 'text-amber-700' : cfg.color}`}>{agent.display_name}</h3>
+                <span className={`w-3 h-3 rounded-full ${hbWarn ? 'bg-amber-500 animate-pulse' : cfg.dot}`} />
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-gray-500">
-                  Status: <span className={`font-medium ${cfg.color}`}>{cfg.label}</span>
+                  Status: <span className={`font-medium ${hbWarn ? 'text-amber-700' : cfg.color}`}>{cfg.label}</span>
                 </p>
                 {agent.department && (
                   <p className="text-xs text-gray-500">Dept: {agent.department}</p>
@@ -768,9 +802,21 @@ function AgentsTab() {
                     Task: <span className="font-mono text-gray-700">#{agent.current_task_id}</span>
                   </p>
                 )}
-                {agent.last_seen && (
+                {/* Heartbeat freshness */}
+                {agent.seconds_since_heartbeat != null && (
+                  <p className={`text-xs ${hbWarn ? 'text-amber-600 font-medium' : 'text-gray-400'}`}>
+                    Heartbeat: {formatHeartbeat(agent.seconds_since_heartbeat)}
+                    {hbWarn && ' ⚠'}
+                  </p>
+                )}
+                {!agent.seconds_since_heartbeat && agent.last_seen && (
                   <p className="text-xs text-gray-400">
                     Last seen: {formatTimeAgo(agent.last_seen)}
+                  </p>
+                )}
+                {agent.service_name && (
+                  <p className="text-xs text-gray-300 font-mono truncate" title={agent.service_name}>
+                    {agent.service_name}
                   </p>
                 )}
               </div>

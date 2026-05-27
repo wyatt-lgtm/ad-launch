@@ -136,6 +136,7 @@ export async function POST(
     const launchStart = Date.now();
     const laneWorkflows: Record<string, string> = {};
     const usedWorkflowIds: string[] = [];
+    const laneTimes: Record<string, number> = {};
 
     // Helper: save missionId after each lane so even partial creation is captured
     const saveMissionId = async () => {
@@ -150,28 +151,41 @@ export async function POST(
 
     try {
       // Sequential + exclude-list to avoid Tombstone race condition with duplicate workflow IDs
+      let laneT0 = Date.now();
       const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds);
+      laneTimes.website = Date.now() - laneT0;
+      console.log(`[confirm-and-launch] Lane website: ${laneTimes.website}ms (success=${websiteResult.success})`);
       if (websiteResult.workflowId) {
         usedWorkflowIds.push(websiteResult.workflowId);
         laneWorkflows.website = websiteResult.workflowId;
-        await saveMissionId(); // Persist immediately — don't risk losing it
+        await saveMissionId();
       }
 
+      laneT0 = Date.now();
       const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds);
+      laneTimes.news = Date.now() - laneT0;
+      console.log(`[confirm-and-launch] Lane news: ${laneTimes.news}ms (success=${newsResult.success})`);
       if (newsResult.workflowId) {
         usedWorkflowIds.push(newsResult.workflowId);
         laneWorkflows.news = newsResult.workflowId;
         await saveMissionId();
       }
 
+      laneT0 = Date.now();
       const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds);
+      laneTimes.holiday = Date.now() - laneT0;
+      console.log(`[confirm-and-launch] Lane holiday: ${laneTimes.holiday}ms (success=${holidayResult.success})`);
       if (holidayResult.workflowId) {
         usedWorkflowIds.push(holidayResult.workflowId);
         laneWorkflows.holiday = holidayResult.workflowId;
         await saveMissionId();
       }
 
-      console.log(`[confirm-and-launch] Missions launched in ${Date.now() - launchStart}ms`);
+      const totalLaunchMs = Date.now() - launchStart;
+      console.log(`[confirm-and-launch] All missions launched in ${totalLaunchMs}ms | per-lane: ${JSON.stringify(laneTimes)}`);
+      if (totalLaunchMs > 15000) {
+        console.warn(`[confirm-and-launch] SLOW LAUNCH: ${totalLaunchMs}ms total — check Tombstone worker readiness`);
+      }
       console.log(`[confirm-and-launch] Lane missions created:`, {
         website: { success: websiteResult.success, workflowId: websiteResult.workflowId },
         news: { success: newsResult.success, workflowId: newsResult.workflowId },
