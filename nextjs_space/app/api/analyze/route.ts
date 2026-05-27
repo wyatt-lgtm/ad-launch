@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
       // Cross-validate scraped address against Google Places for canonical formatting
       console.log(`[analyze] Address found on website (${scraped.source}), cross-validating with Google Places`);
       try {
-        // Build a targeted search query: business name + scraped address fragments
+        // Strategy A: search by business name + address fragments
         const queryParts = [
           scraped.businessName,
           scraped.address,
@@ -124,16 +124,54 @@ export async function POST(request: NextRequest) {
           scraped.state,
           scraped.zip,
         ].filter(Boolean);
-        // If we have enough address info, search by address; otherwise search by URL
         const validationQuery = queryParts.length >= 2
           ? queryParts.join(' ')
           : normalizedUrl;
         const validationResults = await searchPlaces(validationQuery, 3);
-        if (validationResults.length > 0) {
-          places = validationResults;
-          console.log(`[analyze] Google Places cross-validation found ${validationResults.length} results — will prefer canonical address`);
+
+        // Strategy B: also search by URL/domain to find the exact business
+        // This catches cases where the scraped businessName is empty (footer/regex parse)
+        // and the address-only query returns nearby competitors instead.
+        const urlResults = await lookupBusinessByUrl(normalizedUrl);
+
+        // Merge and deduplicate by placeId, preferring URL-matched results
+        const seenIds = new Set<string>();
+        const merged: PlaceResult[] = [];
+
+        // Helper: does this result's website match the input URL?
+        const inputDomain = (() => {
+          try {
+            return new URL(normalizedUrl).hostname.replace(/^www\./, '').toLowerCase();
+          } catch { return ''; }
+        })();
+        const websiteMatches = (p: PlaceResult) => {
+          if (!p.website || !inputDomain) return false;
+          try {
+            return new URL(p.website).hostname.replace(/^www\./, '').toLowerCase() === inputDomain;
+          } catch { return false; }
+        };
+
+        // First pass: add results whose website matches the input URL (highest confidence)
+        for (const r of [...urlResults, ...validationResults]) {
+          if (r.placeId && !seenIds.has(r.placeId) && websiteMatches(r)) {
+            seenIds.add(r.placeId);
+            merged.push(r);
+          }
+        }
+        // Second pass: add remaining results
+        for (const r of [...validationResults, ...urlResults]) {
+          if (r.placeId && !seenIds.has(r.placeId)) {
+            seenIds.add(r.placeId);
+            merged.push(r);
+          }
+        }
+
+        if (merged.length > 0) {
+          places = merged.slice(0, 5);
+          const topMatch = places[0];
+          console.log(`[analyze] Cross-validation found ${merged.length} results. Top: "${topMatch.name}" (website-match: ${websiteMatches(topMatch)})`);
         } else {
-          console.log(`[analyze] Google Places cross-validation returned no results, keeping scraped address`);
+          console.log(`[analyze] Cross-validation returned no results, keeping scraped address`);
         }
       } catch (err: any) {
         console.warn(`[analyze] Google Places cross-validation failed (non-fatal):`, err?.message);
