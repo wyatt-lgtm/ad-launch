@@ -6,8 +6,8 @@ import { useRouter } from 'next/navigation';
 import {
   BarChart3, Users, Activity, Key, Cpu, Search, Loader2,
   CheckCircle2, XCircle, Clock, AlertTriangle, Rss, RefreshCw,
-  ChevronRight, Shield, Zap, FileText, Image as ImageIcon,
-  MessageSquare, ArrowRight, ArrowLeft, Calendar, Eye, X,
+  ChevronRight, ChevronDown, ChevronUp, Shield, Zap, FileText, Image as ImageIcon,
+  MessageSquare, ArrowRight, ArrowLeft, Calendar, Eye, X, Copy, ExternalLink,
 } from 'lucide-react';
 import NextImage from 'next/image';
 import DefensibilityTab from './defensibility-tab';
@@ -786,14 +786,400 @@ function AgentsTab() {
 // Tab: Tasks & Processes (live polling)
 // ═══════════════════════════════════════════════════════════════
 
+const TASK_STATUS_COLORS: Record<string, string> = {
+  'in progress': 'bg-blue-100 text-blue-700',
+  'in_progress': 'bg-blue-100 text-blue-700',
+  'running': 'bg-blue-100 text-blue-700',
+  'claimed': 'bg-blue-100 text-blue-700',
+  'ready for pickup': 'bg-gray-100 text-gray-600',
+  'blocked': 'bg-amber-100 text-amber-700',
+  'failed': 'bg-red-100 text-red-700',
+  'error': 'bg-red-100 text-red-700',
+  'complete': 'bg-green-100 text-green-700',
+  'completed': 'bg-green-100 text-green-700',
+};
+
+// VCE / Agency sections we detect in output JSON
+const AGENCY_SECTIONS: { key: string; label: string; paths: string[] }[] = [
+  { key: 'memory', label: 'Business Memory', paths: ['business_memory', 'memory_context'] },
+  { key: 'playbook', label: 'Industry Playbook', paths: ['industry_playbook', 'playbook_context'] },
+  { key: 'territories', label: 'Creative Territories', paths: ['creative_territories'] },
+  { key: 'scorecard', label: 'War Room Scorecard', paths: ['scorecard', 'war_room_scorecard'] },
+  { key: 'vce', label: 'Visual Concept Engineering', paths: ['visual_concept_engineering', 'vce_user_summary'] },
+  { key: 'render_contract', label: 'Don Render Contract', paths: ['render_prompt', 'composition', 'visual_concept', 'cta_style', 'must_include'] },
+  { key: 'preflight', label: 'Andy Preflight', paths: ['preflight_result', 'preflight_checks', 'validation_checklist'] },
+];
+
+function detectAgencySections(parsed: any): { key: string; label: string; data: any }[] {
+  if (!parsed || typeof parsed !== 'object') return [];
+  const result: { key: string; label: string; data: any }[] = [];
+  for (const sec of AGENCY_SECTIONS) {
+    for (const p of sec.paths) {
+      if (parsed[p] !== undefined && parsed[p] !== null) {
+        result.push({ key: sec.key, label: sec.label, data: parsed[p] });
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+function tryParseJson(s: string): { parsed: any; isJson: boolean } {
+  if (!s || typeof s !== 'string') return { parsed: s, isJson: false };
+  try {
+    const p = JSON.parse(s);
+    return { parsed: p, isJson: true };
+  } catch {
+    return { parsed: s, isJson: false };
+  }
+}
+
+// ─── Task Output Card ────────────────────────────────────────
+function TaskOutputCard({ output }: { output: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [copied, setCopied] = useState(false);
+
+  const { parsed, isJson } = tryParseJson(output.output);
+  const preview = typeof output.output === 'string' ? output.output.slice(0, 300) : JSON.stringify(output.output).slice(0, 300);
+  const agencySections = isJson ? detectAgencySections(parsed) : [];
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(typeof output.output === 'string' ? output.output : JSON.stringify(output.output, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-gray-50 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-mono text-gray-400">#{output.id}</span>
+          <span className="text-sm font-medium text-gray-700">{output.agent}</span>
+          <span className="text-xs text-gray-400">{output.created_at ? new Date(output.created_at).toLocaleString() : ''}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={handleCopy} className="text-xs flex items-center gap-1 px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600">
+            <Copy className="w-3 h-3" /> {copied ? 'Copied!' : 'Copy'}
+          </button>
+          <button onClick={() => setExpanded(!expanded)} className="text-xs flex items-center gap-1 px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600">
+            {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            {expanded ? 'Collapse' : 'Expand'}
+          </button>
+        </div>
+      </div>
+
+      {/* Preview when collapsed */}
+      {!expanded && (
+        <div className="px-4 py-3">
+          <pre className="text-xs text-gray-600 whitespace-pre-wrap break-all font-mono">
+            {preview}{preview.length >= 300 ? '…' : ''}
+          </pre>
+        </div>
+      )}
+
+      {/* Full output when expanded */}
+      {expanded && (
+        <div className="px-4 py-3 space-y-3">
+          {/* Agency sections */}
+          {agencySections.length > 0 && (
+            <div className="space-y-2">
+              {agencySections.map(sec => (
+                <div key={sec.key} className="border border-blue-100 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setExpandedSections(prev => ({ ...prev, [sec.key]: !prev[sec.key] }))}
+                    className="w-full px-3 py-2 bg-blue-50 text-left flex items-center justify-between hover:bg-blue-100 transition-colors"
+                  >
+                    <span className="text-xs font-semibold text-blue-700">{sec.label}</span>
+                    {expandedSections[sec.key] ? <ChevronUp className="w-3 h-3 text-blue-500" /> : <ChevronDown className="w-3 h-3 text-blue-500" />}
+                  </button>
+                  {expandedSections[sec.key] && (
+                    <div className="px-3 py-2 bg-white">
+                      <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono max-h-[400px] overflow-y-auto">
+                        {typeof sec.data === 'string' ? sec.data : JSON.stringify(sec.data, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Full JSON output */}
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-1">Full Output</p>
+            <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono max-h-[600px] overflow-y-auto bg-gray-50 rounded-lg p-3">
+              {isJson ? JSON.stringify(parsed, null, 2) : output.output}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Task Detail Drawer ──────────────────────────────────────
+function TaskDetailDrawer({ taskId, onClose, onOpenWorkflow }: {
+  taskId: number;
+  onClose: () => void;
+  onOpenWorkflow: (wfId: string) => void;
+}) {
+  const [task, setTask] = useState<any>(null);
+  const [outputs, setOutputs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    setError('');
+    fetch(`/api/admin/tasks/${taskId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { setError(data.error); return; }
+        setTask(data.task);
+        setOutputs(data.outputs || []);
+      })
+      .catch(() => setError('Failed to load task'))
+      .finally(() => setLoading(false));
+  }, [taskId]);
+
+  const fieldRow = (label: string, value: any, mono = false) => (
+    <div className="flex justify-between py-1.5 border-b border-gray-50">
+      <span className="text-xs text-gray-500 flex-shrink-0">{label}</span>
+      <span className={`text-xs text-right max-w-[60%] break-all ${mono ? 'font-mono' : ''} ${
+        label === 'last_error' && value ? 'text-red-600 font-medium' : 'text-gray-700'
+      }`}>{value ?? '—'}</span>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      {/* Overlay */}
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      {/* Drawer */}
+      <div className="relative ml-auto w-full max-w-2xl bg-white shadow-2xl overflow-y-auto">
+        {/* Header */}
+        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+          <h3 className="text-lg font-bold text-gray-900">Task #{taskId}</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 text-blue-600 animate-spin" /></div>
+        ) : error ? (
+          <div className="px-6 py-12 text-center text-red-500">{error}</div>
+        ) : task ? (
+          <div className="px-6 py-4 space-y-6">
+            {/* Status badge */}
+            <div className="flex items-center gap-3">
+              <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                TASK_STATUS_COLORS[(task.status || '').toLowerCase()] || 'bg-gray-100 text-gray-500'
+              }`}>{task.status}</span>
+              <span className="text-sm text-gray-600">{task.department}</span>
+              {task.workflow_id && (
+                <button
+                  onClick={() => onOpenWorkflow(task.workflow_id)}
+                  className="ml-auto flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  <ExternalLink className="w-3 h-3" /> View Workflow
+                </button>
+              )}
+            </div>
+
+            {/* Mission/Summary */}
+            {task.mission && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Mission</p>
+                <p className="text-sm text-gray-800">{task.mission}</p>
+              </div>
+            )}
+            {task.summary && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Summary</p>
+                <p className="text-sm text-gray-700">{task.summary}</p>
+              </div>
+            )}
+
+            {/* Core fields */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Task Metadata</p>
+              {fieldRow('Task ID', `#${task.id}`, true)}
+              {fieldRow('Workflow ID', task.workflow_id || '—', true)}
+              {fieldRow('Department', task.department)}
+              {fieldRow('Status', task.status)}
+              {fieldRow('Step Order', task.step_order)}
+              {fieldRow('Execution Mode', task.execution_mode)}
+              {fieldRow('Claimed By', task.claimed_by)}
+              {fieldRow('Worker Instance', task.worker_instance_id)}
+              {fieldRow('Claim Token Present', task.claim_token_present ? 'Yes' : 'No')}
+              {fieldRow('Created At', task.created_at ? new Date(task.created_at).toLocaleString() : '—')}
+              {fieldRow('Claimed At', task.claimed_at ? new Date(task.claimed_at).toLocaleString() : '—')}
+              {fieldRow('Heartbeat At', task.heartbeat_at ? new Date(task.heartbeat_at).toLocaleString() : '—')}
+              {fieldRow('Last Attempt', task.last_attempt_at ? new Date(task.last_attempt_at).toLocaleString() : '—')}
+              {fieldRow('Updated At', task.updated_at ? new Date(task.updated_at).toLocaleString() : '—')}
+              {fieldRow('Retry Count', `${task.retry_count ?? 0} / ${task.max_retries ?? 3}`)}
+              {fieldRow('Depends On Task', task.depends_on_task_id ? `#${task.depends_on_task_id}` : '—', true)}
+              {fieldRow('Input From Task', task.input_from_task_id ? `#${task.input_from_task_id}` : '—', true)}
+            </div>
+
+            {/* Error */}
+            {task.last_error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <p className="text-xs font-semibold text-red-600 mb-1">Last Error</p>
+                <pre className="text-xs text-red-700 whitespace-pre-wrap break-all font-mono">{task.last_error}</pre>
+              </div>
+            )}
+
+            {/* Blocked reason */}
+            {task.blocked_reason && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="text-xs font-semibold text-amber-600 mb-1">Blocked Reason</p>
+                <p className="text-xs text-amber-700">{task.blocked_reason}</p>
+              </div>
+            )}
+
+            {/* Execution notes */}
+            {task.execution_notes && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Execution Notes</p>
+                <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono bg-gray-50 rounded-lg p-3 max-h-[300px] overflow-y-auto">
+                  {task.execution_notes}
+                </pre>
+              </div>
+            )}
+
+            {/* Outputs */}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-3 uppercase tracking-wide">
+                Task Outputs ({outputs.length})
+              </p>
+              {outputs.length === 0 ? (
+                <p className="text-xs text-gray-400 italic">No outputs recorded</p>
+              ) : (
+                <div className="space-y-3">
+                  {outputs.map((o: any) => <TaskOutputCard key={o.id} output={o} />)}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ─── Workflow Detail Drawer ──────────────────────────────────
+function WorkflowDetailDrawer({ workflowId, onClose, onOpenTask }: {
+  workflowId: string;
+  onClose: () => void;
+  onOpenTask: (taskId: number) => void;
+}) {
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [mission, setMission] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    setError('');
+    fetch(`/api/admin/tasks/workflow/${workflowId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { setError(data.error); return; }
+        setTasks(data.tasks || []);
+        setMission(data.mission);
+      })
+      .catch(() => setError('Failed to load workflow'))
+      .finally(() => setLoading(false));
+  }, [workflowId]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative ml-auto w-full max-w-2xl bg-white shadow-2xl overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">Workflow</h3>
+            <p className="text-xs font-mono text-gray-400 mt-0.5">{workflowId}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 text-blue-600 animate-spin" /></div>
+        ) : error ? (
+          <div className="px-6 py-12 text-center text-red-500">{error}</div>
+        ) : (
+          <div className="px-6 py-4 space-y-4">
+            {mission && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Mission</p>
+                <p className="text-sm text-gray-800">{mission}</p>
+              </div>
+            )}
+            <p className="text-xs text-gray-400">{tasks.length} tasks in workflow</p>
+
+            <div className="space-y-2">
+              {tasks.map((t: any, i: number) => {
+                const statusCls = TASK_STATUS_COLORS[(t.status || '').toLowerCase()] || 'bg-gray-100 text-gray-500';
+                const isFailed = ['failed', 'error'].includes((t.status || '').toLowerCase());
+                return (
+                  <div key={t.id}>
+                    <button
+                      onClick={() => onOpenTask(t.id)}
+                      className={`w-full text-left px-4 py-3 rounded-lg border hover:shadow-sm transition-all ${
+                        isFailed ? 'border-red-200 bg-red-50/50' : 'border-gray-200 bg-white hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono text-gray-400">#{t.id}</span>
+                          <span className="text-sm font-medium text-gray-800">{t.department}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusCls}`}>{t.status}</span>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-gray-300" />
+                      </div>
+                      {t.summary && <p className="text-xs text-gray-500 line-clamp-2">{t.summary}</p>}
+                      {t.last_error && (
+                        <p className="text-xs text-red-600 mt-1 truncate">{t.last_error}</p>
+                      )}
+                      <div className="flex items-center gap-3 mt-1.5 text-[10px] text-gray-400">
+                        {t.step_order != null && <span>Step {t.step_order}</span>}
+                        {t.claimed_by && <span>By: {t.claimed_by}</span>}
+                        {t.depends_on_task_id && <span>Depends: #{t.depends_on_task_id}</span>}
+                        <span>Retries: {t.retry_count ?? 0}/{t.max_retries ?? 3}</span>
+                      </div>
+                    </button>
+                    {i < tasks.length - 1 && (
+                      <div className="flex justify-center py-1">
+                        <div className="w-0.5 h-3 bg-gray-200" />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Tasks Tab ───────────────────────────────────────────────
 function TasksTab() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('in progress,ready for pickup,failed,blocked');
   const [hours, setHours] = useState(24);
+  const [pageSize, setPageSize] = useState(10);
   const [lastFetch, setLastFetch] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Drawer state
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
 
   const fetchTasks = useCallback(async () => {
     const params = new URLSearchParams();
@@ -815,24 +1201,13 @@ function TasksTab() {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [fetchTasks]);
 
-  const statusColors: Record<string, string> = {
-    'in progress': 'bg-blue-100 text-blue-700',
-    'in_progress': 'bg-blue-100 text-blue-700',
-    'running': 'bg-blue-100 text-blue-700',
-    'claimed': 'bg-blue-100 text-blue-700',
-    'ready for pickup': 'bg-gray-100 text-gray-600',
-    'blocked': 'bg-amber-100 text-amber-700',
-    'failed': 'bg-red-100 text-red-700',
-    'error': 'bg-red-100 text-red-700',
-    'complete': 'bg-green-100 text-green-700',
-    'completed': 'bg-green-100 text-green-700',
-  };
-
   const FILTER_PRESETS = [
     { label: 'Active', value: 'in progress,ready for pickup,blocked,claimed' },
     { label: 'Failed', value: 'failed,error' },
     { label: 'All', value: '' },
   ];
+
+  const displayedTasks = tasks.slice(0, pageSize);
 
   return (
     <div>
@@ -870,6 +1245,15 @@ function TasksTab() {
           <option value={72}>Last 3d</option>
           <option value={168}>Last 7d</option>
         </select>
+        <select
+          value={pageSize}
+          onChange={e => setPageSize(parseInt(e.target.value))}
+          className="text-sm border border-gray-300 rounded-lg px-3 py-1.5"
+        >
+          <option value={10}>Show 10</option>
+          <option value={25}>Show 25</option>
+          <option value={50}>Show 50</option>
+        </select>
         {lastFetch && (
           <span className="text-gray-400 text-xs ml-auto">Updated: {new Date(lastFetch).toLocaleTimeString()}</span>
         )}
@@ -892,13 +1276,17 @@ function TasksTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {tasks.map(t => (
-                <tr key={t.id} className="hover:bg-gray-50">
+              {displayedTasks.map(t => (
+                <tr
+                  key={t.id}
+                  onClick={() => setSelectedTaskId(t.id)}
+                  className="hover:bg-blue-50 cursor-pointer transition-colors"
+                >
                   <td className="px-3 py-3 font-mono text-gray-700 text-xs">#{t.id}</td>
                   <td className="px-3 py-3 text-gray-700">{t.department || '—'}</td>
                   <td className="px-3 py-3 text-center">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      statusColors[(t.status || '').toLowerCase()] || 'bg-gray-100 text-gray-500'
+                      TASK_STATUS_COLORS[(t.status || '').toLowerCase()] || 'bg-gray-100 text-gray-500'
                     }`}>{t.status}</span>
                   </td>
                   <td className="px-3 py-3 text-gray-500 text-xs">{t.claimed_by || '—'}</td>
@@ -915,7 +1303,7 @@ function TasksTab() {
                   </td>
                 </tr>
               ))}
-              {tasks.length === 0 && (
+              {displayedTasks.length === 0 && (
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No tasks match the current filters</td></tr>
               )}
             </tbody>
@@ -924,8 +1312,32 @@ function TasksTab() {
       )}
 
       <p className="text-xs text-gray-400 mt-3 text-center">
-        Showing {tasks.length} tasks • Auto-refreshing every 15 seconds
+        Showing {displayedTasks.length} of {tasks.length} tasks • Auto-refreshing every 15 seconds
       </p>
+
+      {/* Task Detail Drawer */}
+      {selectedTaskId !== null && (
+        <TaskDetailDrawer
+          taskId={selectedTaskId}
+          onClose={() => setSelectedTaskId(null)}
+          onOpenWorkflow={(wfId) => {
+            setSelectedTaskId(null);
+            setSelectedWorkflowId(wfId);
+          }}
+        />
+      )}
+
+      {/* Workflow Detail Drawer */}
+      {selectedWorkflowId !== null && (
+        <WorkflowDetailDrawer
+          workflowId={selectedWorkflowId}
+          onClose={() => setSelectedWorkflowId(null)}
+          onOpenTask={(taskId) => {
+            setSelectedWorkflowId(null);
+            setSelectedTaskId(taskId);
+          }}
+        />
+      )}
     </div>
   );
 }
