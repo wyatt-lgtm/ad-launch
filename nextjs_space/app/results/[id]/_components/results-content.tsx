@@ -57,6 +57,26 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
     if (analysisId && sessionStatus === 'authenticated') fetchAnalysis();
   }, [analysisId, sessionStatus, router]);
 
+  // Safety net: if analysis loaded but some lanes are empty, retry once after a delay
+  // This catches ads created by the completion path just after initial fetch
+  const retryDoneRef = React.useRef(false);
+  useEffect(() => {
+    if (!analysis || retryDoneRef.current) return;
+    const ads: Ad[] = analysis?.ads ?? [];
+    const lanes = new Set(ads.map((a: Ad) => a.lane === 'seasonal' ? 'holiday' : a.lane).filter(Boolean));
+    if (lanes.size < 3 && analysis?.status === 'completed') {
+      retryDoneRef.current = true;
+      const timer = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/analysis/${analysisId}`);
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data?.analysis) setAnalysis(data.analysis);
+        } catch { /* ignore */ }
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [analysis, analysisId]);
+
   if (loading || sessionStatus === 'loading') {
     return (
       <div className="flex items-center justify-center py-20">

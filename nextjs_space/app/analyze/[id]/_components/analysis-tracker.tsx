@@ -755,6 +755,22 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         if (data?.budgetData) setBudgetData(data.budgetData);
         // Track if some lanes failed (partial success)
         if (data?.failedLanes?.length) setFailedLanes(data.failedLanes);
+
+        // Safety net: if fewer than 3 ads arrived, do 1-2 delayed re-polls
+        // to catch any ads created by the completion path just after status flipped
+        const adsReceived = data?.ads?.length ?? 0;
+        if (adsReceived < 3) {
+          const doDelayedPoll = async (delay: number) => {
+            await new Promise(r => setTimeout(r, delay));
+            try {
+              const retry = await fetch(`/api/mission-status?analysisId=${analysisId}`);
+              const retryData = await retry.json().catch(() => ({}));
+              if (retryData?.ads?.length) setAds(retryData.ads);
+            } catch { /* ignore */ }
+          };
+          doDelayedPoll(3000);
+          doDelayedPoll(8000);
+        }
       } else if (s === 'error') {
         setError(data?.errorReason ?? 'Analysis failed. Please try again.');
         // Extract the failing stage from task data for the error screen
@@ -829,7 +845,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         pollStatus();
       }
     }, 6000);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisId, phase]);
 
