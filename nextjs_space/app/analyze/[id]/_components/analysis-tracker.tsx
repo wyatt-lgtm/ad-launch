@@ -714,6 +714,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const [websiteConceptData, setWebsiteConceptData] = useState<any>(null);
   const [budgetData, setBudgetData] = useState<any>(null);
   const [error, setError] = useState('');
+  const [failedStage, setFailedStage] = useState<string | null>(null);
   const [showRegister, setShowRegister] = useState(false);
   const [generatingLane, setGeneratingLane] = useState<string | null>(null);
   const { data: session } = useSession() || {};
@@ -752,6 +753,13 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         if (data?.budgetData) setBudgetData(data.budgetData);
       } else if (s === 'error') {
         setError(data?.errorReason ?? 'Analysis failed. Please try again.');
+        // Extract the failing stage from task data for the error screen
+        if (data?.tasks?.length) {
+          const failed = data.tasks.find((t: any) => t.status === 'error' && t.lastError);
+          if (failed) {
+            setFailedStage(failed.label ?? failed.department ?? null);
+          }
+        }
       }
     } catch (err: any) {
       console.error('Poll error:', err);
@@ -861,10 +869,15 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       // Show as "active" as soon as the prior step finishes — don't wait for the
       // backend to report the agent has claimed this task. This eliminates the
       // ~12s visual gap between task completion and next task starting.
+      const hasWaiting = items.some(i => i.status === 'waiting');
+      // Only show 'error' once ALL parallel tasks in the department have
+      // settled (no active/waiting remaining). This prevents premature red
+      // indicators when 1 of 3 parallel lanes fails but others are still
+      // running.
       const effectiveStatus: TaskItem['status'] = allComplete
         ? 'complete'
-        : hasError ? 'error'
-        : prevAllComplete ? 'active'
+        : (hasError && !hasActive && !hasWaiting) ? 'error'
+        : (hasActive || (prevAllComplete && !allComplete)) ? 'active'
         : 'waiting';
       result.push({
         ...items[0],
@@ -897,6 +910,9 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
           <AlertCircle className="w-8 h-8 text-red-500" />
         </div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Analysis Failed</h2>
+        {failedStage && (
+          <p className="text-sm text-red-500 font-medium mb-2">Failed during: {failedStage}</p>
+        )}
         <p className="text-gray-600 mb-6">{error}</p>
         <a href="/" className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all">
           Try Again
