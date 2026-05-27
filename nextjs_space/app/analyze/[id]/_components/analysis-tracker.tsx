@@ -770,21 +770,25 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     }
   }, [analysisId]);
 
-  /* ── Group ads by lane ───────────────────────────────────── */
+  /* ── Group ads by lane (deduplicated: latest per lane wins) ─── */
   const adsByLane = React.useMemo(() => {
     const map: Record<string, Ad[]> = { website: [], news: [], holiday: [] };
-    for (const ad of ads) {
-      // Normalize seasonal → holiday
+    const seen = new Set<string>();
+    // Sort so latest ad per lane wins (by id descending as proxy for creation time)
+    const sorted = [...ads].sort((a, b) => (b.id ?? '').localeCompare(a.id ?? ''));
+    for (const ad of sorted) {
       let lane = (ad as any).lane;
       if (lane === 'seasonal') lane = 'holiday';
+      const dedupeKey = lane || `fallback-${ad.imageUrl}-${ad.headline}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
       if (lane && map[lane]) {
         map[lane].push(ad);
       } else {
-        // Fallback: assign to first non-full lane (for legacy ads without lane field)
         if (map.website.length === 0) map.website.push(ad);
         else if (map.news.length === 0) map.news.push(ad);
         else if (map.holiday.length === 0) map.holiday.push(ad);
-        else map.website.push(ad); // overflow into website
+        else map.website.push(ad);
       }
     }
     return map;

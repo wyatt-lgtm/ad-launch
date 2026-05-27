@@ -47,6 +47,31 @@ async function resolveAdImages(ads: any[]): Promise<any[]> {
     })),
   );
 }
+/**
+ * Idempotent ad creation: only creates an ad if no record with the same
+ * analysisId + lane already exists. Returns the existing record if found.
+ * This prevents duplicate ads from concurrent poll requests.
+ */
+async function createAdIdempotent(data: {
+  analysisId: string;
+  imageUrl: string | null;
+  caption: string;
+  headline: string;
+  watermarked: boolean;
+  lane: string | null;
+}) {
+  if (data.lane) {
+    const existing = await prisma.ad.findFirst({
+      where: { analysisId: data.analysisId, lane: data.lane },
+    });
+    if (existing) {
+      return { created: false, ad: existing };
+    }
+  }
+  const ad = await prisma.ad.create({ data });
+  return { created: true, ad };
+}
+
 import { runSeoAudit } from '@/lib/seo-audit';
 import { extractBusinessAddress, parseGeoString, type ExtractedAddress } from '@/lib/address-extractor';
 import { getUpcomingEvents } from '@/lib/social/upcoming-events';
@@ -299,19 +324,11 @@ export async function GET(request: NextRequest) {
         }
 
         // Create ad records IMMEDIATELY with Tombstone images (fast — no GPT-5.1 blocking)
-        // Skip lanes already stored by progressive extraction
-        const existingProgressiveAds = await prisma.ad.findMany({ where: { analysisId: analysis.id } });
-        const existingLaneSet = new Set(existingProgressiveAds.map((a: any) => a.lane).filter(Boolean));
-        const adsToCreate = results.ads.filter((ad: any) => {
-          const lane = wfToLane[ad?.workflowId] ?? null;
-          return !lane || !existingLaneSet.has(lane);
-        });
-        console.log(`[mission-status] Creating ${adsToCreate.length} ads with Tombstone images (fast path), skipping ${existingLaneSet.size} already-stored lanes`);
-        for (let i = 0; i < adsToCreate.length; i++) {
-          const ad = adsToCreate[i];
+        // Uses idempotent creation to prevent duplicates from concurrent polls
+        let createdCount = 0;
+        let skippedCount = 0;
+        for (const ad of results.ads) {
           let imageKey = ad?.imageUrl ?? null;
-
-          // Extract R2 key from presigned URL
           if (imageKey && imageKey.startsWith('http') && !imageKey.includes('.s3.')) {
             try {
               const parsed = new URL(imageKey);
@@ -320,18 +337,17 @@ export async function GET(request: NextRequest) {
               imageKey = path;
             } catch {}
           }
-
-          await prisma.ad.create({
-            data: {
-              analysisId: analysis.id,
-              imageUrl: imageKey,
-              caption: ad?.caption ?? '',
-              headline: ad?.headline ?? 'Ad',
-              watermarked: true,
-              lane: wfToLane[ad?.workflowId] ?? null,
-            },
+          const { created } = await createAdIdempotent({
+            analysisId: analysis.id,
+            imageUrl: imageKey,
+            caption: ad?.caption ?? '',
+            headline: ad?.headline ?? 'Ad',
+            watermarked: true,
+            lane: wfToLane[ad?.workflowId] ?? null,
           });
+          if (created) createdCount++; else skippedCount++;
         }
+        console.log(`[mission-status] Completion: created ${createdCount} ads, skipped ${skippedCount} duplicates`);
 
         await prisma.analysis.update({
           where: { id: analysisId },
@@ -510,14 +526,8 @@ export async function GET(request: NextRequest) {
             }
           }
 
-          const existingProgressiveAds = await prisma.ad.findMany({ where: { analysisId: analysis.id } });
-          const existingLaneSet = new Set(existingProgressiveAds.map((a: any) => a.lane).filter(Boolean));
-          const adsToCreate = results.ads.filter((ad: any) => {
-            const lane = wfToLane[ad?.workflowId] ?? null;
-            return !lane || !existingLaneSet.has(lane);
-          });
-
-          for (const ad of adsToCreate) {
+          // Idempotent ad creation for partial-success path
+          for (const ad of results.ads) {
             let imageKey = ad?.imageUrl ?? null;
             if (imageKey && imageKey.startsWith('http') && !imageKey.includes('.s3.')) {
               try {
@@ -527,15 +537,13 @@ export async function GET(request: NextRequest) {
                 imageKey = path;
               } catch {}
             }
-            await prisma.ad.create({
-              data: {
-                analysisId: analysis.id,
-                imageUrl: imageKey,
-                caption: ad?.caption ?? '',
-                headline: ad?.headline ?? 'Ad',
-                watermarked: true,
-                lane: wfToLane[ad?.workflowId] ?? null,
-              },
+            await createAdIdempotent({
+              analysisId: analysis.id,
+              imageUrl: imageKey,
+              caption: ad?.caption ?? '',
+              headline: ad?.headline ?? 'Ad',
+              watermarked: true,
+              lane: wfToLane[ad?.workflowId] ?? null,
             });
           }
 
@@ -597,9 +605,13 @@ export async function GET(request: NextRequest) {
     let partialAds: any[] = [];
     const completedWfSet = new Set(statusResult.completedWorkflows ?? []);
     if (completedWfSet.size > 0 && Object.keys(laneWorkflows).length > 0) {
-      // Check which lanes have finished (only if we haven't already stored them)
-      const existingAds = analysis.ads ?? [];
-      const existingLanes = new Set(existingAds.map((a: any) => a.lane).filter(Boolean));
+      // Fresh DB query for existing lanes — stale analysis.ads from top of function
+      // would miss ads created by concurrent poll requests
+      const freshExistingAds = await prisma.ad.findMany({
+        where: { analysisId: analysis.id },
+        select: { id: true, lane: true },
+      });
+      const existingLanes = new Set(freshExistingAds.map((a: any) => a.lane).filter(Boolean));
 
       // Build reverse map: workflowId → lane
       const wfToLane: Record<string, string> = {};
@@ -634,17 +646,15 @@ export async function GET(request: NextRequest) {
                 imageKey = path;
               } catch {}
             }
-            const created = await prisma.ad.create({
-              data: {
-                analysisId: analysis.id,
-                imageUrl: imageKey,
-                caption: ad?.caption ?? '',
-                headline: ad?.headline ?? 'Ad',
-                watermarked: true,
-                lane: wfToLane[ad?.workflowId] ?? null,
-              },
+            const { created, ad: createdAd } = await createAdIdempotent({
+              analysisId: analysis.id,
+              imageUrl: imageKey,
+              caption: ad?.caption ?? '',
+              headline: ad?.headline ?? 'Ad',
+              watermarked: true,
+              lane: wfToLane[ad?.workflowId] ?? null,
             });
-            partialAds.push(created);
+            if (created) partialAds.push(createdAd);
           }
           if (partialAds.length > 0) {
             console.log(`[mission-status] Progressive: stored ${partialAds.length} early ads for lanes: ${newlyCompletedLaneWfs.map(w => wfToLane[w]).join(', ')}`);
@@ -661,10 +671,10 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Also include already-stored partial ads from previous polls
-      if (existingAds.length > 0 || partialAds.length > 0) {
-        const allPartialAds = [...existingAds, ...partialAds];
-        partialAds = await resolveAdImages(allPartialAds);
+      // Return all stored ads (fresh query to include both old and newly created)
+      if (freshExistingAds.length > 0 || partialAds.length > 0) {
+        const allAds = await prisma.ad.findMany({ where: { analysisId: analysis.id } });
+        partialAds = await resolveAdImages(allAds);
       }
     }
 

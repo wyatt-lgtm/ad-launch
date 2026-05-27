@@ -88,16 +88,19 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
   const displayDomain = (() => { try { return new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`).hostname.replace(/^www\./, ''); } catch { return ''; } })();
   const initials = businessName.split(' ').slice(0, 2).map((w: string) => w[0]?.toUpperCase() ?? '').join('');
 
-  // Group ads by lane
+  // Group ads by lane (deduplicated: latest per lane wins)
   const adsByLane: Record<string, Ad[]> = { website: [], news: [], holiday: [] };
-  for (const ad of ads) {
-    // Normalize seasonal → holiday
+  const seenLanes = new Set<string>();
+  const sortedAds = [...ads].sort((a, b) => (b.id ?? '').localeCompare(a.id ?? ''));
+  for (const ad of sortedAds) {
     let lane = ad.lane;
     if (lane === 'seasonal') lane = 'holiday';
+    const dedupeKey = lane || `fallback-${ad.imageUrl}-${ad.headline}`;
+    if (seenLanes.has(dedupeKey)) continue;
+    seenLanes.add(dedupeKey);
     if (lane && adsByLane[lane]) {
       adsByLane[lane].push(ad);
     } else {
-      // Legacy fallback
       if (adsByLane.website.length === 0) adsByLane.website.push(ad);
       else if (adsByLane.news.length === 0) adsByLane.news.push(ad);
       else if (adsByLane.holiday.length === 0) adsByLane.holiday.push(ad);
