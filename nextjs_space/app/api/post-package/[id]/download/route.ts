@@ -111,14 +111,16 @@ export async function GET(
       body: JSON.stringify({
         business_id: pkg.businessId || pkg.business?.businessName?.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'unknown',
         event_type: 'package_downloaded',
-        event_data: {
+        post_package_id: pkg.id,
+        topic: pkg.suggestedAngle || pkg.storyTitle,
+        cta: pkg.cta,
+        metadata: {
           package_id: pkg.id,
           headline: pkg.headline,
           cta: pkg.cta,
           story_title: pkg.storyTitle,
-          topic: pkg.suggestedAngle,
+          source: 'ad_launch',
         },
-        source: 'ad_launch',
       }),
     }).catch(() => {});
   } catch (_) {}
