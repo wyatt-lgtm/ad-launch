@@ -10,12 +10,13 @@ import {
   MessageSquare, ArrowRight, ArrowLeft, Calendar, Eye, X,
 } from 'lucide-react';
 import NextImage from 'next/image';
+import DefensibilityTab from './defensibility-tab';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════
 
-type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit' | 'credits';
+type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit' | 'credits' | 'defensibility';
 
 interface Overview {
   users: { total: number; confirmed: number; unconfirmed: number; recentSignups: number };
@@ -98,6 +99,7 @@ export default function AdminDashboardMain() {
     { id: 'tasks',    label: 'Tasks',    icon: Activity },
     { id: 'audit',    label: 'Agent Audit', icon: Eye },
     { id: 'credits',  label: 'Credits',      icon: Shield },
+    { id: 'defensibility', label: 'Defensibility', icon: Zap },
   ];
 
   return (
@@ -172,6 +174,7 @@ export default function AdminDashboardMain() {
         {tab === 'tasks' && <TasksTab />}
         {tab === 'audit' && <AuditTab />}
         {tab === 'credits' && <CreditsTab />}
+        {tab === 'defensibility' && <DefensibilityTab />}
       </div>
     </div>
   );

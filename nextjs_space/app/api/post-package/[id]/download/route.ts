@@ -102,6 +102,27 @@ export async function GET(
     });
   }
 
+  // Fire-and-forget: record feedback event for defensibility layers
+  try {
+    const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
+    fetch(`${TOMBSTONE_URL}/feedback-events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        business_id: pkg.businessId || pkg.business?.businessName?.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'unknown',
+        event_type: 'package_downloaded',
+        event_data: {
+          package_id: pkg.id,
+          headline: pkg.headline,
+          cta: pkg.cta,
+          story_title: pkg.storyTitle,
+          topic: pkg.suggestedAngle,
+        },
+        source: 'ad_launch',
+      }),
+    }).catch(() => {});
+  } catch (_) {}
+
   const filename = `ad-launch-post-${pkg.id.slice(0, 8)}.json`;
   return new NextResponse(JSON.stringify(bundle, null, 2), {
     headers: {
