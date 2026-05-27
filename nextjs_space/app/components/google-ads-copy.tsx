@@ -87,7 +87,7 @@ export default function GoogleAdsCopy({ data, locked = false, collapsed = false 
               <div key={i} className="flex items-center gap-3 bg-blue-50 rounded-lg px-4 py-2.5">
                 <span className="text-xs font-bold text-blue-600 w-5">{i + 1}</span>
                 <span className="flex-1 text-sm font-medium text-gray-900">{h}</span>
-                <span className={`text-xs ${h.length <= 30 ? 'text-green-500' : 'text-amber-500'}`}>{h.length}/30</span>
+                <span className={`text-xs font-mono ${h.length <= 30 ? 'text-green-500' : 'text-red-500 font-semibold'}`}>{h.length}/30</span>
                 <CopyButton text={h} />
               </div>
             ))}
@@ -102,7 +102,7 @@ export default function GoogleAdsCopy({ data, locked = false, collapsed = false 
               <div key={i} className="flex items-start gap-3 bg-gray-50 rounded-lg px-4 py-3">
                 <span className="text-xs font-bold text-gray-500 w-5 mt-0.5">{i + 1}</span>
                 <span className="flex-1 text-sm text-gray-700">{d}</span>
-                <span className={`text-xs flex-shrink-0 ${d.length <= 90 ? 'text-green-500' : 'text-amber-500'}`}>{d.length}/90</span>
+                <span className={`text-xs font-mono flex-shrink-0 ${d.length <= 90 ? 'text-green-500' : 'text-red-500 font-semibold'}`}>{d.length}/90</span>
                 <CopyButton text={d} />
               </div>
             ))}

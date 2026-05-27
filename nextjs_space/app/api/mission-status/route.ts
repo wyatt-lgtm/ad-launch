@@ -961,8 +961,25 @@ function buildPostingPlan(research: any, creative: any, marketing?: any, website
 
 
 /**
- * Build Google Search Ad copy from research and creative data.
+ * Truncate text to fit within a character limit at a word boundary.
+ * Spaces count as characters (Google Ads counts all characters including spaces).
+ * Never cuts mid-word — trims to the last complete word that fits.
  */
+function fitToCharLimit(text: string, maxChars: number): string {
+  if (!text) return '';
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+
+  // Find the last space at or before maxChars
+  const truncated = trimmed.slice(0, maxChars);
+  const lastSpace = truncated.lastIndexOf(' ');
+  if (lastSpace <= 0) {
+    // Single long word — just truncate (rare edge case)
+    return truncated;
+  }
+  return truncated.slice(0, lastSpace).trim();
+}
+
 function buildGoogleAds(research: any, creative: any, websiteUrl: string) {
   const biz = research?.business_summary ?? {};
   const voice = research?.brand_voice ?? {};
@@ -975,6 +992,9 @@ function buildGoogleAds(research: any, creative: any, websiteUrl: string) {
   const category = biz?.category ?? 'business';
   const geo = biz?.geo ?? '';
 
+  const H_MAX = 30; // Google Ads headline limit (including spaces)
+  const D_MAX = 90; // Google Ads description limit (including spaces)
+
   // Build display URL
   let displayUrl = websiteUrl;
   try {
@@ -982,24 +1002,24 @@ function buildGoogleAds(research: any, creative: any, websiteUrl: string) {
     displayUrl = parsed.hostname.replace(/^www\./, '');
   } catch { /* keep as-is */ }
 
-  // Generate headlines from ad copy
+  // Generate headlines from ad copy — fit to limit at word boundaries
   const headlines: string[] = [];
-  if (ads[0]?.headline) headlines.push(ads[0].headline.slice(0, 30));
-  headlines.push(`${businessName} | ${category}`.slice(0, 30));
-  headlines.push(`Top ${category} ${geo ? 'in ' + geo : 'Near You'}`.slice(0, 30));
-  if (coreOffer !== 'our services') headlines.push(`Get ${coreOffer}`.slice(0, 30));
-  headlines.push(`Trusted ${category} Services`.slice(0, 30));
-  if (ads[1]?.headline) headlines.push(ads[1].headline.slice(0, 30));
+  if (ads[0]?.headline) headlines.push(fitToCharLimit(ads[0].headline, H_MAX));
+  headlines.push(fitToCharLimit(`${businessName} | ${category}`, H_MAX));
+  headlines.push(fitToCharLimit(`Top ${category} ${geo ? 'in ' + geo : 'Near You'}`, H_MAX));
+  if (coreOffer !== 'our services') headlines.push(fitToCharLimit(`Get ${coreOffer}`, H_MAX));
+  headlines.push(fitToCharLimit(`Trusted ${category} Services`, H_MAX));
+  if (ads[1]?.headline) headlines.push(fitToCharLimit(ads[1].headline, H_MAX));
   // Ensure at least 5 unique headlines
-  const uniqueHeadlines = [...new Set(headlines)].slice(0, 6);
+  const uniqueHeadlines = [...new Set(headlines)].filter(h => h.length > 0).slice(0, 6);
 
-  // Generate descriptions
+  // Generate descriptions — fit to limit at word boundaries
   const descriptions: string[] = [];
-  if (ads[0]?.body_copy) descriptions.push(ads[0].body_copy.slice(0, 90));
-  descriptions.push(`${businessName} offers ${coreOffer} for ${targetCustomer}. Contact us today!`.slice(0, 90));
-  descriptions.push(`Looking for ${category}? ${businessName} delivers quality results. Get started now.`.slice(0, 90));
-  if (ads[1]?.body_copy) descriptions.push(ads[1].body_copy.slice(0, 90));
-  const uniqueDescriptions = [...new Set(descriptions)].slice(0, 4);
+  if (ads[0]?.body_copy) descriptions.push(fitToCharLimit(ads[0].body_copy, D_MAX));
+  descriptions.push(fitToCharLimit(`${businessName} offers ${coreOffer} for ${targetCustomer}. Contact us today!`, D_MAX));
+  descriptions.push(fitToCharLimit(`Looking for ${category}? ${businessName} delivers quality results. Get started now.`, D_MAX));
+  if (ads[1]?.body_copy) descriptions.push(fitToCharLimit(ads[1].body_copy, D_MAX));
+  const uniqueDescriptions = [...new Set(descriptions)].filter(d => d.length > 0).slice(0, 4);
 
   // Generate keywords
   const keywords: string[] = [];
