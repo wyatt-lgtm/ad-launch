@@ -3,6 +3,7 @@
 import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail, ChevronDown, ChevronUp, CheckCircle2, Circle, AlertCircle, Clock, Plus, Trash2, Search, AlertTriangle } from 'lucide-react';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
+import WebsiteAgencyBrief from '@/components/website-agency-brief';
 
 interface WebsiteConceptProps {
   data: any;
@@ -456,6 +457,11 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
             <ExternalLink className="w-4 h-4" /> Open Generated Website Again
           </a>
         </div>
+      )}
+
+      {/* Website Agency Brief — shown after workflow completes */}
+      {workflowRef.current?.workflowId && workflowStatus === 'completed' && (
+        <WebsiteAgencyBrief workflowId={workflowRef.current.workflowId} />
       )}
 
       {/* ── Optional: Reference Websites ── */}
