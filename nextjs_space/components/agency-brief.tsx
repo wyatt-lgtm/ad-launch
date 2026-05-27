@@ -14,8 +14,10 @@ interface Territory {
   risks: string;
 }
 
-interface Scorecard {
+interface ScorecardEntry {
+  territory_name?: string;
   total_score: number;
+  scores?: Record<string, number>;
   dimensions?: Record<string, number>;
   verdict?: string;
   creative_rationale?: string;
@@ -54,7 +56,7 @@ interface AgencyBriefData {
   has_territories: boolean;
   creative_territories: Territory[];
   selected_territory: Territory | null;
-  scorecard: Scorecard | null;
+  scorecard: ScorecardEntry | ScorecardEntry[] | null;
   creative_rationale: string | null;
   why_this_works: string | null;
   final_headline: string | null;
@@ -102,7 +104,16 @@ export default function AgencyBrief({ workflowId }: { workflowId: string }) {
   if (loading || !brief || (!brief.has_territories && !brief.has_vce)) return null;
 
   const selected = brief.selected_territory;
-  const scorecard = brief.scorecard;
+  // scorecard can be a list (new VCE format) or a single object (legacy)
+  const rawScorecard = brief.scorecard;
+  let winnerScore: number | null = null;
+  if (Array.isArray(rawScorecard)) {
+    const selName = (brief.selected_territory?.territory_name || '').toLowerCase();
+    const winner = rawScorecard.find((s: ScorecardEntry) => s.verdict === 'win' || (s.territory_name || '').toLowerCase() === selName);
+    winnerScore = winner?.total_score ?? (rawScorecard[0]?.total_score ?? null);
+  } else if (rawScorecard && typeof rawScorecard === 'object') {
+    winnerScore = rawScorecard.total_score ?? null;
+  }
 
   return (
     <div className="mt-4 rounded-xl border border-amber-200/60 bg-gradient-to-br from-amber-50/80 to-orange-50/40 dark:from-amber-950/20 dark:to-orange-950/10 dark:border-amber-800/30">
@@ -121,9 +132,9 @@ export default function AgencyBrief({ workflowId }: { workflowId: string }) {
               {selected.territory_name}
             </span>
           )}
-          {scorecard?.total_score && (
+          {winnerScore != null && (
             <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/40 dark:text-green-300">
-              {scorecard.total_score}/70
+              {winnerScore}/70
             </span>
           )}
         </div>

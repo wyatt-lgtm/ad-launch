@@ -24,8 +24,10 @@ interface WebsiteTerritory {
   risks: string;
 }
 
-interface Scorecard {
+interface ScorecardEntry {
+  territory_name?: string;
   total_score: number;
+  scores?: Record<string, number>;
   dimensions?: Record<string, number>;
   verdict?: string;
   creative_rationale?: string;
@@ -36,7 +38,7 @@ interface WebsiteBriefData {
   has_website_territories: boolean;
   website_territories: WebsiteTerritory[];
   selected_territory: WebsiteTerritory | null;
-  scorecard: Scorecard | null;
+  scorecard: ScorecardEntry | ScorecardEntry[] | null;
   creative_rationale: string | null;
   why_this_website_works: string | null;
   seo_positioning_notes: string | null;
@@ -188,7 +190,16 @@ export default function WebsiteAgencyBrief({ workflowId }: { workflowId: string 
 
   if (loading || !brief?.has_website_territories) return null;
 
-  const { website_territories, selected_territory, scorecard } = brief;
+  const { website_territories, selected_territory } = brief;
+  // scorecard can be a list (new VCE format) or a single object (legacy)
+  const rawSc = brief.scorecard;
+  let winnerEntry: ScorecardEntry | null = null;
+  if (Array.isArray(rawSc)) {
+    const selName = (selected_territory?.territory_name || '').toLowerCase();
+    winnerEntry = rawSc.find((s) => s.verdict === 'win' || (s.territory_name || '').toLowerCase() === selName) ?? rawSc[0] ?? null;
+  } else if (rawSc && typeof rawSc === 'object') {
+    winnerEntry = rawSc;
+  }
   const otherTerritories = website_territories.filter(
     (t) => t.territory_name !== selected_territory?.territory_name
   );
@@ -203,9 +214,9 @@ export default function WebsiteAgencyBrief({ workflowId }: { workflowId: string 
         <div className="flex items-center gap-2">
           <BarChart3 className="w-4 h-4 text-violet-600" />
           <span className="font-bold text-sm text-violet-800">Website Strategy Brief</span>
-          {scorecard && (
+          {winnerEntry && (
             <span className="text-[10px] font-bold bg-violet-200 text-violet-700 px-2 py-0.5 rounded-full">
-              Score: {scorecard.total_score}/90
+              Score: {winnerEntry.total_score}/90
             </span>
           )}
         </div>
@@ -255,19 +266,19 @@ export default function WebsiteAgencyBrief({ workflowId }: { workflowId: string 
           )}
 
           {/* ── War Room Scorecard ── */}
-          {scorecard?.dimensions && Object.keys(scorecard.dimensions).length > 0 && (
+          {winnerEntry && (winnerEntry.dimensions || winnerEntry.scores) && (
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-gray-600 mb-3 flex items-center gap-1">
                 <BarChart3 className="w-3.5 h-3.5" /> War Room Scorecard
               </h4>
               <div className="space-y-2">
-                {Object.entries(scorecard.dimensions).map(([key, score]) => {
+                {Object.entries(winnerEntry.dimensions || winnerEntry.scores || {}).map(([key, score]) => {
                   const dim = DIMENSION_LABELS[key] ?? { label: key.replace(/_/g, ' '), icon: <Target className="w-3.5 h-3.5" /> };
                   return <ScoreBar key={key} score={score as number} label={dim.label} icon={dim.icon} />;
                 })}
               </div>
-              {scorecard.verdict && (
-                <p className="mt-3 text-xs text-gray-500 italic">{scorecard.verdict}</p>
+              {winnerEntry.verdict && (
+                <p className="mt-3 text-xs text-gray-500 italic">{winnerEntry.verdict}</p>
               )}
             </div>
           )}
