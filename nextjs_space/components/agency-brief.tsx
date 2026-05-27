@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronUp, Target, Trophy, Lightbulb, Palette, Shield, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Target, Trophy, Lightbulb, Palette, Shield, AlertTriangle, Sparkles, Eye } from 'lucide-react';
 
 interface Territory {
   territory_name: string;
@@ -21,6 +21,34 @@ interface Scorecard {
   creative_rationale?: string;
 }
 
+interface VCEUserSummary {
+  product_truth: string;
+  human_truth: string;
+  selected_visual_idea: string;
+  creative_mechanism: string;
+  why_this_works: string;
+  image_direction: string;
+}
+
+interface VCEScorecard {
+  winner: {
+    concept_name?: string;
+    visual_idea?: string;
+    creative_mechanism?: string;
+    jealousy_score?: number;
+    render_feasibility?: string;
+    scores?: Record<string, number>;
+  };
+  shortlist?: Array<{
+    concept_name?: string;
+    visual_idea?: string;
+    creative_mechanism?: string;
+    jealousy_score?: number;
+    scores?: Record<string, number>;
+  }>;
+  raw_count?: number;
+}
+
 interface AgencyBriefData {
   workflow_id: string;
   has_territories: boolean;
@@ -36,6 +64,10 @@ interface AgencyBriefData {
   brand_fit_score: number | null;
   brand_fit_passed: boolean | null;
   validation_notes: string[];
+  // VCE fields
+  has_vce: boolean;
+  vce_user_summary: VCEUserSummary | null;
+  visual_concept_engineering: VCEScorecard | null;
 }
 
 export default function AgencyBrief({ workflowId }: { workflowId: string }) {
@@ -43,6 +75,7 @@ export default function AgencyBrief({ workflowId }: { workflowId: string }) {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [showAllTerritories, setShowAllTerritories] = useState(false);
+  const [showVCEDetails, setShowVCEDetails] = useState(false);
 
   useEffect(() => {
     if (!workflowId) return;
@@ -66,7 +99,7 @@ export default function AgencyBrief({ workflowId }: { workflowId: string }) {
     return () => { cancelled = true; };
   }, [workflowId]);
 
-  if (loading || !brief || !brief.has_territories) return null;
+  if (loading || !brief || (!brief.has_territories && !brief.has_vce)) return null;
 
   const selected = brief.selected_territory;
   const scorecard = brief.scorecard;
@@ -126,6 +159,113 @@ export default function AgencyBrief({ workflowId }: { workflowId: string }) {
                   </p>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* VCE User Summary */}
+          {brief.has_vce && brief.vce_user_summary && (
+            <div className="rounded-lg border border-violet-200/60 bg-gradient-to-br from-violet-50/60 to-fuchsia-50/30 p-3 dark:border-violet-800/30 dark:from-violet-950/20 dark:to-fuchsia-950/10">
+              <div className="mb-2 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
+                  Visual Concept
+                </h4>
+              </div>
+              <div className="space-y-2">
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Product Truth</span>
+                  <p className="text-xs text-gray-700 dark:text-gray-300">{brief.vce_user_summary.product_truth}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Human Truth</span>
+                  <p className="text-xs text-gray-700 dark:text-gray-300">{brief.vce_user_summary.human_truth}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Visual Idea</span>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{brief.vce_user_summary.selected_visual_idea}</p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <div className="flex-1 min-w-[100px]">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Mechanism</span>
+                    <p className="text-xs text-violet-700 dark:text-violet-300">{brief.vce_user_summary.creative_mechanism}</p>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Why This Works</span>
+                  <p className="text-xs text-gray-600 dark:text-gray-400">{brief.vce_user_summary.why_this_works}</p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Image Direction</span>
+                  <p className="text-xs text-gray-600 dark:text-gray-400">{brief.vce_user_summary.image_direction}</p>
+                </div>
+              </div>
+
+              {/* VCE Scorecard (admin detail) */}
+              {brief.visual_concept_engineering && (
+                <div className="mt-3">
+                  <button
+                    onClick={() => setShowVCEDetails(!showVCEDetails)}
+                    className="flex items-center gap-1 text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400"
+                  >
+                    <Eye className="h-3 w-3" />
+                    {showVCEDetails ? 'Hide' : 'Show'} scorecard details
+                    {showVCEDetails ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </button>
+                  {showVCEDetails && (
+                    <div className="mt-2 space-y-2">
+                      {brief.visual_concept_engineering.winner && (
+                        <div className="rounded-md border border-violet-300/40 bg-white/60 p-2 dark:border-violet-700/30 dark:bg-white/5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-gray-900 dark:text-gray-100">
+                              {brief.visual_concept_engineering.winner.concept_name || 'Winner'}
+                            </span>
+                            {brief.visual_concept_engineering.winner.jealousy_score && (
+                              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                                brief.visual_concept_engineering.winner.jealousy_score >= 7.5
+                                  ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+                                  : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300'
+                              }`}>
+                                Jealousy: {brief.visual_concept_engineering.winner.jealousy_score}/10
+                              </span>
+                            )}
+                          </div>
+                          {brief.visual_concept_engineering.winner.scores && (
+                            <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5">
+                              {Object.entries(brief.visual_concept_engineering.winner.scores).map(([dim, score]) => (
+                                <div key={dim} className="flex items-center justify-between text-[10px]">
+                                  <span className="text-gray-500 dark:text-gray-400 capitalize">{dim.replace(/_/g, ' ')}</span>
+                                  <span className="font-medium text-gray-700 dark:text-gray-300">{score}/10</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {brief.visual_concept_engineering.shortlist && brief.visual_concept_engineering.shortlist.length > 0 && (
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Runner-ups</span>
+                          {brief.visual_concept_engineering.shortlist
+                            .filter(c => c.concept_name !== brief.visual_concept_engineering?.winner?.concept_name)
+                            .map((c, i) => (
+                              <div key={i} className="mt-1 rounded-md border border-gray-200/60 p-1.5 text-[11px] dark:border-gray-700/40">
+                                <span className="font-medium text-gray-800 dark:text-gray-200">{c.concept_name}</span>
+                                {c.jealousy_score && (
+                                  <span className="ml-2 text-gray-500">Jealousy: {c.jealousy_score}/10</span>
+                                )}
+                              </div>
+                            ))
+                          }
+                        </div>
+                      )}
+                      {brief.visual_concept_engineering.raw_count && (
+                        <p className="text-[10px] text-gray-500">
+                          Evaluated {brief.visual_concept_engineering.raw_count} raw concepts → 3 shortlisted → 1 winner
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
