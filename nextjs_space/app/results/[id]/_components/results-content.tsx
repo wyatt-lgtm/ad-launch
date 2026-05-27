@@ -23,7 +23,8 @@ interface Ad {
 const LANE_CONFIG: Record<string, { label: string; description: string; icon: React.ElementType; color: string; bgColor: string; badgeColor: string }> = {
   website: { label: 'Website / Brand', description: 'Created from your website content', icon: Building2, color: 'text-blue-600', bgColor: 'bg-blue-50', badgeColor: 'bg-blue-500' },
   news:    { label: 'Local News', description: 'Tied to local news in your area', icon: Newspaper, color: 'text-amber-600', bgColor: 'bg-amber-50', badgeColor: 'bg-amber-500' },
-  holiday: { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50', badgeColor: 'bg-rose-500' },
+  holiday:  { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50', badgeColor: 'bg-rose-500' },
+  seasonal: { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50', badgeColor: 'bg-rose-500' },
 };
 
 export default function ResultsContent({ analysisId }: { analysisId: string }) {
@@ -90,7 +91,9 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
   // Group ads by lane
   const adsByLane: Record<string, Ad[]> = { website: [], news: [], holiday: [] };
   for (const ad of ads) {
-    const lane = ad.lane;
+    // Normalize seasonal → holiday
+    let lane = ad.lane;
+    if (lane === 'seasonal') lane = 'holiday';
     if (lane && adsByLane[lane]) {
       adsByLane[lane].push(ad);
     } else {

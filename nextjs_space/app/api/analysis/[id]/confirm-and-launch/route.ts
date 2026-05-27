@@ -126,76 +126,103 @@ export async function POST(
 
     console.log(`[confirm-and-launch] Context gathered in ${Date.now() - contextStart}ms`);
 
-    // ── Launch 3 lane missions in the background (don't block response) ──
-    console.log(`[confirm-and-launch] Launching 3 lane missions (background) for: ${analysis.websiteUrl}`);
+    // ── Launch 3 lane missions sequentially and save missionId to DB ──
+    // IMPORTANT: We MUST await this and save missionId before responding.
+    // Fire-and-forget causes lost workflow IDs when the serverless function
+    // tears down before the background promise completes.
+    console.log(`[confirm-and-launch] Launching 3 lane missions for: ${analysis.websiteUrl}`);
 
-    // Fire-and-forget: launch missions and record workflow IDs
-    // The frontend will redirect immediately and poll for results.
     const websiteUrl = analysis.websiteUrl;
-    const launchPromise = (async () => {
-      const launchStart = Date.now();
-      try {
-        // Sequential + exclude-list to avoid Tombstone race condition that returns duplicate workflow IDs
-        const usedWorkflowIds: string[] = [];
-        const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds);
-        if (websiteResult.workflowId) usedWorkflowIds.push(websiteResult.workflowId);
-        const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds);
-        if (newsResult.workflowId) usedWorkflowIds.push(newsResult.workflowId);
-        const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds);
-        if (holidayResult.workflowId) usedWorkflowIds.push(holidayResult.workflowId);
+    const launchStart = Date.now();
+    const laneWorkflows: Record<string, string> = {};
+    const usedWorkflowIds: string[] = [];
 
-        console.log(`[confirm-and-launch] Missions launched in ${Date.now() - launchStart}ms`);
-        console.log(`[confirm-and-launch] Lane missions created:`, {
-          website: { success: websiteResult.success, workflowId: websiteResult.workflowId },
-          news: { success: newsResult.success, workflowId: newsResult.workflowId },
-          holiday: { success: holidayResult.success, workflowId: holidayResult.workflowId },
-        });
-
-        const laneWorkflows: Record<string, string> = {};
-        if (websiteResult.workflowId) laneWorkflows.website = websiteResult.workflowId;
-        if (newsResult.workflowId) laneWorkflows.news = newsResult.workflowId;
-        if (holidayResult.workflowId) laneWorkflows.holiday = holidayResult.workflowId;
-
-        // Safety check: warn if duplicate workflow IDs were returned
-        const wfIds = Object.values(laneWorkflows);
-        const uniqueWfIds = new Set(wfIds);
-        if (uniqueWfIds.size < wfIds.length) {
-          console.warn(`[confirm-and-launch] DUPLICATE workflow IDs detected! Lanes may collide:`, laneWorkflows);
-        }
-
-        const allWorkflowIds = Object.values(laneWorkflows);
-        if (allWorkflowIds.length === 0) {
-          console.error('[confirm-and-launch] All lane missions failed');
-          await prisma.analysis.update({
-            where: { id: analysisId },
-            data: { status: 'error' },
-          });
-          return;
-        }
-
+    // Helper: save missionId after each lane so even partial creation is captured
+    const saveMissionId = async () => {
+      if (Object.keys(laneWorkflows).length > 0) {
         const missionId = JSON.stringify(laneWorkflows);
         await prisma.analysis.update({
           where: { id: analysisId },
           data: { missionId },
         });
-        console.log(`[confirm-and-launch] Workflow IDs saved for ${analysisId}: ${missionId}`);
-      } catch (err: any) {
-        console.error('[confirm-and-launch] Background mission launch error:', err);
+      }
+    };
+
+    try {
+      // Sequential + exclude-list to avoid Tombstone race condition with duplicate workflow IDs
+      const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds);
+      if (websiteResult.workflowId) {
+        usedWorkflowIds.push(websiteResult.workflowId);
+        laneWorkflows.website = websiteResult.workflowId;
+        await saveMissionId(); // Persist immediately — don't risk losing it
+      }
+
+      const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds);
+      if (newsResult.workflowId) {
+        usedWorkflowIds.push(newsResult.workflowId);
+        laneWorkflows.news = newsResult.workflowId;
+        await saveMissionId();
+      }
+
+      const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds);
+      if (holidayResult.workflowId) {
+        usedWorkflowIds.push(holidayResult.workflowId);
+        laneWorkflows.holiday = holidayResult.workflowId;
+        await saveMissionId();
+      }
+
+      console.log(`[confirm-and-launch] Missions launched in ${Date.now() - launchStart}ms`);
+      console.log(`[confirm-and-launch] Lane missions created:`, {
+        website: { success: websiteResult.success, workflowId: websiteResult.workflowId },
+        news: { success: newsResult.success, workflowId: newsResult.workflowId },
+        holiday: { success: holidayResult.success, workflowId: holidayResult.workflowId },
+      });
+
+      // Safety check: warn if duplicate workflow IDs were returned
+      const wfIds = Object.values(laneWorkflows);
+      const uniqueWfIds = new Set(wfIds);
+      if (uniqueWfIds.size < wfIds.length) {
+        console.warn(`[confirm-and-launch] DUPLICATE workflow IDs detected! Lanes may collide:`, laneWorkflows);
+      }
+
+      if (Object.keys(laneWorkflows).length === 0) {
+        console.error('[confirm-and-launch] All lane missions failed');
+        await prisma.analysis.update({
+          where: { id: analysisId },
+          data: { status: 'error' },
+        });
+        return NextResponse.json({
+          success: false,
+          analysisId,
+          status: 'error',
+          error: 'Analysis pipeline could not be created. Please try again.',
+        });
+      }
+
+      console.log(`[confirm-and-launch] Workflow IDs saved for ${analysisId}: ${JSON.stringify(laneWorkflows)}`);
+    } catch (err: any) {
+      console.error('[confirm-and-launch] Mission launch error:', err);
+      // If we saved at least one lane, keep processing; otherwise mark error
+      if (Object.keys(laneWorkflows).length === 0) {
         await prisma.analysis.update({
           where: { id: analysisId },
           data: { status: 'error' },
         }).catch(() => {});
+        return NextResponse.json({
+          success: false,
+          analysisId,
+          status: 'error',
+          error: 'Analysis pipeline could not be created. Please try again.',
+        });
       }
-    })();
-
-    // Don't await — let it run in background while we respond immediately
-    // In serverless, we can give it a small head-start to increase chances
-    // of completion before the function tears down, but don't block.
-    void launchPromise;
+      // Partial creation — some lanes saved, others failed
+      console.log(`[confirm-and-launch] Partial launch: ${Object.keys(laneWorkflows).length} lanes saved despite error`);
+    }
 
     return NextResponse.json({
       success: true,
       analysisId,
+      missionId: JSON.stringify(laneWorkflows),
       status: 'processing',
     });
   } catch (err: any) {

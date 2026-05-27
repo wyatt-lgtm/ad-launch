@@ -697,9 +697,10 @@ function LocationStep({
 
 /* ── Lane configuration ───────────────────────────────────── */
 const LANE_CONFIG: Record<string, { label: string; description: string; icon: React.ElementType; color: string; bgColor: string }> = {
-  website: { label: 'Website / Brand', description: 'Created from your website content', icon: Building2, color: 'text-blue-600', bgColor: 'bg-blue-50' },
-  news:    { label: 'Local News', description: 'Tied to local news in your area', icon: Newspaper, color: 'text-amber-600', bgColor: 'bg-amber-50' },
-  holiday: { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50' },
+  website:  { label: 'Website / Brand', description: 'Created from your website content', icon: Building2, color: 'text-blue-600', bgColor: 'bg-blue-50' },
+  news:     { label: 'Local News', description: 'Tied to local news in your area', icon: Newspaper, color: 'text-amber-600', bgColor: 'bg-amber-50' },
+  holiday:  { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50' },
+  seasonal: { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50' },
 };
 
 export default function AnalysisTracker({ analysisId }: { analysisId: string }) {
@@ -773,7 +774,9 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const adsByLane = React.useMemo(() => {
     const map: Record<string, Ad[]> = { website: [], news: [], holiday: [] };
     for (const ad of ads) {
-      const lane = (ad as any).lane;
+      // Normalize seasonal → holiday
+      let lane = (ad as any).lane;
+      if (lane === 'seasonal') lane = 'holiday';
       if (lane && map[lane]) {
         map[lane].push(ad);
       } else {

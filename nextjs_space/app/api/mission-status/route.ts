@@ -78,6 +78,11 @@ export async function GET(request: NextRequest) {
         }
       } catch { /* legacy comma-separated — no lane info */ }
     }
+    // Normalize lane name aliases: 'seasonal' → 'holiday'
+    if (laneWorkflows.seasonal && !laneWorkflows.holiday) {
+      laneWorkflows.holiday = laneWorkflows.seasonal;
+      delete laneWorkflows.seasonal;
+    }
 
     // If already completed with ads, return cached results with fresh image URLs
     if ((analysis.status === 'completed' || analysis.status === 'completing') && (analysis.ads?.length ?? 0) > 0) {
@@ -160,9 +165,45 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // If pending location confirmation or no mission ID yet, return current status
-    if (analysis.status === 'pending_location' || !analysis.missionId) {
+    // If pending location confirmation, return current status
+    if (analysis.status === 'pending_location') {
       return NextResponse.json({ status: analysis.status, tasks: [] });
+    }
+
+    // No missionId yet — missions are being created or creation failed
+    if (!analysis.missionId) {
+      const ageMs = Date.now() - new Date(analysis.updatedAt).getTime();
+      const ageSec = Math.round(ageMs / 1000);
+
+      // If analysis is in 'error' state with no missionId, pipeline creation failed
+      if (analysis.status === 'error') {
+        return NextResponse.json({
+          status: 'error',
+          tasks: [],
+          errorReason: 'Analysis pipeline could not be created. Please try again.',
+        });
+      }
+
+      // After 90 seconds with no missionId, the pipeline was not created
+      if (ageSec > 90) {
+        console.warn(`[mission-status] analysisId=${analysisId} has no missionId after ${ageSec}s — marking as error`);
+        await prisma.analysis.update({
+          where: { id: analysisId },
+          data: { status: 'error' },
+        });
+        return NextResponse.json({
+          status: 'error',
+          tasks: [],
+          errorReason: 'Analysis pipeline was not created. Please try again.',
+        });
+      }
+
+      // Still within timeout — missions are being launched
+      return NextResponse.json({
+        status: 'processing',
+        tasks: [],
+        message: 'Launching analysis pipeline...',
+      });
     }
 
     // Build flat array of workflow IDs from laneWorkflows or legacy comma-separated

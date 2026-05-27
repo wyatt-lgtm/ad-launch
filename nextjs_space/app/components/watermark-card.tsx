@@ -24,6 +24,7 @@ export default function WatermarkCard({
     'Website / Brand': 'bg-blue-500',
     'Local News': 'bg-amber-500',
     'Upcoming Holiday': 'bg-rose-500',
+    'Seasonal': 'bg-rose-500',
   };
   const displayAngle = angle ?? `Post ${index + 1}`;
   const badgeColor = laneColors[displayAngle] ?? 'bg-blue-500';
