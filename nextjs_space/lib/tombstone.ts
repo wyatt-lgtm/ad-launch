@@ -771,7 +771,20 @@ export async function getWorkflowResults(workflowIds: string[]) {
         }
       } else {
         // Single-asset fallback (e.g. Render Production only, no Conversion Assembly)
-        const artifactPath = taskOutput?.background_asset_path ?? '';
+        // Support all possible image URL fields from Andy Warhol / render outputs
+        const artifactPath = taskOutput?.background_asset_path
+          ?? taskOutput?.background_asset_url
+          ?? taskOutput?.asset_path
+          ?? taskOutput?.image_url
+          ?? taskOutput?.imageUrl
+          ?? taskOutput?.public_url
+          ?? taskOutput?.publicUrl
+          ?? taskOutput?.signed_url
+          ?? taskOutput?.signedUrl
+          ?? taskOutput?.r2_url
+          ?? taskOutput?.r2Url
+          ?? taskOutput?.path
+          ?? '';
         const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : await getTaskArtifact(ad.taskId);
         let headline = taskOutput?.headline ?? '';
         let caption = taskOutput?.body_copy ?? taskOutput?.body ?? taskOutput?.caption ?? '';

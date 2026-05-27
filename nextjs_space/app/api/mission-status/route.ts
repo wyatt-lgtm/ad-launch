@@ -136,6 +136,15 @@ export async function GET(request: NextRequest) {
         } catch { /* ignore */ }
       }
 
+      // Detect lanes that failed (have no ads stored)
+      const cachedFailedLanes: string[] = [];
+      if (Object.keys(laneWorkflows).length > 0) {
+        const storedLanes = new Set((analysis.ads ?? []).map((a: any) => a.lane).filter(Boolean));
+        for (const lane of Object.keys(laneWorkflows)) {
+          if (!storedLanes.has(lane)) cachedFailedLanes.push(lane);
+        }
+      }
+
       return NextResponse.json({
         status: 'completed',
         ads: freshAds,
@@ -147,6 +156,7 @@ export async function GET(request: NextRequest) {
         socialStatus,
         laneWorkflows,
         tasks: [], // No need to poll tasks anymore
+        ...(cachedFailedLanes.length > 0 ? { failedLanes: cachedFailedLanes } : {}),
       });
     }
 
@@ -373,30 +383,173 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Determine if this is a partial success: some lanes completed, some failed
+    const completedWfSetForStatus = new Set(statusResult.completedWorkflows ?? []);
+    const hasCompletedLanes = completedWfSetForStatus.size > 0;
+    const isPartialSuccess = overallStatus === 'error' && hasCompletedLanes && Object.keys(laneWorkflows).length > 0;
+
     // Update status in DB if changed (never overwrite 'completing' or 'completed')
-    const mappedStatus = overallStatus === 'error' ? 'error' : overallStatus === 'generating' ? 'generating' : 'processing';
-    if (analysis.status !== mappedStatus && analysis.status !== 'completing' && analysis.status !== 'completed') {
+    // Partial success: treat as 'completed' with partial results rather than 'error'
+    let mappedStatus: string;
+    if (isPartialSuccess) {
+      mappedStatus = 'completed';
+    } else {
+      mappedStatus = overallStatus === 'error' ? 'error' : overallStatus === 'generating' ? 'generating' : 'processing';
+    }
+
+    // Extract error reason and failed lane names from failed tasks
+    let errorReason: string | null = null;
+    const failedLanes: string[] = [];
+    if (overallStatus === 'error') {
+      // Build reverse map for lane name lookup
+      const wfToLaneName: Record<string, string> = {};
+      for (const [lane, wfIdOrArr] of Object.entries(laneWorkflows)) {
+        if (Array.isArray(wfIdOrArr)) {
+          for (const wfId of wfIdOrArr) wfToLaneName[wfId] = lane;
+        } else if (wfIdOrArr) {
+          wfToLaneName[wfIdOrArr] = lane;
+        }
+      }
+      // Identify which lanes failed
+      for (const [wfId, laneName] of Object.entries(wfToLaneName)) {
+        if (!completedWfSetForStatus.has(wfId)) {
+          const wfTasks = (statusResult.tasks ?? []).filter((t: any) => t.workflowId === wfId);
+          const hasFailed = wfTasks.some((t: any) => t.status === 'error');
+          if (hasFailed && !failedLanes.includes(laneName)) failedLanes.push(laneName);
+        }
+      }
+
+      if (!isPartialSuccess) {
+        const failedTask = (statusResult.tasks ?? []).find((t: any) => t.status === 'error' && t.lastError);
+        if (failedTask?.lastError) {
+          const raw = failedTask.lastError as string;
+          if (raw.includes('terms violation')) {
+            errorReason = 'This website could not be analyzed. It may be too large or have access restrictions. Please try a different URL.';
+          } else if (raw.includes('timeout') || raw.includes('Timeout')) {
+            errorReason = 'The website took too long to respond. Please try again.';
+          } else {
+            errorReason = 'Post generation encountered an issue. Please try again.';
+          }
+          console.log(`[mission-status] Error reason: ${raw}`);
+        }
+      } else {
+        console.log(`[mission-status] Partial success: ${completedWfSetForStatus.size} lanes completed, ${failedLanes.length} failed (${failedLanes.join(', ')})`);
+      }
+    }
+
+    // ── Partial success: run completion path for completed lanes only ──
+    if (isPartialSuccess && analysis.status !== 'completing' && analysis.status !== 'completed') {
+      const completedWfIds = Array.from(completedWfSetForStatus);
+      console.log(`[mission-status] Running partial-success completion for ${completedWfIds.length} workflows`);
+
+      const lockResult = await prisma.analysis.updateMany({
+        where: { id: analysisId, status: { notIn: ['completed', 'completing'] } },
+        data: { status: 'completing' },
+      });
+
+      if (lockResult.count > 0) {
+        try {
+          const results = await getWorkflowResults(completedWfIds);
+          const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl, analysisId);
+          const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
+          const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl);
+          const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl, {
+            businessId: analysis.businessId ?? '',
+            location: [analysis.businessCity, analysis.businessState].filter(Boolean).join(', '),
+            industry: results.research?.business_summary?.category ?? '',
+          });
+          const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
+
+          const wfToLane: Record<string, string> = {};
+          for (const [lane, wfIdOrArr] of Object.entries(laneWorkflows)) {
+            if (Array.isArray(wfIdOrArr)) {
+              for (const wfId of wfIdOrArr) wfToLane[wfId] = lane;
+            } else if (wfIdOrArr) {
+              wfToLane[wfIdOrArr] = lane;
+            }
+          }
+
+          const existingProgressiveAds = await prisma.ad.findMany({ where: { analysisId: analysis.id } });
+          const existingLaneSet = new Set(existingProgressiveAds.map((a: any) => a.lane).filter(Boolean));
+          const adsToCreate = results.ads.filter((ad: any) => {
+            const lane = wfToLane[ad?.workflowId] ?? null;
+            return !lane || !existingLaneSet.has(lane);
+          });
+
+          for (const ad of adsToCreate) {
+            let imageKey = ad?.imageUrl ?? null;
+            if (imageKey && imageKey.startsWith('http') && !imageKey.includes('.s3.')) {
+              try {
+                const parsed = new URL(imageKey);
+                let path = parsed.pathname.replace(/^\/+/, '');
+                if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length);
+                imageKey = path;
+              } catch {}
+            }
+            await prisma.ad.create({
+              data: {
+                analysisId: analysis.id,
+                imageUrl: imageKey,
+                caption: ad?.caption ?? '',
+                headline: ad?.headline ?? 'Ad',
+                watermarked: true,
+                lane: wfToLane[ad?.workflowId] ?? null,
+              },
+            });
+          }
+
+          await prisma.analysis.update({
+            where: { id: analysisId },
+            data: {
+              status: 'completed',
+              results: { ...results as any, googleAds: googleAdsData, websiteConcept: websiteConceptData, budget: budgetData } as any,
+              seoData: seoData as any,
+              postingPlan: postingPlan as any,
+            },
+          });
+
+          const updatedAnalysis = await prisma.analysis.findUnique({
+            where: { id: analysisId },
+            include: { ads: true },
+          });
+          const freshAds = await resolveAdImages(updatedAnalysis?.ads ?? []);
+
+          // Fire background image upgrade
+          const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+          fetch(`${baseUrl}/api/upgrade-ad-images`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ analysisId }),
+          }).catch(() => {});
+
+          return NextResponse.json({
+            status: 'completed',
+            ads: freshAds,
+            seoData,
+            postingPlan,
+            googleAdsData,
+            websiteConceptData,
+            budgetData,
+            laneWorkflows,
+            failedLanes,
+            tasks: statusResult.tasks ?? [],
+          });
+        } catch (err: any) {
+          console.error('[mission-status] Partial-success completion failed:', err?.message);
+          await prisma.analysis.update({
+            where: { id: analysisId },
+            data: { status: 'processing' },
+          });
+        }
+      }
+    }
+
+    // Update status in DB if not already handled by partial success
+    if (!isPartialSuccess && analysis.status !== mappedStatus && analysis.status !== 'completing' && analysis.status !== 'completed') {
       await prisma.analysis.update({
         where: { id: analysisId },
         data: { status: mappedStatus },
       });
-    }
-
-    // Extract error reason from failed tasks if any
-    let errorReason: string | null = null;
-    if (mappedStatus === 'error') {
-      const failedTask = (statusResult.tasks ?? []).find((t: any) => t.status === 'error' && t.lastError);
-      if (failedTask?.lastError) {
-        const raw = failedTask.lastError as string;
-        if (raw.includes('terms violation')) {
-          errorReason = 'This website could not be analyzed. It may be too large or have access restrictions. Please try a different URL.';
-        } else if (raw.includes('timeout') || raw.includes('Timeout')) {
-          errorReason = 'The website took too long to respond. Please try again.';
-        } else {
-          errorReason = 'Post generation encountered an issue. Please try again.';
-        }
-        console.log(`[mission-status] Error reason: ${raw}`);
-      }
     }
 
     // ── Progressive lane results: show completed lane ads while others still generate ──
@@ -480,6 +633,7 @@ export async function GET(request: NextRequest) {
       laneWorkflows,
       ...(partialAds.length > 0 ? { ads: partialAds } : {}),
       ...(errorReason ? { errorReason } : {}),
+      ...(failedLanes.length > 0 ? { failedLanes } : {}),
     });
   } catch (err: any) {
     console.error('Mission status error:', err);

@@ -715,6 +715,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const [budgetData, setBudgetData] = useState<any>(null);
   const [error, setError] = useState('');
   const [failedStage, setFailedStage] = useState<string | null>(null);
+  const [failedLanes, setFailedLanes] = useState<string[]>([]);
   const [showRegister, setShowRegister] = useState(false);
   const [generatingLane, setGeneratingLane] = useState<string | null>(null);
   const { data: session } = useSession() || {};
@@ -751,6 +752,8 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         if (data?.googleAdsData) setGoogleAdsData(data.googleAdsData);
         if (data?.websiteConceptData) setWebsiteConceptData(data.websiteConceptData);
         if (data?.budgetData) setBudgetData(data.budgetData);
+        // Track if some lanes failed (partial success)
+        if (data?.failedLanes?.length) setFailedLanes(data.failedLanes);
       } else if (s === 'error') {
         setError(data?.errorReason ?? 'Analysis failed. Please try again.');
         // Extract the failing stage from task data for the error screen
@@ -1048,6 +1051,12 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
                           editable={true}
                         />
                       ))
+                    ) : failedLanes.includes(lane) ? (
+                      <div className="border-2 border-dashed border-amber-200 rounded-xl p-8 text-center bg-amber-50/50">
+                        <AlertCircle className="w-8 h-8 text-amber-400 mx-auto mb-2" />
+                        <p className="text-sm font-medium text-amber-700">This post couldn't be generated</p>
+                        <p className="text-xs text-amber-500 mt-1">Click "Generate 3 More" below to retry</p>
+                      </div>
                     ) : (
                       <div className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center">
                         <Icon className="w-8 h-8 text-gray-300 mx-auto mb-2" />
