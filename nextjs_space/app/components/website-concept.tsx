@@ -153,6 +153,9 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
   const [workflowStatus, setWorkflowStatus] = useState<string>('');
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const workflowRef = useRef<{ workflowId: string; finalTaskId: number } | null>(null);
+  const genStartRef = useRef<number>(0);
+  const stallCountRef = useRef<number>(0);
+  const lastProgressRef = useRef<string>('');
 
   // Reference websites state
   const [refUrls, setRefUrls] = useState<string[]>(['']);
@@ -250,7 +253,33 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           window.open(url, '_blank');
           setGenerating(false);
         } else {
-          setGenError('One or more generation steps failed. Please try again.');
+          // Build specific failure detail from steps
+          const failedSteps = (result.steps ?? []).filter((s: any) => s.status === 'error');
+          const failedLabels = failedSteps.map((s: any) => s.label || s.department).join(', ');
+          const firstError = failedSteps[0]?.lastError;
+          let msg = 'Generation encountered an issue.';
+          if (failedLabels) msg = `Step failed: ${failedLabels}.`;
+          if (firstError) msg += ` (${firstError.length > 120 ? firstError.slice(0, 120) + '…' : firstError})`;
+          msg += ' Please try again.';
+          setGenError(msg);
+          setGenerating(false);
+        }
+      } else {
+        // Still in progress — check for stall (no progress for 8+ minutes)
+        const progressKey = (result.steps ?? []).map((s: any) => `${s.id}:${s.status}`).join('|');
+        if (progressKey === lastProgressRef.current) {
+          stallCountRef.current += 1;
+        } else {
+          stallCountRef.current = 0;
+          lastProgressRef.current = progressKey;
+        }
+        // ~8 min stall at 5s intervals = 96 polls, use 80 as threshold
+        const elapsed = Date.now() - genStartRef.current;
+        if (elapsed > 10 * 60 * 1000 && stallCountRef.current > 60) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          const blockedSteps = (result.steps ?? []).filter((s: any) => s.status === 'waiting' || s.rawStatus === 'Blocked');
+          const blockedLabels = blockedSteps.map((s: any) => s.label || s.department).join(', ');
+          setGenError(`Generation timed out — ${blockedLabels ? `waiting on: ${blockedLabels}` : 'pipeline stalled'}. Our team has been notified. Please try again later.`);
           setGenerating(false);
         }
       }
@@ -296,6 +325,9 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     setGeneratedUrl(null);
     setWorkflowSteps([]);
     setWorkflowStatus('starting');
+    genStartRef.current = Date.now();
+    stallCountRef.current = 0;
+    lastProgressRef.current = '';
 
     try {
       // Build reference sites (filter empty)

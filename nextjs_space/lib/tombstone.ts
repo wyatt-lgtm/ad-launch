@@ -572,7 +572,7 @@ export function getTaskLabel(department: string): { label: string; description: 
 export async function getMultiWorkflowStatus(workflowIds: string[]) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000); // 15s timeout for large response
+    const timer = setTimeout(() => controller.abort(), 25000); // 25s timeout for large response
     let res: Response;
     try {
       res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store', signal: controller.signal });
@@ -645,8 +645,11 @@ export async function getMultiWorkflowStatus(workflowIds: string[]) {
 
     return { success: true, tasks: taskList, status: overallStatus, completedWorkflows };
   } catch (err: any) {
-    console.error('Multi-workflow status error:', err?.message);
-    return { success: false, tasks: [], status: 'error' };
+    const isTimeout = err?.name === 'AbortError' || err?.message?.includes('aborted');
+    console.error('Multi-workflow status error:', err?.message, isTimeout ? '(timeout - transient)' : '');
+    // Return 'pending' for transient errors so the frontend keeps polling
+    // instead of showing a permanent failure message
+    return { success: false, tasks: [], status: isTimeout ? 'pending' : 'error' };
   }
 }
 
