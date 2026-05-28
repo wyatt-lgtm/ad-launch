@@ -1097,7 +1097,9 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
     'Marketing': 'Website Strategy',
     'Creative Strategy': 'Copy Deck',
     'Creative Direction': 'Creative Contract',
+    'Render Production': 'Image Generation',
     'Code Execution': 'HTML Generation',
+    'Strategy & Intelligence': 'Strategy & Intelligence',
   };
 
   const steps = (statusResult.tasks ?? []).map((t: any) => ({
@@ -1107,9 +1109,15 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
 
   let html: string | null = null;
 
-  if (statusResult.status === 'completed' && finalTaskId) {
-    // Fetch George Boole's output to extract HTML
-    const outputs = await getTaskOutputs(finalTaskId);
+  // Find the HTML artifact from the Code Execution step (George Boole),
+  // NOT the last task (which is now the War Room review step).
+  const allTasks = statusResult.tasks ?? [];
+  const htmlTask = allTasks.find((t: any) => t.department === 'Code Execution' && t.status === 'Complete');
+  const htmlTaskId = htmlTask?.id ?? finalTaskId;
+
+  // Extract HTML if Code Execution completed (even if War Room later rejected)
+  if (htmlTaskId && (statusResult.status === 'completed' || htmlTask)) {
+    const outputs = await getTaskOutputs(htmlTaskId);
     for (const out of outputs) {
       try {
         const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;

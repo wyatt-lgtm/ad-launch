@@ -203,8 +203,19 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         setGenerating(false);
       } else if (result.status === 'error') {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-        setGenError('One or more generation steps failed. Please try again.');
-        setGenerating(false);
+
+        // If HTML was generated (Code Execution completed) but a later step
+        // (e.g. War Room review) failed, still show the HTML to the user
+        if (result.html) {
+          const blob = new Blob([result.html], { type: 'text/html' });
+          const url = URL.createObjectURL(blob);
+          setGeneratedUrl(url);
+          window.open(url, '_blank');
+          setGenerating(false);
+        } else {
+          setGenError('One or more generation steps failed. Please try again.');
+          setGenerating(false);
+        }
       }
     } catch {
       // Non-fatal — keep polling
