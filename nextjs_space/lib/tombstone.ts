@@ -1112,7 +1112,7 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
   // Find the HTML artifact from the Code Execution step (George Boole),
   // NOT the last task (which is now the War Room review step).
   const allTasks = statusResult.tasks ?? [];
-  const htmlTask = allTasks.find((t: any) => t.department === 'Code Execution' && t.status === 'Complete');
+  const htmlTask = allTasks.find((t: any) => t.department === 'Code Execution' && t.status === 'complete');
   const htmlTaskId = htmlTask?.id ?? finalTaskId;
 
   // Extract HTML if Code Execution completed (even if War Room later rejected)
