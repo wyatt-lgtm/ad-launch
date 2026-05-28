@@ -897,8 +897,19 @@ export async function getTaskArtifact(taskId: number): Promise<string | null> {
 async function resolveArtifactUrl(artifactPath: string): Promise<string | null> {
   if (!artifactPath) return null;
   if (artifactPath.startsWith('http://') || artifactPath.startsWith('https://')) return artifactPath;
+
+  // Strip r2://bucket_name/ prefix — Jim Bridger stores paths as
+  // r2://tombstoner2customerassets/recon/... but the actual R2 key is just recon/...
+  let cleanPath = artifactPath;
+  if (cleanPath.startsWith('r2://')) {
+    // Remove r2://bucket_name/ prefix, keeping only the key
+    const withoutScheme = cleanPath.slice(5); // remove 'r2://'
+    const slashIdx = withoutScheme.indexOf('/');
+    cleanPath = slashIdx >= 0 ? withoutScheme.slice(slashIdx + 1) : withoutScheme;
+  }
+
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/artifacts/resolve?artifact_path=${encodeURIComponent(artifactPath)}`, { cache: 'no-store' });
+    const res = await fetch(`${TOMBSTONE_URL}/artifacts/resolve?artifact_path=${encodeURIComponent(cleanPath)}`, { cache: 'no-store' });
     if (!res.ok) return null;
     const data = await res.json().catch(() => ({}));
     return data?.artifact_url ?? null;
@@ -1135,7 +1146,8 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
 
   // Resolve any raw R2 key paths remaining in the HTML (e.g. renders/task_xxx/...)
   if (html) {
-    const r2PathRegex = /src="((?:renders|assets)\/[^"]+)"/g;
+    // Match src attributes containing R2 keys: renders/, assets/, recon/, or r2:// URIs
+    const r2PathRegex = /src="((?:renders|assets|recon)\/[^"]+|r2:\/\/[^"]+)"/g;
     const matches = [...html.matchAll(r2PathRegex)];
     if (matches.length > 0) {
       const resolvedMap = new Map<string, string>();
@@ -1150,6 +1162,65 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
       );
       for (const [key, url] of resolvedMap) {
         html = html!.split(`src="${key}"`).join(`src="${url}"`);
+      }
+    }
+
+    // Also fix malformed presigned URLs where r2://bucket/ was URL-encoded into the path
+    // Pattern: ...r2.cloudflarestorage.com/bucket/r2%3A/bucketname/recon/... → extract real key
+    const malformedR2Regex = /src="(https:\/\/[^"]*r2\.cloudflarestorage\.com\/[^\/]+\/r2%3A[^"]+)"/g;
+    const malformedMatches = [...html.matchAll(malformedR2Regex)];
+    if (malformedMatches.length > 0) {
+      const fixedMap = new Map<string, string>();
+      await Promise.all(
+        malformedMatches.map(async (m) => {
+          const badUrl = m[1];
+          if (!fixedMap.has(badUrl)) {
+            // Extract the real key: after r2%3A/bucketname/ find the actual path (recon/...)
+            // URL pattern: .../tombstoner2/r2%3A/tombstoner2customerassets/recon/Name/file.jpg?sig...
+            const r2Marker = badUrl.indexOf('r2%3A/');
+            if (r2Marker >= 0) {
+              const afterMarker = badUrl.slice(r2Marker + 6); // after 'r2%3A/'
+              // Skip bucket name segment
+              const slashIdx = afterMarker.indexOf('/');
+              if (slashIdx >= 0) {
+                let realKey = afterMarker.slice(slashIdx + 1);
+                // Remove query string (presigned params)
+                const qIdx = realKey.indexOf('?');
+                if (qIdx >= 0) realKey = realKey.slice(0, qIdx);
+                realKey = decodeURIComponent(realKey);
+                const resolved = await resolveArtifactUrl(realKey);
+                if (resolved) fixedMap.set(badUrl, resolved);
+              }
+            }
+          }
+        }),
+      );
+      for (const [badUrl, goodUrl] of fixedMap) {
+        html = html!.split(`src="${badUrl}"`).join(`src="${goodUrl}"`);
+      }
+    }
+
+    // Fix background-image: url('...') with malformed R2 paths too
+    const bgMalformedRegex = /url\(['"]?(https:\/\/[^)]*r2\.cloudflarestorage\.com\/[^\/]+\/r2%3A[^)'"]+)['"]?\)/g;
+    const bgMatches = [...html.matchAll(bgMalformedRegex)];
+    if (bgMatches.length > 0) {
+      for (const m of bgMatches) {
+        const badUrl = m[1];
+        const r2Marker = badUrl.indexOf('r2%3A/');
+        if (r2Marker >= 0) {
+          const afterMarker = badUrl.slice(r2Marker + 6);
+          const slashIdx = afterMarker.indexOf('/');
+          if (slashIdx >= 0) {
+            let realKey = afterMarker.slice(slashIdx + 1);
+            const qIdx = realKey.indexOf('?');
+            if (qIdx >= 0) realKey = realKey.slice(0, qIdx);
+            realKey = decodeURIComponent(realKey);
+            const resolved = await resolveArtifactUrl(realKey);
+            if (resolved) {
+              html = html!.split(badUrl).join(resolved);
+            }
+          }
+        }
       }
     }
   }
