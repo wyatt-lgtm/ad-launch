@@ -262,7 +262,7 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
 
       {/* Website Concept — collapsed by default */}
       <div className="mb-8">
-        <WebsiteConcept data={websiteConceptData} locked={false} collapsed={true} />
+        <WebsiteConcept data={websiteConceptData} locked={false} analysisId={analysisId} collapsed={true} />
       </div>
 
       {/* Google Search Ad Copy — collapsed */}

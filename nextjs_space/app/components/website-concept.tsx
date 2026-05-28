@@ -175,6 +175,43 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     };
   }, []);
 
+  // Restore saved concept website workflow on mount
+  useEffect(() => {
+    if (!analysisId || generating || generatedUrl) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/concept-website-state?analysisId=${encodeURIComponent(analysisId)}`);
+        const data = await res.json().catch(() => ({}));
+        const cw = data?.conceptWebsiteWorkflow;
+        if (!cw?.workflowId || cancelled) return;
+
+        // Check workflow status
+        const statusRes = await fetch(
+          `/api/concept-site-status?workflowId=${encodeURIComponent(cw.workflowId)}&finalTaskId=${cw.finalTaskId ?? ''}`,
+        );
+        const statusData = await statusRes.json().catch(() => ({}));
+        if (cancelled) return;
+
+        if (statusData.steps?.length) setWorkflowSteps(statusData.steps);
+        setWorkflowStatus(statusData.status ?? '');
+        workflowRef.current = { workflowId: cw.workflowId, finalTaskId: cw.finalTaskId };
+
+        if ((statusData.status === 'completed' || statusData.status === 'error') && statusData.html) {
+          const blob = new Blob([statusData.html], { type: 'text/html' });
+          const url = URL.createObjectURL(blob);
+          setGeneratedUrl(url);
+        } else if (statusData.status !== 'completed' && statusData.status !== 'error') {
+          // Still in progress — resume polling
+          setGenerating(true);
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = setInterval(pollStatus, 5000);
+        }
+      } catch { /* ignore — no saved state */ }
+    })();
+    return () => { cancelled = true; };
+  }, [analysisId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const pollStatus = useCallback(async () => {
     const wf = workflowRef.current;
     if (!wf) return;
@@ -330,6 +367,15 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         workflowId: result.workflowId,
         finalTaskId: result.finalTaskId,
       };
+
+      // Persist workflow info to analysis for reload recovery
+      if (analysisId) {
+        fetch('/api/concept-website-state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ analysisId, workflowId: result.workflowId, finalTaskId: result.finalTaskId }),
+        }).catch(() => {});
+      }
 
       // Initialize placeholder steps
       const defaultSteps: WorkflowStep[] = [
