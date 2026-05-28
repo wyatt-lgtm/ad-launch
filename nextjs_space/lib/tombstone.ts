@@ -1129,6 +1129,27 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
     }
   }
 
+  // Resolve any raw R2 key paths remaining in the HTML (e.g. renders/task_xxx/...)
+  if (html) {
+    const r2PathRegex = /src="((?:renders|assets)\/[^"]+)"/g;
+    const matches = [...html.matchAll(r2PathRegex)];
+    if (matches.length > 0) {
+      const resolvedMap = new Map<string, string>();
+      await Promise.all(
+        matches.map(async (m) => {
+          const key = m[1];
+          if (!resolvedMap.has(key)) {
+            const url = await resolveArtifactUrl(key);
+            if (url) resolvedMap.set(key, url);
+          }
+        }),
+      );
+      for (const [key, url] of resolvedMap) {
+        html = html!.split(`src="${key}"`).join(`src="${url}"`);
+      }
+    }
+  }
+
   return {
     ...statusResult,
     steps,
