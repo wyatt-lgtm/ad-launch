@@ -383,7 +383,10 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         { id: 2, department: 'Marketing', label: 'Website Strategy', status: 'waiting' },
         { id: 3, department: 'Creative Strategy', label: 'Copy Deck', status: 'waiting' },
         { id: 4, department: 'Creative Direction', label: 'Creative Contract', status: 'waiting' },
-        { id: 5, department: 'Code Execution', label: 'HTML Generation', status: 'waiting' },
+        { id: 5, department: 'Asset Retrieval', label: 'Asset Retrieval', status: 'waiting' },
+        { id: 6, department: 'Render Production', label: 'Image Generation', status: 'waiting' },
+        { id: 7, department: 'Code Execution', label: 'HTML Generation', status: 'waiting' },
+        { id: 8, department: 'Strategy & Intelligence', label: 'Quality Review', status: 'waiting' },
       ];
 
       // If we have real task IDs, use them

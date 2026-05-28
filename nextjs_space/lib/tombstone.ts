@@ -1097,9 +1097,10 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
     'Marketing': 'Website Strategy',
     'Creative Strategy': 'Copy Deck',
     'Creative Direction': 'Creative Contract',
+    'Asset Retrieval': 'Asset Retrieval',
     'Render Production': 'Image Generation',
     'Code Execution': 'HTML Generation',
-    'Strategy & Intelligence': 'Strategy & Intelligence',
+    'Strategy & Intelligence': 'Quality Review',
   };
 
   const steps = (statusResult.tasks ?? []).map((t: any) => ({
