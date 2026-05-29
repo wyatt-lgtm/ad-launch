@@ -1012,6 +1012,59 @@ export async function getSocialWorkflowResults(workflowIds: string[]) {
                 sourceAttribution: parsed?.source_attribution ?? null,
                 platforms: parsed.platforms ?? ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
               });
+            } else if (parsed?.background_asset_path && parsed?.status === 'success') {
+              // Render-only output (no caption in render task) — pull copy from upstream Creative Direction
+              const artifactPath = parsed.background_asset_path;
+              const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : null;
+
+              // Find Creative Direction task in same workflow for caption/copy
+              let caption = '';
+              let hashtags: string[] = [];
+              let newsAngle: string | null = null;
+              const creativeTask = ourTasks.find((t: any) => {
+                const d = (t?.department ?? '').toLowerCase();
+                return (d.includes('creative direction') || d.includes('direction')) &&
+                  ((t?.status ?? '').toLowerCase() === 'complete' || (t?.status ?? '').toLowerCase() === 'completed');
+              });
+              if (creativeTask) {
+                try {
+                  const cdOutputs = await getTaskOutputs(creativeTask.id);
+                  for (const cdOut of cdOutputs) {
+                    const cdParsed = typeof cdOut.output === 'string' ? JSON.parse(cdOut.output) : cdOut.output;
+                    const smc = cdParsed?.social_media_caption;
+                    if (smc?.full_caption) {
+                      caption = smc.full_caption;
+                      hashtags = smc.hashtags ?? cdParsed?.hashtags ?? [];
+                      newsAngle = cdParsed?.headline ?? cdParsed?.final_headline ?? null;
+                      break;
+                    }
+                    if (cdParsed?.final_body_copy || cdParsed?.body_copy) {
+                      caption = cdParsed.final_body_copy ?? cdParsed.body_copy ?? '';
+                      hashtags = cdParsed?.hashtags ?? [];
+                      newsAngle = cdParsed?.headline ?? cdParsed?.final_headline ?? null;
+                      break;
+                    }
+                  }
+                } catch { /* skip */ }
+              }
+
+              if (imageUrl) {
+                console.log(`[getSocialWorkflowResults] Render-only post assembled: image=${artifactPath}, caption=${caption.slice(0, 60)}...`);
+                posts.push({
+                  caption,
+                  hashtags,
+                  imageUrl,
+                  imagePrompt: parsed.prompt_used ?? null,
+                  postType: parsed.post_type ?? 'general',
+                  sourceType: parsed.source_type ?? null,
+                  newsAngle,
+                  patternType: parsed.pattern_type ?? null,
+                  rssItemTitle: null,
+                  rssItemLink: null,
+                  sourceAttribution: parsed?.source_attribution ?? null,
+                  platforms: parsed.platforms ?? ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
+                });
+              }
             }
           } catch { /* skip unparseable outputs */ }
         }
