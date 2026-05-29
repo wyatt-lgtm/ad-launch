@@ -553,11 +553,11 @@ export async function createMission(websiteUrl: string) {
 
 // Human-readable task labels for the UI
 const DEPT_LABELS: Record<string, { label: string; description: string }> = {
-  'research': { label: 'Business Analysis', description: 'Scanning website, extracting brand assets & palette' },
-  'marketing': { label: 'Marketing Strategy', description: 'Defining audience, offer framing & keywords' },
-  'creative strategy': { label: 'Ad Copywriting', description: 'Writing headlines, body copy & CTAs' },
-  'creative direction': { label: 'Visual Direction', description: 'Creating structured render direction for FAL image generation' },
-  'render production': { label: 'Image Generation', description: 'Generating final ad images with gpt-image-1' },
+  'research': { label: 'Business Analysis', description: 'Reviewing your business and audience' },
+  'marketing': { label: 'Marketing Strategy', description: 'Developing the post strategy' },
+  'creative strategy': { label: 'Ad Copywriting', description: 'Writing the social post copy' },
+  'creative direction': { label: 'Visual Direction', description: 'Creating visual direction for the final image' },
+  'render production': { label: 'Image Generation', description: 'Generating final ad images' },
 };
 
 export function getTaskLabel(department: string): { label: string; description: string } {
@@ -605,12 +605,12 @@ export async function getMultiWorkflowStatus(workflowIds: string[]) {
       return {
         id: t?.id,
         workflowId: t?.workflow_id,
-        department: t?.department ?? '',
+        department: label,  // Use sanitized label instead of raw department name
         label,
         description,
         status: uiStatus,
-        rawStatus: t?.status,
-        lastError: t?.last_error ?? null,
+        rawStatus: uiStatus,  // Expose mapped status only, not raw backend status
+        lastError: t?.last_error ? 'Step encountered an issue' : null,  // Sanitize error details
       };
     }).sort((a: any, b: any) => (a.id ?? 0) - (b.id ?? 0));
 

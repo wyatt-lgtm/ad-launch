@@ -6,6 +6,24 @@ import { authOptions } from '@/lib/auth-options';
 import { getMultiWorkflowStatus } from '@/lib/tombstone';
 
 /**
+ * Sanitize a progress message to remove any internal vendor/model/provider references.
+ * Only affects display text — never mutates stored data.
+ */
+function sanitizeProgressMessage(msg: string): string {
+  const s = String(msg || '');
+  if (/fal|gpt-image|openai|render provider|image model/i.test(s)) {
+    if (/direction|render direction/i.test(s)) return 'Creating visual direction';
+    if (/image|render|generation/i.test(s)) return 'Generating final image';
+    return 'Preparing your post';
+  }
+  // Strip any stray internal terms that might slip through raw task data
+  return s
+    .replace(/\b(FAL|fal\.ai|gpt-image-\d+|gpt_image\d*|GPT[- ]?image|OpenAI|render provider|image model)\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim() || 'Preparing your post';
+}
+
+/**
  * GET /api/social/progress?workflowIds=id1,id2,...
  *
  * Returns real-time stage progress for active Tombstone workflows.
@@ -30,10 +48,10 @@ export async function GET(req: NextRequest) {
 
     const result = await getMultiWorkflowStatus(workflowIds);
 
-    // Map tasks to user-friendly stage data (never expose raw IDs or logs)
+    // Map tasks to user-friendly stage data (never expose raw IDs, logs, or internal terms)
     const stages = (result.tasks || []).map((t: any) => ({
-      label: t.label || 'Processing',
-      description: t.description || '',
+      label: sanitizeProgressMessage(t.label || 'Processing'),
+      description: sanitizeProgressMessage(t.description || ''),
       status: t.status, // 'waiting' | 'active' | 'complete' | 'error'
     }));
 
@@ -59,6 +77,7 @@ export async function GET(req: NextRequest) {
     } else if (lastCompleted) {
       message = `Finished ${lastCompleted.label.toLowerCase()}, moving to next step…`;
     }
+    message = sanitizeProgressMessage(message);
 
     return NextResponse.json({
       status: result.status, // 'processing' | 'generating' | 'completed' | 'error'
