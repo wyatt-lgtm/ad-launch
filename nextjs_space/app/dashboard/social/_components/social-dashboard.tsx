@@ -1186,7 +1186,7 @@ export default function SocialDashboard() {
                   {wtError && <p className="text-xs text-red-600">{wtError}</p>}
                   <button
                     onClick={submitWeeklyTip}
-                    disabled={wtSubmitting || (!wtTopic && !wtCustomTopic.trim()) || !wtCategory || (creditBalance !== null && creditBalance <= 0)}
+                    disabled={wtSubmitting || (!wtTopic && !wtCustomTopic.trim()) || !wtCategory}
                     className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors disabled:opacity-60"
                   >
                     {wtSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
@@ -1194,7 +1194,8 @@ export default function SocialDashboard() {
                   </button>
                 </div>
               </div>
-              {creditBalance !== null && creditBalance <= 0 && (
+              {/* Credit enforcement suspended – CREDIT_ENFORCEMENT_ENABLED=false */}
+              {false as boolean && creditBalance !== null && creditBalance <= 0 && (
                 <div className="flex items-center gap-2 p-2.5 bg-red-50 rounded-lg">
                   <Lock className="w-3.5 h-3.5 text-red-500" />
                   <span className="text-xs text-red-700">You need at least 1 credit to create a post. Purchase more in Settings.</span>
@@ -1369,7 +1370,8 @@ export default function SocialDashboard() {
                   </span>
                 )}
               </div>
-              {creditBalance !== null && creditBalance <= 0 && (
+              {/* Credit enforcement suspended – CREDIT_ENFORCEMENT_ENABLED=false */}
+              {false as boolean && creditBalance !== null && creditBalance <= 0 && (
                 <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <Lock className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
                   <div>
@@ -1391,7 +1393,7 @@ export default function SocialDashboard() {
                   </button>
                   <button
                     onClick={submitDraft}
-                    disabled={draftSubmitting || !draftText.trim() || (creditBalance !== null && creditBalance <= 0)}
+                    disabled={draftSubmitting || !draftText.trim()}
                     className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-60"
                   >
                     {draftSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
@@ -1603,7 +1605,8 @@ export default function SocialDashboard() {
                     )}
                   </div>
                 )}
-                {creditBalance !== null && creditBalance <= 0 && selectedStoryIds.size > 0 && (
+                {/* Credit enforcement suspended – CREDIT_ENFORCEMENT_ENABLED=false */}
+                {false as boolean && creditBalance !== null && creditBalance <= 0 && selectedStoryIds.size > 0 && (
                   <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-2">
                     <Lock className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
                     <div>
@@ -1628,7 +1631,7 @@ export default function SocialDashboard() {
                     </button>
                     <button
                       onClick={generateFromSelected}
-                      disabled={selectedStoryIds.size === 0 || scouting || (creditBalance !== null && creditBalance < selectedStoryIds.size)}
+                      disabled={selectedStoryIds.size === 0 || scouting}
                       className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
                     >
                       {scouting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}

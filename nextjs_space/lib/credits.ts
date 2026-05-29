@@ -11,6 +11,14 @@ import { Prisma } from '@prisma/client';
 
 // ─── Constants ────────────────────────────────────────────────────
 
+/**
+ * Master kill-switch for credit enforcement.
+ * When false, all credit checks pass and insufficient-balance blocks are bypassed.
+ * Credit tracking/display continues normally — only enforcement is suspended.
+ * Flip to `true` at product launch to re-enable.
+ */
+export const CREDIT_ENFORCEMENT_ENABLED = false;
+
 export const CREDIT_COSTS = {
   IMAGE_POST: 1,
   VIDEO_UPGRADE: 3,
@@ -300,7 +308,7 @@ export async function checkCredits(
   const account = await prisma.creditAccount.findUnique({ where: { businessId } });
   const shortfall = Math.max(0, requiredCredits - balance);
   return {
-    allowed: balance >= requiredCredits,
+    allowed: CREDIT_ENFORCEMENT_ENABLED ? balance >= requiredCredits : true,
     balance,
     required: requiredCredits,
     shortfall,
@@ -418,7 +426,7 @@ export async function chargeForPostPackage(
         if (isLotExpired(l, now)) return sum;
         return sum + l.remainingAmount;
       }, 0);
-      if (available < cost) throw new Error('INSUFFICIENT_CREDITS');
+      if (CREDIT_ENFORCEMENT_ENABLED && available < cost) throw new Error('INSUFFICIENT_CREDITS');
 
       // Consume from lots
       const { consumed } = await consumeLotsInTransaction(tx, businessId, cost, now);

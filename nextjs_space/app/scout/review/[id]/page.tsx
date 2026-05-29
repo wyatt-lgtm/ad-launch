@@ -239,7 +239,8 @@ export default function ReviewStoriesPage() {
               )}
             </div>
           )}
-          {creditBalance !== null && creditBalance < selected.size && selected.size > 0 && (
+          {/* Credit enforcement suspended – CREDIT_ENFORCEMENT_ENABLED=false */}
+          {false as boolean && creditBalance !== null && creditBalance < selected.size && selected.size > 0 && (
             <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
               Not enough credits. You need {selected.size} but have {creditBalance}. Recharge coming soon.
             </div>
@@ -250,7 +251,7 @@ export default function ReviewStoriesPage() {
             </div>
             <button
               onClick={handleSubmit}
-              disabled={selected.size === 0 || selected.size > 3 || submitting || (creditBalance !== null && creditBalance < selected.size)}
+              disabled={selected.size === 0 || selected.size > 3 || submitting}
               className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
