@@ -12,6 +12,8 @@ import UrlInputForm from '../../components/url-input-form';
 import CreditBadge from '../../components/credit-badge';
 import BillingSection from '../../components/billing-section';
 
+const STORAGE_KEY = 'adlaunch_active_business_id';
+
 interface BusinessItem {
   id: string;
   websiteUrl: string;
@@ -134,6 +136,10 @@ export default function DashboardContent() {
                 transition={{ delay: i * 0.05 }}
                 className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group"
                 onClick={() => {
+                  // Persist this business as the active selection
+                  try { localStorage.setItem(STORAGE_KEY, biz.id); } catch {}
+                  try { sessionStorage.setItem(STORAGE_KEY, biz.id); } catch {}
+                  console.log('[BusinessContext] selected business changed', { selected_business_id: biz.id, selected_business_name: biz.businessName });
                   // Go to latest analysis result or analysis tracker
                   if (latestAnalysis) {
                     const route = latestAnalysis.status === 'completed'

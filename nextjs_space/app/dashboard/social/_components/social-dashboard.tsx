@@ -190,6 +190,17 @@ export default function SocialDashboard() {
       .catch(() => {});
   }, [activeBusinessId]);
 
+  // Clear stale data immediately when business changes
+  const prevBizRef = useRef(activeBusinessId);
+  useEffect(() => {
+    if (prevBizRef.current !== activeBusinessId) {
+      console.log('[SocialPosts] business changed, clearing stale posts', { from: prevBizRef.current, to: activeBusinessId });
+      setPosts([]);
+      setTotalPosts(0);
+      prevBizRef.current = activeBusinessId;
+    }
+  }, [activeBusinessId]);
+
   const fetchPosts = useCallback(async () => {
     try {
       const params = new URLSearchParams();
@@ -200,6 +211,7 @@ export default function SocialDashboard() {
       const data = await res.json();
       setPosts(data.posts || []);
       setTotalPosts(data.total || 0);
+      console.log('[SocialPosts] loaded posts', { selected_business_id: activeBusinessId, post_count: data.posts?.length ?? 0 });
     } catch (e) {
       console.error('Failed to fetch posts:', e);
     }

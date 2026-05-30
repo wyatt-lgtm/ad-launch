@@ -8,8 +8,10 @@ import {
   Loader2, Send, Clock, CheckCircle2, XCircle, Edit3,
   Hash, CalendarDays, Zap, RefreshCw, ImageIcon, FileText,
   Facebook, Instagram, Linkedin, ChevronRight, AlertCircle,
-  Save, RotateCcw, Link2,
+  Save, RotateCcw, Link2, Building2, Plus,
 } from 'lucide-react';
+import { useActiveBusiness } from '@/hooks/use-active-business';
+import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -162,6 +164,8 @@ const PLATFORMS = [
 export default function PublishingDashboard() {
   const { data: session, status: sessionStatus } = useSession() || {};
   const router = useRouter();
+  const bizCtx = useActiveBusiness();
+  const [showPicker, setShowPicker] = useState(false);
 
   // Queue state
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -231,11 +235,15 @@ export default function PublishingDashboard() {
 
   // ── Fetch queue ────────────────────────────────────────────────────────────
 
+  const activeBusinessId = bizCtx.activeBusiness?.id;
+
   const fetchQueue = useCallback(async () => {
     setQueueLoading(true);
     setQueueError(null);
     try {
-      const res = await fetch('/api/content/queue?limit=50');
+      const params = new URLSearchParams({ limit: '50' });
+      if (activeBusinessId) params.set('businessId', activeBusinessId);
+      const res = await fetch(`/api/content/queue?${params}`);
       if (!res.ok) throw new Error('Failed to load content queue');
       const data = await res.json();
       setQueue(Array.isArray(data) ? data : []);
@@ -245,11 +253,11 @@ export default function PublishingDashboard() {
     } finally {
       setQueueLoading(false);
     }
-  }, []);
+  }, [activeBusinessId]);
 
   useEffect(() => {
-    if (sessionStatus === 'authenticated') fetchQueue();
-  }, [sessionStatus, fetchQueue]);
+    if (sessionStatus === 'authenticated' && !bizCtx.loading) fetchQueue();
+  }, [sessionStatus, bizCtx.loading, fetchQueue]);
 
   // ── Fetch connected accounts ────────────────────────────────────────────────
 
@@ -509,7 +517,7 @@ export default function PublishingDashboard() {
 
   // ── Loading / auth states ──────────────────────────────────────────────────
 
-  if (sessionStatus === 'loading') {
+  if (sessionStatus === 'loading' || bizCtx.loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
@@ -519,10 +527,42 @@ export default function PublishingDashboard() {
 
   if (sessionStatus !== 'authenticated') return null;
 
+  // No businesses at all
+  if (bizCtx.noBusiness) {
+    return (
+      <div className="max-w-lg mx-auto px-4 py-20 text-center">
+        <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-gray-900 mb-2">No Business Found</h2>
+        <p className="text-gray-500 mb-6">Analyze a website first so we know which business to show content for.</p>
+        <button onClick={() => router.push('/dashboard')} className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors">
+          <Plus className="w-4 h-4" /> Add a Business
+        </button>
+      </div>
+    );
+  }
+
+  // Multiple businesses and none selected
+  if (bizCtx.needsSelection || showPicker) {
+    return (
+      <BusinessPickerGrid
+        businesses={bizCtx.businesses}
+        onSelect={(biz) => { bizCtx.setActiveBusiness(biz); setShowPicker(false); }}
+      />
+    );
+  }
+
   // ── Main layout ────────────────────────────────────────────────────────────
 
   return (
     <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8 relative">
+      {/* Active business banner */}
+      {bizCtx.activeBusiness && (
+        <ActiveBusinessBanner
+          activeBusiness={bizCtx.activeBusiness}
+          businessCount={bizCtx.businesses.length}
+          onSwitch={() => setShowPicker(true)}
+        />
+      )}
       {/* ── Coming Soon Overlay ─────────────────────────────────────── */}
       <div className="absolute inset-0 z-30 bg-white/70 backdrop-blur-[2px] flex items-start justify-center pt-32 pointer-events-auto rounded-xl">
         <div className="text-center px-6 py-10 max-w-lg">

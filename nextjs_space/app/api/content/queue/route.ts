@@ -43,6 +43,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const limit = searchParams.get('limit') || '50';
+    const businessId = searchParams.get('businessId') || undefined;
 
     // Look up the current user's workflow IDs for siloing
     let workflowFilter = '';
@@ -50,8 +51,10 @@ export async function GET(request: Request) {
       const session = await getServerSession(authOptions);
       const userId = (session?.user as any)?.id;
       if (userId) {
+        const where: any = { userId };
+        if (businessId) where.businessId = businessId;
         const analyses = await prisma.analysis.findMany({
-          where: { userId },
+          where,
           select: { missionId: true },
         });
         const wfIds = extractWorkflowIds(analyses);
