@@ -743,12 +743,22 @@ export async function getMultiWorkflowStatus(workflowIds: string[]) {
       return {
         id: t?.id,
         workflowId: t?.workflow_id,
-        department: label,  // Use sanitized label instead of raw department name
+        department: t?.department ?? label,
         label,
         description,
         status: uiStatus,
-        rawStatus: uiStatus,  // Expose mapped status only, not raw backend status
-        lastError: t?.last_error ? 'Step encountered an issue' : null,  // Sanitize error details
+        rawStatus: uiStatus,
+        lastError: t?.last_error ? 'Step encountered an issue' : null,
+        // Timing fields for progress instrumentation
+        created_at: t?.created_at ?? null,
+        claimed_at: t?.claimed_at ?? null,
+        heartbeat_at: t?.heartbeat_at ?? null,
+        updated_at: t?.updated_at ?? null,
+        claimed_by: t?.claimed_by ?? null,
+        worker_instance_id: t?.worker_instance_id ?? null,
+        retry_count: t?.retry_count ?? 0,
+        step_order: t?.step_order ?? null,
+        last_error: t?.last_error ?? null,
       };
     }).sort((a: any, b: any) => (a.id ?? 0) - (b.id ?? 0));
 

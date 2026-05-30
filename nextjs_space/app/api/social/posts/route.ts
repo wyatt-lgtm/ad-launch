@@ -48,6 +48,10 @@ export async function GET(req: NextRequest) {
         sourceArticleTitle: (post as any).sourceArticleTitle || null,
         sourceArticleUrl: (post as any).sourceArticleUrl || null,
         cta: (post as any).cta || null,
+        generationRunId: (post as any).generationRunId || null,
+        generationStartedAt: (post as any).generationStartedAt || null,
+        generationCompletedAt: (post as any).generationCompletedAt || null,
+        totalGenerationTimeMs: (post as any).totalGenerationTimeMs || null,
       };
       if (!post.imageUrl) return base;
       // Already a public S3 URL — keep as-is

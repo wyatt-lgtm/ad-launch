@@ -83,6 +83,10 @@ interface SocialPost {
   sourceArticleTitle: string | null;
   sourceArticleUrl: string | null;
   cta: string | null;
+  generationRunId: string | null;
+  generationStartedAt: string | null;
+  generationCompletedAt: string | null;
+  totalGenerationTimeMs: number | null;
 }
 
 interface SocialAccount {
@@ -195,6 +199,9 @@ export default function SocialDashboard() {
   // Generation progress tracking (shared by both Scout Stories + My Own Post)
   const [activeWorkflowIds, setActiveWorkflowIds] = useState<string[]>([]);
   const [activeFlowLabel, setActiveFlowLabel] = useState<string>('Scout Stories');
+  const [generating, setGenerating] = useState(false); // True when story-to-post pipeline is running
+  const [activeGenerationRunId, setActiveGenerationRunId] = useState<string | null>(null);
+  const [generationClickedAt, setGenerationClickedAt] = useState<string | null>(null);
   // Stash last submission params for retry
   const lastScoutBriefRef = useRef<any>(null);
   const lastDraftParamsRef = useRef<any>(null);
@@ -453,7 +460,9 @@ export default function SocialDashboard() {
   // Phase 2: Build filtered summary and send to Tombstone
   const generateFromSelected = async () => {
     if (!scoutBriefData || selectedStoryIds.size === 0) return;
-    setScouting(true);
+    const clickedAt = new Date().toISOString();
+    setGenerating(true);
+    setGenerationClickedAt(clickedAt);
     setScoutError(null);
     setShowStoryPicker(false);
 
@@ -526,28 +535,31 @@ export default function SocialDashboard() {
         scoutSummary: `Generating ${clampedStories.length} individual post${clampedStories.length !== 1 ? 's' : ''} from selected stories.`,
       };
 
-      await sendToTombstone(brief, null);
+      await sendToTombstone(brief, null, clickedAt);
     } catch (e: any) {
       console.error('Generate error:', e);
       setScoutError(e.message);
     }
-    setScouting(false);
+    setGenerating(false);
   };
 
   // Shared: send brief to Tombstone and show real progress
-  const sendToTombstone = async (brief: any, meta: any) => {
+  const sendToTombstone = async (brief: any, meta: any, clickedAt?: string) => {
     // Stash for retry
     lastScoutBriefRef.current = { brief, meta };
 
     const tombstoneRes = await fetch('/api/social/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scoutBrief: brief }),
+      body: JSON.stringify({ scoutBrief: brief, clickedAt }),
     });
     const tombstoneData = await tombstoneRes.json();
     if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
 
     const wfIds: string[] = tombstoneData.workflowIds || [];
+    const runId: string | null = tombstoneData.generationRunId || null;
+    if (runId) setActiveGenerationRunId(runId);
+
     if (wfIds.length > 0) {
       setActiveWorkflowIds(wfIds);
       setActiveFlowLabel('Scout Stories');
@@ -750,6 +762,9 @@ export default function SocialDashboard() {
 
   const handleProgressComplete = async () => {
     setActiveWorkflowIds([]);
+    setGenerating(false);
+    setActiveGenerationRunId(null);
+    setGenerationClickedAt(null);
     // Import completed posts
     await pollMissions(false);
     await fetchPosts();
@@ -757,6 +772,9 @@ export default function SocialDashboard() {
 
   const handleProgressDismiss = () => {
     setActiveWorkflowIds([]);
+    setGenerating(false);
+    setActiveGenerationRunId(null);
+    setGenerationClickedAt(null);
   };
 
   // Toggle a story selection — enforce MAX_STORIES limit
@@ -1040,11 +1058,11 @@ export default function SocialDashboard() {
         <div className="flex items-center gap-2">
           <button
             onClick={scoutForPosts}
-            disabled={scouting || showStoryPicker || draftSubmitting}
+            disabled={scouting || generating || showStoryPicker || draftSubmitting}
             className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
           >
-            {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            {scouting ? 'Scouting...' : 'Scout Stories'}
+            {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            {scouting ? 'Scouting...' : generating ? 'Creating post...' : 'Scout Stories'}
           </button>
           <button
             onClick={() => setShowDraftForm(v => !v)}
@@ -1471,6 +1489,8 @@ export default function SocialDashboard() {
             key={activeWorkflowIds.join(',')}
             workflowIds={activeWorkflowIds}
             flowLabel={activeFlowLabel}
+            generationRunId={activeGenerationRunId}
+            clickedAt={generationClickedAt}
             onComplete={handleProgressComplete}
             onRetry={retryGeneration}
             onDismiss={handleProgressDismiss}
@@ -1689,11 +1709,11 @@ export default function SocialDashboard() {
                     </button>
                     <button
                       onClick={generateFromSelected}
-                      disabled={selectedStoryIds.size === 0 || scouting}
+                      disabled={selectedStoryIds.size === 0 || generating}
                       className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
                     >
-                      {scouting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                      Create {selectedStoryIds.size} Post{selectedStoryIds.size !== 1 ? 's' : ''}
+                      {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      {generating ? 'Creating...' : `Create ${selectedStoryIds.size} Post${selectedStoryIds.size !== 1 ? 's' : ''}`}
                     </button>
                   </div>
                 </div>
@@ -1805,8 +1825,8 @@ export default function SocialDashboard() {
                     disabled={scouting || showStoryPicker}
                     className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60"
                   >
-                    {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                    {scouting ? 'Scouting Stories...' : 'Scout Stories'}
+                    {(scouting || generating) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                    {scouting ? 'Scouting Stories...' : generating ? 'Creating post...' : 'Scout Stories'}
                   </button>
                 </div>
               </div>

@@ -28,6 +28,7 @@ model User {
   feedPreferences   UserFeedPreference[]
   scoutReports      ScoutReport[]
   postPackages      PostPackage[]
+  generationRuns    GenerationRun[]
 }
 
 model Business {
@@ -666,21 +667,59 @@ model SocialPost {
   patternType     String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
-  tombstoneTaskId     String?
-  workflowId          String?
-  businessId          String?
-  sourceName          String?
-  sourceArticleTitle  String?
-  sourceArticleUrl    String?
-  cta                 String?
-  analysis        Analysis? @relation(fields: [analysisId], references: [id])
-  business        Business? @relation(fields: [businessId], references: [id])
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tombstoneTaskId       String?
+  workflowId            String?
+  businessId            String?
+  sourceName            String?
+  sourceArticleTitle    String?
+  sourceArticleUrl      String?
+  cta                   String?
+  generationRunId       String?
+  generationStartedAt   DateTime?
+  generationCompletedAt DateTime?
+  totalGenerationTimeMs Int?
+  analysis        Analysis?      @relation(fields: [analysisId], references: [id])
+  business        Business?      @relation(fields: [businessId], references: [id])
+  generationRun   GenerationRun? @relation(fields: [generationRunId], references: [id])
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
   @@index([analysisId])
   @@index([businessId])
   @@index([scheduledFor])
+  @@index([createdAt])
+  @@index([generationRunId])
+}
+
+model GenerationRun {
+  id                    String    @id @default(cuid())
+  userId                String
+  businessId            String?
+  status                String    @default("submitted")
+  selectedStoryTitles   String[]  @default([])
+  selectedStorySources  String[]  @default([])
+  selectedStoryLinks    String[]  @default([])
+  storyCount            Int       @default(0)
+  workflowIds           String[]  @default([])
+  tombstoneTaskIds      String[]  @default([])
+  clickedAt             DateTime
+  runCreatedAt          DateTime  @default(now())
+  workflowCreatedAt     DateTime?
+  firstTaskClaimedAt    DateTime?
+  lastTaskCompletedAt   DateTime?
+  socialPostCreatedAt   DateTime?
+  completedAt           DateTime?
+  failedAt              DateTime?
+  failStep              String?
+  failError             String?
+  totalTimeMs           Int?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  socialPosts           SocialPost[]
+
+  @@index([userId])
+  @@index([status])
   @@index([createdAt])
 }

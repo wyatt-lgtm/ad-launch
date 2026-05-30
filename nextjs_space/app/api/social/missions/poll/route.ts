@@ -242,6 +242,21 @@ export async function POST(req: NextRequest) {
     const socialDefaultAnalysisId = socialAnalysis?.id || defaultAnalysisId;
     const socialDefaultBusinessId = socialAnalysis?.businessId || defaultBusinessId;
 
+    // Find matching GenerationRun for these workflow IDs
+    const postWorkflowIds = [...new Set(posts.map((p: any) => p.workflowId).filter(Boolean))];
+    let generationRun: any = null;
+    if (postWorkflowIds.length > 0) {
+      generationRun = await prisma.generationRun.findFirst({
+        where: {
+          userId,
+          workflowIds: { hasSome: postWorkflowIds },
+          status: { not: 'completed' },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    const now = new Date();
     const createdPosts = await prisma.socialPost.createMany({
       data: posts.map((post) => {
         const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
@@ -270,12 +285,35 @@ export async function POST(req: NextRequest) {
         sourceArticleTitle: post.sourceArticleTitle || null,
         sourceArticleUrl: post.sourceArticleUrl || null,
         cta: post.cta || null,
+        generationRunId: generationRun?.id || null,
+        generationStartedAt: generationRun?.clickedAt || null,
+        generationCompletedAt: now,
+        totalGenerationTimeMs: generationRun?.clickedAt
+          ? now.getTime() - new Date(generationRun.clickedAt).getTime()
+          : null,
       };
       }),
       skipDuplicates: true,
     });
 
-    console.log(`[missions/poll] Imported ${createdPosts.count} social posts`);
+    // Update GenerationRun to completed
+    if (generationRun && createdPosts.count > 0) {
+      const totalMs = generationRun.clickedAt
+        ? now.getTime() - new Date(generationRun.clickedAt).getTime()
+        : null;
+      await prisma.generationRun.update({
+        where: { id: generationRun.id },
+        data: {
+          status: 'completed',
+          socialPostCreatedAt: now,
+          completedAt: now,
+          totalTimeMs: totalMs,
+        },
+      });
+      console.log(`[missions/poll] GenerationRun ${generationRun.id} completed in ${totalMs}ms`);
+    }
+
+    console.log(`[missions/poll] Imported ${createdPosts.count} social posts (runId=${generationRun?.id || 'none'})`);
 
     return NextResponse.json({
       polled: workflowIds.length,

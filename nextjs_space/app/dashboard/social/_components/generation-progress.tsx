@@ -4,56 +4,100 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, CheckCircle2, XCircle, AlertTriangle,
-  RefreshCw, Sparkles, Eye, ArrowRight,
+  RefreshCw, Sparkles, Clock, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+interface StageTiming {
+  createdToClaimedMs: number | null;
+  claimedToHeartbeatMs: number | null;
+  activeProcessingMs: number | null;
+  totalLifecycleMs: number | null;
+  heartbeatAgeMs: number | null;
+}
+
 interface Stage {
   label: string;
+  icon: string;
   description: string;
   status: 'waiting' | 'active' | 'complete' | 'error';
+  order: number;
+  taskId: number | null;
+  workflowId: string | null;
+  department: string | null;
+  agentName: string | null;
+  retryCount: number;
+  timing: StageTiming;
+  warnings: string[];
+  createdAt: string | null;
+  claimedAt: string | null;
+  heartbeatAt: string | null;
+  updatedAt: string | null;
+  lastError: string | null;
+}
+
+interface WorkflowTiming {
+  firstTaskCreatedAt: string | null;
+  firstTaskClaimedAt: string | null;
+  lastTaskCompletedAt: string | null;
+  totalWorkflowTimeMs: number | null;
+  elapsedSinceFirstTaskMs: number | null;
+}
+
+interface LagWarning {
+  taskId: number;
+  step: string;
+  warning: string;
 }
 
 interface ProgressData {
-  status: string;      // 'processing' | 'generating' | 'completed' | 'error'
-  progress: number;    // 0-100
+  status: string;
+  progress: number;
   message: string;
   stages: Stage[];
   hasError: boolean;
+  failedStep: { label: string; taskId: number; workflowId: string } | null;
+  workflowIds: string[];
+  generationRunId: string | null;
+  workflowTiming: WorkflowTiming;
+  lagWarnings: LagWarning[];
+  stageCount: { total: number; completed: number; active: number; failed: number };
 }
 
 interface GenerationProgressProps {
   workflowIds: string[];
-  flowLabel: string;          // "Scout Stories" or "My Own Post"
-  onComplete: () => void;     // called when generation finishes
-  onRetry: () => void;        // called when user clicks retry
-  onDismiss: () => void;      // called when user closes the panel
+  flowLabel: string;
+  generationRunId: string | null;
+  clickedAt: string | null;
+  onComplete: () => void;
+  onRetry: () => void;
+  onDismiss: () => void;
 }
 
-// ── Friendly agent messages shown between stages ─────────────────────────────
-const AGENT_MESSAGES = [
-  '🔍 Our team is reviewing your business brand…',
-  '📝 Crafting the marketing strategy…',
-  '✏️ Writing sharp, engaging copy…',
-  '🎨 Designing the visual direction…',
-  '🖼️ Rendering your final artwork…',
-  '✨ Putting the finishing touches on your post…',
-];
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-const STAGE_ICONS: Record<string, string> = {
-  'Business Analysis': '🔍',
-  'Marketing Strategy': '📝',
-  'Ad Copywriting': '✏️',
-  'Visual Direction': '🎨',
-  'Image Generation': '🖼️',
-};
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = Math.round(sec % 60);
+  return `${min}m ${remSec}s`;
+}
+
+function formatTimingLabel(ms: number | null): string {
+  if (ms === null) return '—';
+  return formatDuration(ms);
+}
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function GenerationProgress({
   workflowIds,
   flowLabel,
+  generationRunId,
+  clickedAt,
   onComplete,
   onRetry,
   onDismiss,
@@ -61,14 +105,30 @@ export default function GenerationProgress({
   const [data, setData] = useState<ProgressData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pollCount, setPollCount] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [showDetails, setShowDetails] = useState(false);
   const completeFired = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTime = useRef(clickedAt ? new Date(clickedAt).getTime() : Date.now());
+
+  // Elapsed time ticker — updates every second
+  useEffect(() => {
+    setElapsedMs(Date.now() - startTime.current);
+    tickRef.current = setInterval(() => {
+      setElapsedMs(Date.now() - startTime.current);
+    }, 1000);
+    return () => { if (tickRef.current) clearInterval(tickRef.current); };
+  }, []);
 
   const pollProgress = useCallback(async () => {
     try {
-      const res = await fetch(
-        `/api/social/progress?workflowIds=${encodeURIComponent(workflowIds.join(','))}`
-      );
+      const params = new URLSearchParams({
+        workflowIds: workflowIds.join(','),
+      });
+      if (generationRunId) params.set('generationRunId', generationRunId);
+
+      const res = await fetch(`/api/social/progress?${params.toString()}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || 'Failed to check progress');
@@ -78,35 +138,27 @@ export default function GenerationProgress({
       setError(null);
       setPollCount(c => c + 1);
 
-      // Fire onComplete once when done
       if (result.status === 'completed' && !completeFired.current) {
         completeFired.current = true;
-        // Small delay so user sees 100% before transition
+        // Stop the elapsed ticker
+        if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
         setTimeout(() => onComplete(), 1500);
       }
     } catch (e: any) {
       console.warn('Progress poll error:', e.message);
-      // Don't overwrite existing data on transient network errors
       setPollCount(c => c + 1);
     }
-  }, [workflowIds, onComplete]);
+  }, [workflowIds, generationRunId, onComplete]);
 
   useEffect(() => {
-    // Initial poll immediately
     pollProgress();
-
-    // Then poll every 8 seconds
-    intervalRef.current = setInterval(pollProgress, 8000);
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    intervalRef.current = setInterval(pollProgress, 6000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [pollProgress]);
 
-  // Stop polling after completion or too many attempts
   useEffect(() => {
     if (
-      (data?.status === 'completed' || data?.status === 'error' || pollCount > 60) &&
+      (data?.status === 'completed' || data?.status === 'error' || pollCount > 80) &&
       intervalRef.current
     ) {
       clearInterval(intervalRef.current);
@@ -120,21 +172,14 @@ export default function GenerationProgress({
   const isComplete = data?.status === 'completed';
   const isError = data?.status === 'error' || data?.hasError;
   const isWorking = !isComplete && !isError;
+  const sc = data?.stageCount;
+  const lagWarnings = data?.lagWarnings ?? [];
+  const failedStep = data?.failedStep;
 
-  // Pick the right agent message based on active stage index
-  const activeIdx = stages.findIndex(s => s.status === 'active');
-  const completedCount = stages.filter(s => s.status === 'complete').length;
-  const agentMessage =
-    data?.message ||
-    (activeIdx >= 0 ? AGENT_MESSAGES[Math.min(activeIdx, AGENT_MESSAGES.length - 1)] : AGENT_MESSAGES[0]);
+  const activeStage = stages.find(s => s.status === 'active');
+  const message = data?.message || 'Connecting to the creative team…';
 
-  // Color scheme
-  const accentColor = isError ? 'purple' : 'blue'; // keep purple for error to match My Own Post
-  const barColor = isError
-    ? 'bg-red-500'
-    : isComplete
-    ? 'bg-green-500'
-    : 'bg-blue-600';
+  const barColor = isError ? 'bg-red-500' : isComplete ? 'bg-green-500' : 'bg-blue-600';
 
   return (
     <motion.div
@@ -166,12 +211,19 @@ export default function GenerationProgress({
             </p>
           </div>
         </div>
-        <button
-          onClick={onDismiss}
-          className="text-gray-400 hover:text-gray-600 transition-colors"
-        >
-          <XCircle className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Elapsed time */}
+          <div className="flex items-center gap-1 text-xs text-gray-400 font-mono">
+            <Clock className="w-3 h-3" />
+            {formatDuration(elapsedMs)}
+          </div>
+          <button
+            onClick={onDismiss}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <XCircle className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       <div className="px-5 py-4">
@@ -182,7 +234,7 @@ export default function GenerationProgress({
               {isComplete ? 'Complete' : isError ? 'Error' : `${progress}%`}
             </span>
             <span className="text-xs text-gray-400">
-              {completedCount}/{stages.length || '?'} stages
+              {sc ? `${sc.completed}/${sc.total} steps` : stages.length > 0 ? `${stages.filter(s => s.status === 'complete').length}/${stages.length}` : '…'}
             </span>
           </div>
           <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -195,93 +247,122 @@ export default function GenerationProgress({
           </div>
         </div>
 
-        {/* Agent message */}
+        {/* Current step message */}
         <AnimatePresence mode="wait">
           <motion.div
-            key={agentMessage}
+            key={message}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.3 }}
             className={`p-3 rounded-lg mb-4 ${
-              isError
-                ? 'bg-red-50 border border-red-200'
-                : isComplete
-                ? 'bg-green-50 border border-green-200'
-                : 'bg-blue-50 border border-blue-100'
+              isError ? 'bg-red-50 border border-red-200'
+              : isComplete ? 'bg-green-50 border border-green-200'
+              : 'bg-blue-50 border border-blue-100'
             }`}
           >
             <p className={`text-sm font-medium ${
               isError ? 'text-red-700' : isComplete ? 'text-green-700' : 'text-blue-700'
             }`}>
-              {agentMessage}
+              {message}
             </p>
+            {/* Active step task/workflow ID */}
+            {activeStage && (
+              <p className="text-[10px] text-gray-400 font-mono mt-1">
+                {activeStage.taskId && `Task #${activeStage.taskId}`}
+                {activeStage.workflowId && ` · WF ${activeStage.workflowId}`}
+                {activeStage.agentName && ` · ${activeStage.agentName}`}
+                {activeStage.timing?.activeProcessingMs != null && ` · ${formatDuration(activeStage.timing.activeProcessingMs)}`}
+              </p>
+            )}
           </motion.div>
         </AnimatePresence>
+
+        {/* Failure details */}
+        {isError && failedStep && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg mb-4">
+            <p className="text-sm font-medium text-red-800">Failed at: {failedStep.label}</p>
+            <p className="text-[10px] text-red-500 font-mono mt-1">
+              Task #{failedStep.taskId} · WF {failedStep.workflowId}
+            </p>
+            {data?.workflowTiming && (
+              <p className="text-[10px] text-red-400 mt-1">
+                Elapsed before failure: {formatTimingLabel(data.workflowTiming.elapsedSinceFirstTaskMs)}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Lag warnings */}
+        {lagWarnings.length > 0 && (
+          <div className="mb-4 space-y-1">
+            {lagWarnings.map((w, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+                <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                <span className="text-[10px] text-amber-700">
+                  {w.step}: {w.warning} (Task #{w.taskId})
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Stage list */}
         {stages.length > 0 && (
           <div className="space-y-1.5">
-            {stages.map((stage, i) => {
-              const icon = STAGE_ICONS[stage.label] || '⚙️';
-              return (
-                <div
-                  key={`${stage.label}-${i}`}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${
-                    stage.status === 'active'
-                      ? 'bg-blue-50 border border-blue-100'
-                      : stage.status === 'complete'
-                      ? 'bg-gray-50'
-                      : stage.status === 'error'
-                      ? 'bg-red-50 border border-red-100'
-                      : 'bg-white'
-                  }`}
-                >
-                  {/* Status indicator */}
-                  <div className="w-5 h-5 flex items-center justify-center shrink-0">
-                    {stage.status === 'complete' && (
-                      <CheckCircle2 className="w-4 h-4 text-green-500" />
-                    )}
-                    {stage.status === 'active' && (
-                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
-                    )}
-                    {stage.status === 'error' && (
-                      <XCircle className="w-4 h-4 text-red-500" />
-                    )}
-                    {stage.status === 'waiting' && (
-                      <div className="w-2.5 h-2.5 rounded-full bg-gray-300" />
-                    )}
-                  </div>
+            {stages.map((stage, i) => (
+              <div
+                key={`${stage.label}-${stage.taskId ?? i}`}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all ${
+                  stage.status === 'active' ? 'bg-blue-50 border border-blue-100'
+                  : stage.status === 'complete' ? 'bg-gray-50'
+                  : stage.status === 'error' ? 'bg-red-50 border border-red-100'
+                  : 'bg-white'
+                }`}
+              >
+                <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                  {stage.status === 'complete' && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                  {stage.status === 'active' && <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />}
+                  {stage.status === 'error' && <XCircle className="w-4 h-4 text-red-500" />}
+                  {stage.status === 'waiting' && <div className="w-2.5 h-2.5 rounded-full bg-gray-300" />}
+                </div>
 
-                  {/* Label */}
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm leading-tight ${
-                      stage.status === 'active'
-                        ? 'text-blue-800 font-medium'
-                        : stage.status === 'complete'
-                        ? 'text-gray-600'
-                        : stage.status === 'error'
-                        ? 'text-red-700 font-medium'
-                        : 'text-gray-400'
-                    }`}>
-                      <span className="mr-1.5">{icon}</span>
-                      {stage.label}
-                    </p>
-                    {stage.status === 'active' && stage.description && (
-                      <p className="text-xs text-blue-600 mt-0.5 ml-6">{stage.description}</p>
-                    )}
-                  </div>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm leading-tight ${
+                    stage.status === 'active' ? 'text-blue-800 font-medium'
+                    : stage.status === 'complete' ? 'text-gray-600'
+                    : stage.status === 'error' ? 'text-red-700 font-medium'
+                    : 'text-gray-400'
+                  }`}>
+                    <span className="mr-1.5">{stage.icon}</span>
+                    {stage.label}
+                  </p>
+                  {stage.status === 'active' && stage.description && (
+                    <p className="text-xs text-blue-600 mt-0.5 ml-6">{stage.description}</p>
+                  )}
+                </div>
 
-                  {/* Checkmark or arrow */}
-                  {stage.status === 'complete' && (
+                {/* Timing badge */}
+                <div className="text-right shrink-0">
+                  {stage.status === 'complete' && stage.timing?.totalLifecycleMs != null && (
+                    <span className="text-[10px] text-gray-400 font-mono">
+                      {formatDuration(stage.timing.totalLifecycleMs)}
+                    </span>
+                  )}
+                  {stage.status === 'active' && stage.timing?.activeProcessingMs != null && (
+                    <span className="text-[10px] text-blue-400 font-mono">
+                      {formatDuration(stage.timing.activeProcessingMs)}…
+                    </span>
+                  )}
+                  {stage.status === 'complete' && !stage.timing?.totalLifecycleMs && (
                     <span className="text-xs text-green-500 font-medium">Done</span>
                   )}
-                  {stage.status === 'active' && (
+                  {stage.status === 'active' && stage.timing?.activeProcessingMs == null && (
                     <span className="text-xs text-blue-500 font-medium">Working…</span>
                   )}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
 
@@ -292,6 +373,48 @@ export default function GenerationProgress({
             <p className="text-sm text-gray-500">Connecting to the creative team…</p>
           </div>
         )}
+
+        {/* Expandable details panel */}
+        {stages.length > 0 && (
+          <button
+            onClick={() => setShowDetails(v => !v)}
+            className="flex items-center gap-1 mt-3 text-[10px] text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            {showDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            {showDetails ? 'Hide' : 'Show'} Workflow Details
+          </button>
+        )}
+
+        <AnimatePresence>
+          {showDetails && data && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="mt-3 p-3 bg-gray-50 rounded-lg text-[10px] font-mono text-gray-500 space-y-1">
+                {generationRunId && <p>Generation Run: {generationRunId}</p>}
+                {data.workflowIds?.length > 0 && <p>Workflow IDs: {data.workflowIds.join(', ')}</p>}
+                {clickedAt && <p>Clicked: {new Date(clickedAt).toLocaleTimeString()}</p>}
+                <p>Total Elapsed: {formatDuration(elapsedMs)}</p>
+                {data.workflowTiming?.totalWorkflowTimeMs != null && (
+                  <p>Workflow Execution: {formatDuration(data.workflowTiming.totalWorkflowTimeMs)}</p>
+                )}
+                {data.workflowTiming?.firstTaskCreatedAt && (
+                  <p>First Task: {new Date(data.workflowTiming.firstTaskCreatedAt).toLocaleTimeString()}</p>
+                )}
+                {data.workflowTiming?.firstTaskClaimedAt && (
+                  <p>First Claim: {new Date(data.workflowTiming.firstTaskClaimedAt).toLocaleTimeString()}</p>
+                )}
+                {data.workflowTiming?.lastTaskCompletedAt && (
+                  <p>Last Complete: {new Date(data.workflowTiming.lastTaskCompletedAt).toLocaleTimeString()}</p>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Footer actions */}

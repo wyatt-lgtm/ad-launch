@@ -1068,6 +1068,57 @@ function TaskDetailDrawer({ taskId, onClose, onOpenWorkflow }: {
               {fieldRow('Input From Task', task.input_from_task_id ? `#${task.input_from_task_id}` : '—', true)}
             </div>
 
+            {/* Timing Panel */}
+            {(() => {
+              const created = task.created_at ? new Date(task.created_at).getTime() : null;
+              const claimed = task.claimed_at ? new Date(task.claimed_at).getTime() : null;
+              const heartbeat = task.heartbeat_at ? new Date(task.heartbeat_at).getTime() : null;
+              const updated = task.updated_at ? new Date(task.updated_at).getTime() : null;
+              const isComp = ['complete', 'completed'].includes((task.status || '').toLowerCase());
+              const isFail = ['failed', 'error'].includes((task.status || '').toLowerCase());
+              const endAt = (isComp || isFail) && updated ? updated : null;
+              const fmtMs = (ms: number | null) => {
+                if (ms === null) return '—';
+                if (ms < 1000) return `${Math.round(ms)}ms`;
+                const s = ms / 1000;
+                if (s < 60) return `${s.toFixed(1)}s`;
+                return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+              };
+              const createdToClaimed = created && claimed ? claimed - created : null;
+              const claimedToHeart = claimed && heartbeat ? heartbeat - claimed : null;
+              const activeProc = claimed && endAt ? endAt - claimed : null;
+              const totalLife = created && endAt ? endAt - created : null;
+              const heartAge = heartbeat && !isComp && !isFail ? Date.now() - heartbeat : null;
+
+              // Lag warnings
+              const warns: string[] = [];
+              if (createdToClaimed !== null && createdToClaimed > 10000) warns.push(`Agent pickup delay: ${fmtMs(createdToClaimed)}`);
+              if (claimedToHeart !== null && claimedToHeart > 10000) warns.push(`Worker heartbeat delay: ${fmtMs(claimedToHeart)}`);
+              if (heartAge !== null && heartAge > 60000) warns.push(`Stale heartbeat: ${fmtMs(heartAge)} since last`);
+
+              return (
+                <div className="bg-indigo-50 rounded-lg p-4">
+                  <p className="text-xs font-semibold text-indigo-600 mb-2 uppercase tracking-wide">Timing</p>
+                  {fieldRow('Created → Claimed', fmtMs(createdToClaimed))}
+                  {fieldRow('Claimed → First Heartbeat', fmtMs(claimedToHeart))}
+                  {fieldRow('Active Processing', fmtMs(activeProc))}
+                  {fieldRow('Total Lifecycle', fmtMs(totalLife))}
+                  {heartAge !== null && fieldRow('Heartbeat Age', fmtMs(heartAge))}
+                  {fieldRow('Retry Count', `${task.retry_count ?? 0}`)}
+                  {warns.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {warns.map((w, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                          <AlertTriangle className="w-3 h-3 text-amber-500" />
+                          {w}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Error */}
             {task.last_error && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">

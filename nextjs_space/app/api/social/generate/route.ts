@@ -9,12 +9,12 @@ import { createSocialMissions } from '@/lib/tombstone';
 /**
  * POST /api/social/generate
  * Accepts a Clark Kent scout brief and sends it to Tombstone's creative workflow.
- * Zig Ziglar → Ogilvy → Don Draper → Andy Warhol → Claude Hopkins
- * will produce social posts with artwork.
+ * Creates a GenerationRun immediately for traceability, then dispatches to Tombstone.
  *
- * Body: { scoutBrief: ScoutBrief, businessId?: string, analysisId?: string }
+ * Body: { scoutBrief: ScoutBrief, businessId?: string, analysisId?: string, clickedAt?: string }
  */
 export async function POST(req: NextRequest) {
+  const requestReceivedAt = Date.now();
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     const userId = (session.user as any).id;
 
     const body = await req.json();
-    const { scoutBrief, businessId, analysisId } = body;
+    const { scoutBrief, businessId, analysisId, clickedAt } = body;
 
     if (!scoutBrief?.scoutSummary && !scoutBrief?.stories?.length) {
       return NextResponse.json({ error: 'Scout brief with scoutSummary or stories is required' }, { status: 400 });
@@ -31,11 +31,36 @@ export async function POST(req: NextRequest) {
 
     const contentSourceMode = scoutBrief.contentSourceMode || 'local_plus_interests';
 
+    // Extract story metadata for the generation run
+    const rawStories: any[] = scoutBrief.stories || [];
+    const MAX_POSTS = 3;
+    const stories = rawStories.slice(0, MAX_POSTS);
+    const storyTitles = stories.map((s: any) => s.headline || s.title || 'Untitled');
+    const storySources = stories.map((s: any) => s.source || '');
+    const storyLinks = stories.map((s: any) => s.link || '');
+
+    // Create GenerationRun IMMEDIATELY so there is a traceable record
+    const generationRun = await prisma.generationRun.create({
+      data: {
+        userId,
+        businessId: businessId || null,
+        status: 'submitted',
+        selectedStoryTitles: storyTitles,
+        selectedStorySources: storySources,
+        selectedStoryLinks: storyLinks,
+        storyCount: stories.length,
+        clickedAt: clickedAt ? new Date(clickedAt) : new Date(requestReceivedAt),
+      },
+    });
+
+    const runCreatedAt = Date.now();
+    const clickToRunMs = runCreatedAt - (clickedAt ? new Date(clickedAt).getTime() : requestReceivedAt);
+    console.log(`[social/generate] GenerationRun ${generationRun.id} created in ${clickToRunMs}ms`);
+
     // Resolve website URL — prefer businessId lookup, then analysis, then fallback
     let websiteUrl: string | null = null;
     let resolvedAnalysisId = analysisId || null;
 
-    // Try businessId first
     if (businessId) {
       const biz = await prisma.business.findUnique({
         where: { id: businessId },
@@ -46,7 +71,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Try analysis DB — prefer geoConfirmed, then fall back to any analysis
     if (!websiteUrl) {
       const recentAnalysis = await prisma.analysis.findFirst({
         where: analysisId
@@ -65,7 +89,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Fallback: look up from user's Business records
     if (!websiteUrl) {
       const biz = await prisma.business.findFirst({
         where: { userId },
@@ -76,20 +99,20 @@ export async function POST(req: NextRequest) {
     }
 
     if (!websiteUrl) {
+      // Mark generation run as failed
+      await prisma.generationRun.update({
+        where: { id: generationRun.id },
+        data: { status: 'failed', failStep: 'resolve_website', failError: 'No website URL found', failedAt: new Date() },
+      });
       return NextResponse.json(
-        { error: 'No website URL found. Complete a business analysis first.' },
+        { error: 'No website URL found. Complete a business analysis first.', generationRunId: generationRun.id },
         { status: 400 }
       );
     }
 
-    // Enforce max 3 posts — clamp stories array server-side regardless of what frontend sends
-    const MAX_POSTS = 3;
-    const rawStories: any[] = scoutBrief.stories || [];
-    const stories = rawStories.slice(0, MAX_POSTS);
+    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl} stories=${stories.length} (raw=${rawStories.length}, max=${MAX_POSTS}) runId=${generationRun.id}`);
 
-    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl} stories=${stories.length} (raw=${rawStories.length}, max=${MAX_POSTS})`);
-
-    // Send to Tombstone creative workflow — one command per story
+    // Send to Tombstone creative workflow
     const result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary || '', {
       contentSourceMode,
       stories,
@@ -97,13 +120,29 @@ export async function POST(req: NextRequest) {
     });
 
     if (!result.success) {
+      await prisma.generationRun.update({
+        where: { id: generationRun.id },
+        data: { status: 'failed', failStep: 'tombstone_dispatch', failError: 'Failed to create Tombstone workflow', failedAt: new Date() },
+      });
       return NextResponse.json(
-        { error: 'Failed to create social content mission in Tombstone' },
+        { error: 'Failed to create social content mission in Tombstone', generationRunId: generationRun.id },
         { status: 502 }
       );
     }
 
+    const workflowCreatedAt = new Date();
     const socialMissionId = result.workflowIds.join(',');
+
+    // Update generation run with workflow info
+    await prisma.generationRun.update({
+      where: { id: generationRun.id },
+      data: {
+        status: 'workflow_created',
+        workflowIds: result.workflowIds,
+        tombstoneTaskIds: result.allTaskIds.map(String),
+        workflowCreatedAt,
+      },
+    });
 
     // Store social mission ID on the analysis if we have one
     if (resolvedAnalysisId) {
@@ -113,7 +152,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    console.log(`[social/generate] Social mission created: ${socialMissionId} (${result.allTaskIds.length} tasks) mode=${contentSourceMode}`);
+    const totalDispatchMs = Date.now() - requestReceivedAt;
+    console.log(`[social/generate] Social mission created: ${socialMissionId} (${result.allTaskIds.length} tasks) mode=${contentSourceMode} runId=${generationRun.id} dispatchMs=${totalDispatchMs}`);
 
     return NextResponse.json({
       success: true,
@@ -121,6 +161,12 @@ export async function POST(req: NextRequest) {
       taskCount: result.allTaskIds.length,
       workflowIds: result.workflowIds,
       contentSourceMode,
+      generationRunId: generationRun.id,
+      timing: {
+        clickToRunCreatedMs: clickToRunMs,
+        runToWorkflowCreatedMs: workflowCreatedAt.getTime() - runCreatedAt,
+        totalDispatchMs,
+      },
     });
   } catch (error: any) {
     console.error('Social generate error:', error);
