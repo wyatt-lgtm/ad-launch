@@ -15,13 +15,14 @@
  *  9.  Unreadable overlay text (contrast, size, font issues)
  *  10. Off-brand or misleading imagery
  *
- * RSS / Story-based post rules (11-16):
+ * RSS / Story-based post rules (11-17):
  *  11. Story relevance (score 0-5, hard-fail < 4)
  *  12. Story-specific visual evidence (min 2 elements)
  *  13. Human/action match for people stories
  *  14. Product-as-bridge (product enables story, not replaces it)
  *  15. Generic image rejection (score 0-5, hard-fail < 3)
  *  16. Mobile format (portrait 4:5 default for RSS/social)
+ *  17. Business-context mismatch (CTA/brand from wrong industry)
  *
  * Searchable log prefix: MEDIA_FINAL_QA_*
  */
@@ -58,7 +59,7 @@ export interface MediaQaResult {
 const SYSTEM_PROMPT = `You are a senior creative quality-assurance reviewer for social-media ad images.
 You will receive an image and contextual metadata (post copy, headline, CTA, business name, story title).
 
-Evaluate the image against these sixteen rules (ten core + six RSS/story). For each rule, output PASS or FAIL with a brief reason.
+Evaluate the image against these seventeen rules (ten core + seven RSS/story). For each rule, output PASS or FAIL with a brief reason.
 
 Rules:
 1. BLANK_SPACE – Reject if roughly more than 15% of the canvas is blank, solid-colour filler, or otherwise unused.
@@ -81,8 +82,9 @@ These rules apply ONLY when the story/topic context references an article, RSS s
 14. PRODUCT_AS_BRIDGE – The advertiser's product (e.g., Blazing Hog modem, antenna, router) should appear as the enabler of the story, NOT replace the story. The product is the bridge, not the subject. FAIL if the product/equipment is the primary visual subject instead of the story. Score 0–5.
 15. GENERIC_IMAGE_REJECTION – Hard fail any image that could be reused for almost any rural internet / connectivity post without changing the meaning. If you removed the headline and this image could run on any ISP's social feed, it fails. Score 0–5; hard-fail if score < 3.
 16. MOBILE_FORMAT_RSS – RSS/social post images should be portrait (4:5) or vertical format. FAIL if the rendered image is landscape for an RSS/social post when portrait was expected. Score 0–5.
+17. BUSINESS_CONTEXT_MISMATCH – For RSS/story-based posts: FAIL if any visible CTA, tagline, or brand language in the image comes from the story's industry instead of the business's actual industry. Example: an ISP business posting about a tavern event must NOT show "See What's On Tap" as CTA. Also check if product placement feels like the wrong industry. For non-story posts, this rule auto-PASSES. Score 0–5; hard-fail if score < 5.
 
-After evaluating all sixteen rules, provide:
+After evaluating all seventeen rules, provide:
 - Individual rule results with sub-scores for story rules (0–5)
 - A story_scores object with: story_relevance (0–5), story_visual_evidence (0–5), blazing_hog_connection (0–5), human_action_clarity (0–5), mobile_readability (0–5), generic_stock_penalty (0–5)
 - An overall quality score from 0 to 100
@@ -93,6 +95,7 @@ After evaluating all sixteen rules, provide:
   - The image does not visually connect the article to the advertiser
   - CTA or headline is unreadable on mobile
   - The image is landscape for an RSS/social post
+  - CTA, tagline, or brand language visible in the image comes from the story's industry instead of the business's industry
 
 Respond with raw JSON only (no markdown fences). Schema:
 {
@@ -112,7 +115,8 @@ Respond with raw JSON only (no markdown fences). Schema:
     { "id": "HUMAN_ACTION_MATCH", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
     { "id": "PRODUCT_AS_BRIDGE", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
     { "id": "GENERIC_IMAGE_REJECTION", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
-    { "id": "MOBILE_FORMAT_RSS", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 }
+    { "id": "MOBILE_FORMAT_RSS", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "BUSINESS_CONTEXT_MISMATCH", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 }
   ],
   "story_scores": { "story_relevance": 0, "story_visual_evidence": 0, "blazing_hog_connection": 0, "human_action_clarity": 0, "mobile_readability": 0, "generic_stock_penalty": 0 },
   "score": 72
@@ -167,7 +171,7 @@ export async function reviewRenderedMediaBeforeReady(
           '=== END STORY VISUAL BRIEF ===',
         ] : []),
         '',
-        'Evaluate the attached image against all sixteen rules (ten core + six RSS/story rules).',
+        'Evaluate the attached image against all seventeen rules (ten core + seven RSS/story rules).',
       ].filter(Boolean).join('\n'),
     },
     {

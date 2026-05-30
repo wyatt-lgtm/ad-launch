@@ -76,6 +76,7 @@ These rules apply ONLY when the brief references an article, RSS source, trendin
 16. PRODUCT_AS_BRIDGE – The advertiser's product (e.g., Blazing Hog modem, antenna, router) should appear as the enabler of the story, NOT replace the story. The product is the bridge, not the subject. FAIL if the product/equipment is the primary visual subject instead of the story. Score 0–5.
 17. GENERIC_IMAGE_REJECTION – Hard fail any concept that could be reused for almost any rural internet / connectivity post without changing the meaning. If you removed the headline and this image could run on any ISP's social feed, it fails. Score 0–5; hard-fail if score < 3.
 18. MOBILE_FORMAT_RSS – RSS/social post images should default to portrait (4:5) or vertical format unless landscape was explicitly requested in the brief. FAIL if the concept specifies landscape for an RSS/social post. Score 0–5.
+19. BUSINESS_CONTEXT_MISMATCH – For RSS/story-based posts: FAIL if the CTA, brand voice, tagline, or promotional language comes from the story's industry instead of the business's actual industry. Example: an ISP business posting about a tavern-sponsored event must NOT use "See What's On Tap" or "Book a Table" as CTA. The CTA must match the business's category (e.g., ISP → "Check Your Address"). Also FAIL if industry-specific jargon from the story leaks into the brand positioning. For non-story posts, this rule auto-PASSES. Score 0–5; hard-fail if score < 5.
 
 After evaluating all rules:
 - If ALL rules pass: decision = "approved"
@@ -88,6 +89,7 @@ After evaluating all rules:
   - The image does not visually connect the article to the advertiser
   - CTA or headline would be unreadable on mobile
   - The image defaults to landscape for an RSS/social post
+  - CTA, tagline, or brand language comes from the story's industry instead of the business's industry (BUSINESS_CONTEXT_MISMATCH)
 
 Provide an overall quality score from 0 to 100.
 
@@ -117,7 +119,8 @@ Respond with raw JSON only (no markdown fences). Schema:
     { "id": "HUMAN_ACTION_MATCH", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
     { "id": "PRODUCT_AS_BRIDGE", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
     { "id": "GENERIC_IMAGE_REJECTION", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
-    { "id": "MOBILE_FORMAT_RSS", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 }
+    { "id": "MOBILE_FORMAT_RSS", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "BUSINESS_CONTEXT_MISMATCH", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 }
   ],
   "story_scores": { "story_relevance": 0, "story_visual_evidence": 0, "blazing_hog_connection": 0, "human_action_clarity": 0, "mobile_readability": 0, "generic_stock_penalty": 0 },
   "score": 72,
