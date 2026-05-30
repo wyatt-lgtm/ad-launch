@@ -557,6 +557,7 @@ const DEPT_LABELS: Record<string, { label: string; description: string }> = {
   'marketing': { label: 'Marketing Strategy', description: 'Developing the post strategy' },
   'creative strategy': { label: 'Ad Copywriting', description: 'Writing the social post copy' },
   'creative direction': { label: 'Visual Direction', description: 'Creating visual direction for the final image' },
+  'creative review': { label: 'Creative Review', description: 'Reviewing creative concept before generation' },
   'render production': { label: 'Image Generation', description: 'Generating final ad images' },
 };
 
@@ -955,7 +956,27 @@ export async function getSocialWorkflowResults(workflowIds: string[]) {
     else if (anyActive) overallStatus = 'generating';
 
     if (overallStatus !== 'completed') {
-      return { success: true, posts: [], status: overallStatus };
+      // Check if error was caused by War Room (Creative Review) rejection
+      let warRoomRejection: { rejected: boolean; reason?: string; score?: number } = { rejected: false };
+      if (overallStatus === 'error') {
+        const crTask = ourTasks.find((t: any) => {
+          const d = (t?.department ?? '').toLowerCase();
+          return d.includes('creative review') && (t?.status ?? '').toLowerCase() === 'failed';
+        });
+        if (crTask) {
+          const errMsg = crTask.last_error ?? '';
+          if (typeof errMsg === 'string' && errMsg.toLowerCase().includes('war room')) {
+            warRoomRejection = {
+              rejected: true,
+              reason: errMsg.replace(/^WORKFLOW CANCELLED.*?:\s*/i, '').slice(0, 2000),
+            };
+            // Try to extract score from error message
+            const scoreMatch = errMsg.match(/score=(\d+)/);
+            if (scoreMatch) warRoomRejection.score = parseInt(scoreMatch[1], 10);
+          }
+        }
+      }
+      return { success: true, posts: [], status: overallStatus, warRoomRejection };
     }
 
     // Extract social posts from completed tasks

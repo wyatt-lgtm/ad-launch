@@ -261,6 +261,27 @@ export async function POST(req: NextRequest) {
         }
 
       } else if (wfResult.status === 'error') {
+        // Check for Tombstone-side War Room rejection (immediate reject, no retry)
+        const wrRej = (wfResult as any).warRoomRejection;
+        if (wrRej && wrRej.rejected) {
+          await prisma.postPackage.updateMany({
+            where: { id: pkg.id, status: 'generating' },
+            data: {
+              status: 'rejected',
+              completedAt: new Date(),
+              warRoomStatus: 'reject',
+              warRoomScore: wrRej.score ?? 0,
+              warRoomRejectReason: wrRej.reason?.slice(0, 2000) || 'Creative concept rejected by pre-generation review',
+            },
+          });
+          console.warn(
+            `TOMBSTONE_RENDER_BLOCKED_BY_WAR_ROOM [completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId} biz=${pkg.businessId}: ` +
+            `PRE-GEN WAR ROOM REJECTED (score=${wrRej.score ?? '?'}). Reason: ${(wrRej.reason || 'n/a').slice(0, 300)}`,
+          );
+          results.push({ id: pkg.id, status: 'war_room_rejected_pre_gen', detail: wrRej.reason?.slice(0, 300) });
+          continue;
+        }
+
         const ageMs = Date.now() - pkg.createdAt.getTime();
         if (ageMs > 4 * 60 * 60 * 1000) {
           await prisma.postPackage.update({ where: { id: pkg.id }, data: { status: 'rejected' } });
