@@ -75,7 +75,12 @@ export async function GET(req: NextRequest) {
     } else if (result.status === 'completed') {
       message = 'All done! Your post is ready.';
     } else if (lastCompleted) {
-      message = `Finished ${lastCompleted.label.toLowerCase()}, moving to next step…`;
+      const lcLabel = lastCompleted.label.toLowerCase();
+      if (lcLabel === 'business context') {
+        message = 'Loaded your saved business profile.';
+      } else {
+        message = `Finished ${lcLabel}, moving to next step…`;
+      }
     }
     message = sanitizeProgressMessage(message);
 

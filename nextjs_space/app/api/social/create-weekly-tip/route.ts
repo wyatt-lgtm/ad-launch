@@ -112,6 +112,7 @@ export async function POST(req: NextRequest) {
         restrictedTopics: profile?.restrictedTopics || [],
         brandVoiceSummary: profile?.brandVoiceSummary || '',
         industry: profile?.industry || '',
+        businessId,
       },
     );
 

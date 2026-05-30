@@ -1,4 +1,29 @@
+import { loadBusinessProfile, formatProfileForCommand, isStale } from '@/lib/business-profile';
+
 const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
+
+/**
+ * Load saved business profile and format as a command block.
+ * Returns empty string if no profile exists.
+ */
+async function getBusinessProfileBlock(businessId: string | undefined, workflowId?: string): Promise<string> {
+  if (!businessId) return '';
+  try {
+    const result = await loadBusinessProfile(businessId);
+    if (!result) return '';
+    if (isStale(result.ageDays)) {
+      console.log(
+        `SOCIAL_BUSINESS_CONTEXT_REFRESH_STARTED business_id=${businessId} ` +
+        `analysis_age_days=${result.ageDays} workflow_id=${workflowId || 'n/a'}`,
+      );
+      // Profile is stale — still use it but don't block. Jim Bridger will
+      // do a light refresh when it detects the stale marker.
+    }
+    return '\n' + formatProfileForCommand(result.profile) + '\n';
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Submit a command to Tombstone OS. Returns created task IDs and workflow info.
@@ -132,8 +157,12 @@ export async function createLaneMission(
   context: string,
   count: number = 1,
   excludeWorkflowIds?: string[],
+  businessId?: string,
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+
+  // Load saved business profile to avoid full re-analysis
+  const profileBlock = await getBusinessProfileBlock(businessId);
 
   let command = '';
   if (lane === 'website') {
@@ -141,6 +170,7 @@ export async function createLaneMission(
       `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} promoting the business.`,
       `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
       `Use colors, logo, and brand voice from the website. Make it feel authentic — like the business owner wrote it.`,
+      profileBlock,
       context ? `\nAdditional context:\n${context}` : '',
     ].filter(Boolean).join('\n');
   } else if (lane === 'news') {
@@ -148,7 +178,7 @@ export async function createLaneMission(
       `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} that connects the business to local news.`,
       `The post should tie the business to local community news in a way that feels natural and relevant.`,
       `Use the business brand colors and voice from the website.`,
-      ``,
+      profileBlock,
       `CTA RULES:`,
       `- The CTA button MUST relate to the business's actual service/product found on the website.`,
       `- Good examples: "Get a Free Quote", "Book Now", "Schedule Service", "Shop Now", "Learn More", "Call Today"`,
@@ -158,13 +188,13 @@ export async function createLaneMission(
       `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
       `${context}`,
       `--- END RSS STORY METADATA ---`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   } else if (lane === 'holiday') {
     command = [
       `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} tied to an upcoming holiday or seasonal event.`,
       `The post should connect the business to the holiday/event in a creative, engaging way.`,
       `Use the business brand colors and voice from the website.`,
-      ``,
+      profileBlock,
       `CTA RULES:`,
       `- The CTA button MUST relate to the business's actual service/product found on the website.`,
       `- Good examples: "Get a Free Quote", "Book Now", "Schedule Service", "Shop Now", "Learn More", "Call Today"`,
@@ -174,7 +204,7 @@ export async function createLaneMission(
       `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
       `${context}`,
       `--- END RSS STORY METADATA ---`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   }
 
   console.log(`[tombstone] Creating ${lane} lane mission (${count} posts) for: ${normalizedUrl}`);
@@ -212,6 +242,7 @@ export async function createSocialMissions(
     platforms?: string[];
     contentSourceMode?: string;
     stories?: { headline: string; source?: string; category?: string; type?: string; link?: string }[];
+    businessId?: string;
   } = {},
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -219,6 +250,9 @@ export async function createSocialMissions(
   const mode = options.contentSourceMode || 'local_plus_interests';
   const MAX_POSTS = 3;
   const stories = (options.stories || []).slice(0, MAX_POSTS);
+
+  // Load saved business profile to avoid full re-analysis
+  const profileBlock = options.businessId ? await getBusinessProfileBlock(options.businessId) : '';
 
   // If no individual stories provided, fall back to single command with full brief
   if (stories.length === 0) {
@@ -229,6 +263,7 @@ export async function createSocialMissions(
       `Use colors, logo, and brand voice from the website.`,
       `Make it feel authentic — like a real small business owner wrote it.`,
       `Target platforms: ${platforms.join(', ')}.`,
+      profileBlock,
       scoutSummary ? `\nContext from scout brief:\n${scoutSummary}` : '',
     ].filter(Boolean).join('\n');
 
@@ -252,7 +287,7 @@ export async function createSocialMissions(
   // Process sequentially — Tombstone serialises commands so parallel sends cause timeouts
   for (let i = 0; i < stories.length; i++) {
     const story = stories[i];
-    const command = buildStoryCommand(normalizedUrl, story, platforms, mode);
+    const command = buildStoryCommand(normalizedUrl, story, platforms, mode, profileBlock);
     console.log(`[tombstone] Sending command ${i + 1}/${stories.length}: "${story.headline?.slice(0, 60)}..." (${story.type || 'interest'})`);
 
     const result = await sendCommand(command);
@@ -294,6 +329,7 @@ function buildStoryCommand(
   story: { headline: string; source?: string; category?: string; type?: string; link?: string },
   platforms: string[],
   mode: string,
+  profileBlock: string = '',
 ): string {
   const type = story.type || 'interest';
   const platformStr = platforms.join(', ');
@@ -316,8 +352,9 @@ function buildStoryCommand(
       `The post should connect the business to this event in a creative, engaging way.`,
       `Use the business brand colors and voice from the website.`,
       `Target platforms: ${platformStr}.`,
+      profileBlock,
       rssMetaBlock,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   }
 
   if (type === 'local_news') {
@@ -326,8 +363,9 @@ function buildStoryCommand(
       `The post should tie the business to this local community news in a way that feels natural and relevant.`,
       `Use the business brand colors and voice from the website.`,
       `Target platforms: ${platformStr}.`,
+      profileBlock,
       rssMetaBlock,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   }
 
   if (type === 'business') {
@@ -336,7 +374,8 @@ function buildStoryCommand(
       `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
       `Use colors, logo, and brand voice from the website. Make it feel authentic.`,
       `Target platforms: ${platformStr}.`,
-    ].join('\n');
+      profileBlock,
+    ].filter(Boolean).join('\n');
   }
 
   // Default: interest/trending headline
@@ -345,8 +384,9 @@ function buildStoryCommand(
     `The post should show the business's expertise and relevance to this topic — thought leadership style.`,
     `Use the business brand colors and voice from the website.`,
     `Target platforms: ${platformStr}.`,
+    profileBlock,
     rssMetaBlock,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 /**
@@ -375,13 +415,16 @@ export async function createScoutStoryMission(
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
   const type = story.sourceType === 'national' ? 'event' : story.sourceType === 'industry' ? 'interest' : 'local_news';
 
+  // Load saved business profile to avoid full re-analysis
+  const profileBlock = await getBusinessProfileBlock(meta.businessId);
+
   const command = [
     `review ${normalizedUrl} and create 1 social media post based on the story below.`,
     `This is a single-story post creation from the Daily Scout Email.`,
     `Create EXACTLY 1 post — do not generate variants or multiple outputs.`,
     `Use the business brand colors and voice from the website.`,
     `Target platforms: facebook, instagram.`,
-    ``,
+    profileBlock,
     `--- SCOUT STORY CONTEXT ---`,
     `source: daily_scout_email`,
     `workflow_type: single_story_post`,
@@ -432,9 +475,13 @@ export async function createWeeklyTipMission(
     restrictedTopics: string[];
     brandVoiceSummary: string;
     industry: string;
+    businessId?: string;
   },
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+
+  // Load saved business profile to avoid full re-analysis
+  const profileBlock = opts.businessId ? await getBusinessProfileBlock(opts.businessId) : '';
 
   const command = [
     `review ${normalizedUrl} and create 1 social media post based on the weekly tip topic below.`,
@@ -445,6 +492,7 @@ export async function createWeeklyTipMission(
       ? `Also create a social media image/artwork that complements this post using the business brand from the website.`
       : `Do NOT generate any image or artwork for this post.`,
     `Target platforms: facebook, instagram.`,
+    profileBlock,
     ``,
     `--- WEEKLY TIP CONTEXT ---`,
     `source: weekly_tip`,
@@ -553,7 +601,7 @@ export async function createMission(websiteUrl: string) {
 
 // Human-readable task labels for the UI
 const DEPT_LABELS: Record<string, { label: string; description: string }> = {
-  'research': { label: 'Business Analysis', description: 'Reviewing your business and audience' },
+  'research': { label: 'Business Context', description: 'Matching the story to your business' },
   'marketing': { label: 'Marketing Strategy', description: 'Developing the post strategy' },
   'creative strategy': { label: 'Ad Copywriting', description: 'Writing the social post copy' },
   'creative direction': { label: 'Visual Direction', description: 'Creating visual direction for the final image' },
@@ -979,6 +1027,27 @@ export async function getSocialWorkflowResults(workflowIds: string[]) {
       return { success: true, posts: [], status: overallStatus, warRoomRejection };
     }
 
+    // Extract business_context from Jim Bridger (research) task for profile caching
+    let businessContext: Record<string, any> | null = null;
+    for (const task of ourTasks) {
+      const dept = (task?.department ?? '').toLowerCase();
+      const taskStatus = (task?.status ?? '').toLowerCase();
+      if (taskStatus !== 'complete' && taskStatus !== 'completed') continue;
+      if (dept.includes('research')) {
+        try {
+          const outputs = await getTaskOutputs(task.id);
+          for (const out of outputs) {
+            const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+            if (parsed?.business_context) {
+              businessContext = parsed.business_context;
+              break;
+            }
+          }
+        } catch { /* non-critical */ }
+        if (businessContext) break;
+      }
+    }
+
     // Extract social posts from completed tasks
     const posts: any[] = [];
 
@@ -1092,7 +1161,7 @@ export async function getSocialWorkflowResults(workflowIds: string[]) {
       }
     }
 
-    return { success: true, posts, status: 'completed' };
+    return { success: true, posts, status: 'completed', businessContext };
   } catch (err: any) {
     console.error('Social workflow results error:', err?.message);
     return { success: false, posts: [], status: 'error' };

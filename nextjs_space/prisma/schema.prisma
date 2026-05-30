@@ -53,6 +53,8 @@ model Business {
   postPackages       PostPackage[]
   creditAccount      CreditAccount?
   contentProfile     BusinessContentProfile?
+  savedAnalysis       Json?
+  analysisRefreshedAt DateTime?
 
   @@unique([userId, websiteUrl])
   @@index([userId])

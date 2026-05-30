@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSocialWorkflowResults } from '@/lib/tombstone';
+import { saveBusinessProfile } from '@/lib/business-profile';
 import { sendNotificationEmailHelper, buildCompletionEmailHtml } from '@/lib/scout-email';
 import { chargeForPostPackage, refundPostPackage } from '@/lib/credits';
 import { reviewMediaConceptBeforeGeneration } from '@/lib/media-war-room';
@@ -111,6 +112,13 @@ export async function POST(req: NextRequest) {
       // Handle: completed with output
       if (wfResult.status === 'completed' && wfResult.posts.length > 0) {
         const post = wfResult.posts[0];
+
+        // Save Jim Bridger's business_context for future reuse (non-blocking)
+        if (wfResult.businessContext && pkg.businessId) {
+          saveBusinessProfile(pkg.businessId, wfResult.businessContext).catch((e: any) =>
+            console.warn(`[completion-check][${runId}] Failed to save business profile for ${pkg.businessId}: ${e?.message}`)
+          );
+        }
 
         // ── War Room: concept-level review of the creative direction ──
         const warRoomInput = {

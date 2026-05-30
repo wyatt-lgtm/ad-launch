@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
     const result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary || '', {
       contentSourceMode,
       stories,
+      businessId: businessId || undefined,
     });
 
     if (!result.success) {
