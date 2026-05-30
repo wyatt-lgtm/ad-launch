@@ -696,19 +696,24 @@ model GenerationRun {
   id                    String    @id @default(cuid())
   userId                String
   businessId            String?
-  status                String    @default("submitted")
+  status                String    @default("creating_workflow")
   selectedStoryTitles   String[]  @default([])
   selectedStorySources  String[]  @default([])
   selectedStoryLinks    String[]  @default([])
   storyCount            Int       @default(0)
   workflowIds           String[]  @default([])
   tombstoneTaskIds      String[]  @default([])
+  firstTaskId           String?
   clickedAt             DateTime
   runCreatedAt          DateTime  @default(now())
+  apiReceivedAt         DateTime?
+  workflowCreateStartedAt DateTime?
   workflowCreatedAt     DateTime?
+  firstTaskCreatedAt    DateTime?
   firstTaskClaimedAt    DateTime?
   lastTaskCompletedAt   DateTime?
   socialPostCreatedAt   DateTime?
+  socialPostReadyAt     DateTime?
   completedAt           DateTime?
   failedAt              DateTime?
   failStep              String?

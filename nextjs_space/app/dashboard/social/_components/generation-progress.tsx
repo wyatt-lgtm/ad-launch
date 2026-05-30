@@ -4,10 +4,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, CheckCircle2, XCircle, AlertTriangle,
-  RefreshCw, Sparkles, Clock, ChevronDown, ChevronUp,
+  RefreshCw, Sparkles, Clock, ChevronDown, ChevronUp, Info,
 } from 'lucide-react';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────────
 
 interface StageTiming {
   createdToClaimedMs: number | null;
@@ -57,12 +57,21 @@ interface ProgressData {
   message: string;
   stages: Stage[];
   hasError: boolean;
-  failedStep: { label: string; taskId: number; workflowId: string } | null;
+  failedStep: { label: string; taskId: number | null; workflowId: string | null; error?: string } | null;
   workflowIds: string[];
   generationRunId: string | null;
+  generationRunStatus?: string | null;
   workflowTiming: WorkflowTiming;
   lagWarnings: LagWarning[];
   stageCount: { total: number; completed: number; active: number; failed: number };
+  timing?: {
+    clickedAt?: string | null;
+    apiReceivedAt?: string | null;
+    runCreatedAt?: string | null;
+    workflowCreateStartedAt?: string | null;
+    workflowCreatedAt?: string | null;
+    failedAt?: string | null;
+  };
 }
 
 interface GenerationProgressProps {
@@ -75,7 +84,7 @@ interface GenerationProgressProps {
   onDismiss: () => void;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────────
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -91,7 +100,15 @@ function formatTimingLabel(ms: number | null): string {
   return formatDuration(ms);
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Pre-workflow phase labels shown before any Tombstone tasks exist ─────────
+const PRE_WORKFLOW_LABELS: Record<string, string> = {
+  creating_workflow: 'Creating Tombstone workflow…',
+  workflow_creation_failed: 'Workflow creation failed',
+  workflow_running: 'Workflow created — waiting for tasks…',
+  workflow_created: 'Workflow created — waiting for tasks…',
+};
+
+// ── Component ─────────────────────────────────────────────────────────────────────
 
 export default function GenerationProgress({
   workflowIds,
@@ -112,7 +129,7 @@ export default function GenerationProgress({
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTime = useRef(clickedAt ? new Date(clickedAt).getTime() : Date.now());
 
-  // Elapsed time ticker — updates every second
+  // Elapsed time ticker
   useEffect(() => {
     setElapsedMs(Date.now() - startTime.current);
     tickRef.current = setInterval(() => {
@@ -123,10 +140,15 @@ export default function GenerationProgress({
 
   const pollProgress = useCallback(async () => {
     try {
-      const params = new URLSearchParams({
-        workflowIds: workflowIds.join(','),
-      });
+      const params = new URLSearchParams();
+      // Send workflowIds only if we have them
+      if (workflowIds.length > 0) {
+        params.set('workflowIds', workflowIds.join(','));
+      }
       if (generationRunId) params.set('generationRunId', generationRunId);
+
+      // Need at least one identifier
+      if (workflowIds.length === 0 && !generationRunId) return;
 
       const res = await fetch(`/api/social/progress?${params.toString()}`);
       if (!res.ok) {
@@ -140,7 +162,6 @@ export default function GenerationProgress({
 
       if (result.status === 'completed' && !completeFired.current) {
         completeFired.current = true;
-        // Stop the elapsed ticker
         if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
         setTimeout(() => onComplete(), 1500);
       }
@@ -175,9 +196,14 @@ export default function GenerationProgress({
   const sc = data?.stageCount;
   const lagWarnings = data?.lagWarnings ?? [];
   const failedStep = data?.failedStep;
+  const genRunStatus = data?.generationRunStatus;
+
+  // Determine if we’re in pre-workflow phase
+  const isPreWorkflow = stages.length === 0 && isWorking;
+  const preWorkflowLabel = genRunStatus ? (PRE_WORKFLOW_LABELS[genRunStatus] || null) : null;
 
   const activeStage = stages.find(s => s.status === 'active');
-  const message = data?.message || 'Connecting to the creative team…';
+  const message = data?.message || (isPreWorkflow ? 'Creating generation run…' : 'Connecting to the creative team…');
 
   const barColor = isError ? 'bg-red-500' : isComplete ? 'bg-green-500' : 'bg-blue-600';
 
@@ -207,20 +233,18 @@ export default function GenerationProgress({
                 ? 'Your polished post has been added to the queue below.'
                 : isError
                 ? 'Something went wrong, but you can try again.'
+                : isPreWorkflow
+                ? 'Setting up the creative pipeline…'
                 : 'Our creative team is working on your post…'}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* Elapsed time */}
           <div className="flex items-center gap-1 text-xs text-gray-400 font-mono">
             <Clock className="w-3 h-3" />
             {formatDuration(elapsedMs)}
           </div>
-          <button
-            onClick={onDismiss}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
+          <button onClick={onDismiss} className="text-gray-400 hover:text-gray-600 transition-colors">
             <XCircle className="w-5 h-5" />
           </button>
         </div>
@@ -234,14 +258,14 @@ export default function GenerationProgress({
               {isComplete ? 'Complete' : isError ? 'Error' : `${progress}%`}
             </span>
             <span className="text-xs text-gray-400">
-              {sc ? `${sc.completed}/${sc.total} steps` : stages.length > 0 ? `${stages.filter(s => s.status === 'complete').length}/${stages.length}` : '…'}
+              {sc && sc.total > 0 ? `${sc.completed}/${sc.total} steps` : isPreWorkflow ? 'Initializing…' : '…'}
             </span>
           </div>
           <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
             <motion.div
               className={`h-full rounded-full ${barColor}`}
               initial={{ width: 0 }}
-              animate={{ width: `${progress}%` }}
+              animate={{ width: `${Math.max(progress, isPreWorkflow ? 3 : 0)}%` }}
               transition={{ duration: 0.6, ease: 'easeOut' }}
             />
           </div>
@@ -275,6 +299,13 @@ export default function GenerationProgress({
                 {activeStage.timing?.activeProcessingMs != null && ` · ${formatDuration(activeStage.timing.activeProcessingMs)}`}
               </p>
             )}
+            {/* Pre-workflow: show generation run ID */}
+            {isPreWorkflow && generationRunId && (
+              <p className="text-[10px] text-gray-400 font-mono mt-1">
+                Generation Run: {generationRunId}
+                {genRunStatus && ` · Status: ${genRunStatus}`}
+              </p>
+            )}
           </motion.div>
         </AnimatePresence>
 
@@ -282,10 +313,15 @@ export default function GenerationProgress({
         {isError && failedStep && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg mb-4">
             <p className="text-sm font-medium text-red-800">Failed at: {failedStep.label}</p>
+            {failedStep.error && (
+              <p className="text-xs text-red-600 mt-1">{failedStep.error}</p>
+            )}
             <p className="text-[10px] text-red-500 font-mono mt-1">
-              Task #{failedStep.taskId} · WF {failedStep.workflowId}
+              {failedStep.taskId && `Task #${failedStep.taskId} · `}
+              {failedStep.workflowId && `WF ${failedStep.workflowId} · `}
+              {generationRunId && `Run ${generationRunId}`}
             </p>
-            {data?.workflowTiming && (
+            {data?.workflowTiming?.elapsedSinceFirstTaskMs != null && (
               <p className="text-[10px] text-red-400 mt-1">
                 Elapsed before failure: {formatTimingLabel(data.workflowTiming.elapsedSinceFirstTaskMs)}
               </p>
@@ -304,6 +340,23 @@ export default function GenerationProgress({
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Pre-workflow state indicator */}
+        {isPreWorkflow && preWorkflowLabel && stages.length === 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100">
+              <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-blue-800 font-medium">
+                  ⚙️ {preWorkflowLabel}
+                </p>
+              </div>
+              <span className="text-xs text-blue-500 font-medium">Working…</span>
+            </div>
           </div>
         )}
 
@@ -366,8 +419,8 @@ export default function GenerationProgress({
           </div>
         )}
 
-        {/* Empty state while first poll loads */}
-        {stages.length === 0 && isWorking && (
+        {/* Empty state while first poll loads and no pre-workflow phase */}
+        {stages.length === 0 && isWorking && !preWorkflowLabel && (
           <div className="flex items-center gap-2 py-3">
             <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
             <p className="text-sm text-gray-500">Connecting to the creative team…</p>
@@ -375,18 +428,16 @@ export default function GenerationProgress({
         )}
 
         {/* Expandable details panel */}
-        {stages.length > 0 && (
-          <button
-            onClick={() => setShowDetails(v => !v)}
-            className="flex items-center gap-1 mt-3 text-[10px] text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            {showDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-            {showDetails ? 'Hide' : 'Show'} Workflow Details
-          </button>
-        )}
+        <button
+          onClick={() => setShowDetails(v => !v)}
+          className="flex items-center gap-1 mt-3 text-[10px] text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          {showDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          {showDetails ? 'Hide' : 'Show'} Workflow Details
+        </button>
 
         <AnimatePresence>
-          {showDetails && data && (
+          {showDetails && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
@@ -396,20 +447,33 @@ export default function GenerationProgress({
             >
               <div className="mt-3 p-3 bg-gray-50 rounded-lg text-[10px] font-mono text-gray-500 space-y-1">
                 {generationRunId && <p>Generation Run: {generationRunId}</p>}
-                {data.workflowIds?.length > 0 && <p>Workflow IDs: {data.workflowIds.join(', ')}</p>}
+                {genRunStatus && <p>Run Status: {genRunStatus}</p>}
+                {data?.workflowIds?.length ? <p>Workflow IDs: {data.workflowIds.join(', ')}</p> : <p>Workflow IDs: none yet</p>}
                 {clickedAt && <p>Clicked: {new Date(clickedAt).toLocaleTimeString()}</p>}
                 <p>Total Elapsed: {formatDuration(elapsedMs)}</p>
-                {data.workflowTiming?.totalWorkflowTimeMs != null && (
+                {data?.timing?.apiReceivedAt && (
+                  <p>API Received: {new Date(data.timing.apiReceivedAt).toLocaleTimeString()}</p>
+                )}
+                {data?.timing?.workflowCreateStartedAt && (
+                  <p>Workflow Create Started: {new Date(data.timing.workflowCreateStartedAt).toLocaleTimeString()}</p>
+                )}
+                {data?.timing?.workflowCreatedAt && (
+                  <p>Workflow Created: {new Date(data.timing.workflowCreatedAt).toLocaleTimeString()}</p>
+                )}
+                {data?.workflowTiming?.totalWorkflowTimeMs != null && (
                   <p>Workflow Execution: {formatDuration(data.workflowTiming.totalWorkflowTimeMs)}</p>
                 )}
-                {data.workflowTiming?.firstTaskCreatedAt && (
+                {data?.workflowTiming?.firstTaskCreatedAt && (
                   <p>First Task: {new Date(data.workflowTiming.firstTaskCreatedAt).toLocaleTimeString()}</p>
                 )}
-                {data.workflowTiming?.firstTaskClaimedAt && (
+                {data?.workflowTiming?.firstTaskClaimedAt && (
                   <p>First Claim: {new Date(data.workflowTiming.firstTaskClaimedAt).toLocaleTimeString()}</p>
                 )}
-                {data.workflowTiming?.lastTaskCompletedAt && (
+                {data?.workflowTiming?.lastTaskCompletedAt && (
                   <p>Last Complete: {new Date(data.workflowTiming.lastTaskCompletedAt).toLocaleTimeString()}</p>
+                )}
+                {data?.timing?.failedAt && (
+                  <p className="text-red-500">Failed At: {new Date(data.timing.failedAt).toLocaleTimeString()}</p>
                 )}
               </div>
             </motion.div>

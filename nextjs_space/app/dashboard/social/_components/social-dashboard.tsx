@@ -10,7 +10,7 @@ import {
   Zap, RefreshCw, ChevronDown, ChevronUp, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
   List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare,
-  PenLine, Image as ImageIcon, Coins, Lock, Lightbulb
+  PenLine, Image as ImageIcon, Coins, Lock, Lightbulb, AlertTriangle
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -112,6 +112,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
   pending_approval: { label: 'Pending', color: 'text-amber-700', bg: 'bg-amber-50', icon: Clock },
   approved: { label: 'Approved', color: 'text-green-700', bg: 'bg-green-50', icon: CheckCircle2 },
   downloaded: { label: 'Downloaded', color: 'text-indigo-700', bg: 'bg-indigo-50', icon: Download },
+  generation_failed: { label: 'Generation Failed', color: 'text-red-700', bg: 'bg-red-50', icon: AlertTriangle },
   manually_posted: { label: 'Posted', color: 'text-blue-700', bg: 'bg-blue-50', icon: Send },
   rejected: { label: 'Rejected', color: 'text-red-700', bg: 'bg-red-50', icon: XCircle },
 };
@@ -554,18 +555,39 @@ export default function SocialDashboard() {
       body: JSON.stringify({ scoutBrief: brief, clickedAt }),
     });
     const tombstoneData = await tombstoneRes.json();
-    if (!tombstoneRes.ok) throw new Error(tombstoneData.error || 'Failed to start creative workflow');
 
-    const wfIds: string[] = tombstoneData.workflowIds || [];
+    // Always capture generationRunId — even on failures the run record exists
     const runId: string | null = tombstoneData.generationRunId || null;
     if (runId) setActiveGenerationRunId(runId);
 
-    if (wfIds.length > 0) {
-      setActiveWorkflowIds(wfIds);
-      setActiveFlowLabel('Scout Stories');
+    if (!tombstoneRes.ok) {
+      // If we have a generationRunId, show the progress UI so the failure is visible
+      if (runId) {
+        setActiveWorkflowIds(tombstoneData.workflowIds || []);
+        setActiveFlowLabel('Scout Stories');
+      }
+      throw new Error(tombstoneData.error || 'Failed to start creative workflow');
     }
 
+    // HARD GUARD: Verify we got real workflow data
+    const wfIds: string[] = tombstoneData.workflowIds || [];
+    const taskCount: number = tombstoneData.taskCount || 0;
+
+    if (wfIds.length === 0 || taskCount === 0) {
+      console.error('[sendToTombstone] API returned success but no workflows/tasks', tombstoneData);
+      // Show progress UI with whatever we have — it will show the failure from the generation run
+      setActiveWorkflowIds(wfIds);
+      setActiveFlowLabel('Scout Stories');
+      throw new Error(
+        `Post generation did not create a visible workflow. Check generation run #${runId || 'unknown'}.`
+      );
+    }
+
+    setActiveWorkflowIds(wfIds);
+    setActiveFlowLabel('Scout Stories');
     setScoutResult(null);
+
+    console.log(`[sendToTombstone] SUCCESS runId=${runId} workflows=${wfIds.length} tasks=${taskCount}`);
   };
 
   // ── Weekly Tip ─────────────────────────────────────────────────────────
@@ -761,13 +783,22 @@ export default function SocialDashboard() {
   };
 
   const handleProgressComplete = async () => {
+    const prevCount = posts.length;
+    // Import completed posts
+    await pollMissions(false);
+    await fetchPosts();
+
+    // Verify a post was actually imported
+    const newPosts = posts;
+    if (newPosts.length <= prevCount && activeGenerationRunId) {
+      console.warn(`[handleProgressComplete] Workflow completed but no new post appeared. Run #${activeGenerationRunId}`);
+      setScoutError(`Post generation completed but no visible post was created. Check generation run #${activeGenerationRunId}.`);
+    }
+
     setActiveWorkflowIds([]);
     setGenerating(false);
     setActiveGenerationRunId(null);
     setGenerationClickedAt(null);
-    // Import completed posts
-    await pollMissions(false);
-    await fetchPosts();
   };
 
   const handleProgressDismiss = () => {
@@ -1034,6 +1065,7 @@ export default function SocialDashboard() {
   const approvedCount = posts.filter(p => p.status === 'approved').length;
   const postedCount = posts.filter(p => p.status === 'manually_posted').length;
   const downloadedCount = posts.filter(p => p.status === 'downloaded').length;
+  const failedCount = posts.filter(p => p.status === 'generation_failed').length;
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-8">
@@ -1484,9 +1516,9 @@ export default function SocialDashboard() {
 
       {/* ── Generation Progress (real Tombstone task tracking) ─────── */}
       <AnimatePresence>
-        {activeWorkflowIds.length > 0 && (
+        {(activeWorkflowIds.length > 0 || activeGenerationRunId) && (
           <GenerationProgress
-            key={activeWorkflowIds.join(',')}
+            key={activeGenerationRunId || activeWorkflowIds.join(',')}
             workflowIds={activeWorkflowIds}
             flowLabel={activeFlowLabel}
             generationRunId={activeGenerationRunId}
@@ -1795,7 +1827,7 @@ export default function SocialDashboard() {
         <div>
           {/* Filter bar */}
           <div className="flex gap-2 mb-6 flex-wrap">
-            {['', 'pending_approval', 'approved', 'downloaded', 'manually_posted', 'rejected'].map(s => (
+            {['', 'pending_approval', 'approved', 'downloaded', 'manually_posted', 'rejected', 'generation_failed'].map(s => (
               <button
                 key={s}
                 onClick={() => { setStatusFilter(s); }}
@@ -1945,6 +1977,24 @@ export default function SocialDashboard() {
                               Original article <ExternalLink className="w-3 h-3" />
                             </a>
                           )}
+                        </div>
+                      )}
+
+                      {/* Generation failed banner */}
+                      {post.status === 'generation_failed' && (
+                        <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                            <div>
+                              <p className="text-xs font-medium text-red-700">Generation incomplete — no usable output</p>
+                              <p className="text-xs text-red-600 mt-0.5">
+                                {post.workflowId && `Workflow: ${post.workflowId}`}
+                                {post.tombstoneTaskId && ` · Task: ${post.tombstoneTaskId}`}
+                                {post.generationRunId && ` · Run: ${post.generationRunId}`}
+                              </p>
+                              <p className="text-xs text-red-500 mt-1">This post was created without caption or image. You can delete it or try generating again.</p>
+                            </div>
+                          </div>
                         </div>
                       )}
 

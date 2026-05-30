@@ -257,44 +257,99 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date();
+
+    // Separate posts with usable output from incomplete shells
+    const completePosts: any[] = [];
+    const incompletePosts: any[] = [];
+    for (const post of posts) {
+      const hasCaption = !!post.caption?.trim();
+      const hasImage = !!post.imageUrl;
+      if (hasCaption || hasImage) {
+        completePosts.push(post);
+      } else {
+        incompletePosts.push(post);
+        console.warn(`[missions/poll] Incomplete post skipped: wf=${post.workflowId} task=${post.tombstoneTaskId} — no caption or image`);
+      }
+    }
+
     const createdPosts = await prisma.socialPost.createMany({
-      data: posts.map((post) => {
+      data: completePosts.map((post) => {
         const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
         if (!ref && post.workflowId) {
           console.warn(`[missions/poll] workflowMap miss for wf=${post.workflowId} task=${post.tombstoneTaskId} — using socialDefault (${socialDefaultBusinessId})`);
         }
         return {
-        userId,
-        analysisId: ref?.analysisId || socialDefaultAnalysisId,
-        businessId: ref?.businessId || socialDefaultBusinessId,
-        caption: post.caption,
-        hashtags: post.hashtags,
-        imageUrl: post.imageUrl,
-        imagePrompt: null,
-        postType: post.postType,
-        sourceType: post.sourceType,
-        newsAngle: post.newsAngle,
-        patternType: null,
-        rssItemTitle: null,
-        rssItemLink: null,
-        platforms: post.platforms,
-        status: 'pending_approval',
-        tombstoneTaskId: post.tombstoneTaskId || null,
-        workflowId: post.workflowId || null,
-        sourceName: post.sourceName || null,
-        sourceArticleTitle: post.sourceArticleTitle || null,
-        sourceArticleUrl: post.sourceArticleUrl || null,
-        cta: post.cta || null,
-        generationRunId: generationRun?.id || null,
-        generationStartedAt: generationRun?.clickedAt || null,
-        generationCompletedAt: now,
-        totalGenerationTimeMs: generationRun?.clickedAt
-          ? now.getTime() - new Date(generationRun.clickedAt).getTime()
-          : null,
-      };
+          userId,
+          analysisId: ref?.analysisId || socialDefaultAnalysisId,
+          businessId: ref?.businessId || socialDefaultBusinessId,
+          caption: post.caption,
+          hashtags: post.hashtags,
+          imageUrl: post.imageUrl,
+          imagePrompt: null,
+          postType: post.postType,
+          sourceType: post.sourceType,
+          newsAngle: post.newsAngle,
+          patternType: null,
+          rssItemTitle: null,
+          rssItemLink: null,
+          platforms: post.platforms,
+          status: 'pending_approval',
+          tombstoneTaskId: post.tombstoneTaskId || null,
+          workflowId: post.workflowId || null,
+          sourceName: post.sourceName || null,
+          sourceArticleTitle: post.sourceArticleTitle || null,
+          sourceArticleUrl: post.sourceArticleUrl || null,
+          cta: post.cta || null,
+          generationRunId: generationRun?.id || null,
+          generationStartedAt: generationRun?.clickedAt || null,
+          generationCompletedAt: now,
+          totalGenerationTimeMs: generationRun?.clickedAt
+            ? now.getTime() - new Date(generationRun.clickedAt).getTime()
+            : null,
+        };
       }),
       skipDuplicates: true,
     });
+
+    // Create shell records for incomplete posts so they're visible with a failed status
+    if (incompletePosts.length > 0) {
+      await prisma.socialPost.createMany({
+        data: incompletePosts.map((post) => {
+          const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
+          return {
+            userId,
+            analysisId: ref?.analysisId || socialDefaultAnalysisId,
+            businessId: ref?.businessId || socialDefaultBusinessId,
+            caption: post.caption || '[Generation incomplete — no output]',
+            hashtags: [],
+            imageUrl: null,
+            imagePrompt: null,
+            postType: post.postType || 'general',
+            sourceType: post.sourceType || null,
+            newsAngle: post.newsAngle || null,
+            patternType: null,
+            rssItemTitle: null,
+            rssItemLink: null,
+            platforms: post.platforms || [],
+            status: 'generation_failed',
+            tombstoneTaskId: post.tombstoneTaskId || null,
+            workflowId: post.workflowId || null,
+            sourceName: post.sourceName || null,
+            sourceArticleTitle: post.sourceArticleTitle || null,
+            sourceArticleUrl: post.sourceArticleUrl || null,
+            cta: null,
+            generationRunId: generationRun?.id || null,
+            generationStartedAt: generationRun?.clickedAt || null,
+            generationCompletedAt: now,
+            totalGenerationTimeMs: generationRun?.clickedAt
+              ? now.getTime() - new Date(generationRun.clickedAt).getTime()
+              : null,
+          };
+        }),
+        skipDuplicates: true,
+      });
+      console.warn(`[missions/poll] Created ${incompletePosts.length} incomplete shell records with status=generation_failed`);
+    }
 
     // Update GenerationRun to completed
     if (generationRun && createdPosts.count > 0) {

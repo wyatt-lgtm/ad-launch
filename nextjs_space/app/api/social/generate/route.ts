@@ -8,13 +8,21 @@ import { createSocialMissions } from '@/lib/tombstone';
 
 /**
  * POST /api/social/generate
- * Accepts a Clark Kent scout brief and sends it to Tombstone's creative workflow.
- * Creates a GenerationRun immediately for traceability, then dispatches to Tombstone.
  *
- * Body: { scoutBrief: ScoutBrief, businessId?: string, analysisId?: string, clickedAt?: string }
+ * Creates a GenerationRun IMMEDIATELY, then dispatches to Tombstone.
+ * Returns generationRunId to the frontend before any long-running work.
+ *
+ * Hard failure guards:
+ * - No generationRun created → fail visibly
+ * - No workflowIds returned → fail visibly
+ * - No taskIds returned → fail visibly
+ * - Tombstone returns success but empty data → fail visibly
+ *
+ * Body: { scoutBrief, businessId?, analysisId?, clickedAt? }
  */
 export async function POST(req: NextRequest) {
-  const requestReceivedAt = Date.now();
+  const apiReceivedAt = new Date();
+  const apiReceivedMs = apiReceivedAt.getTime();
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
@@ -30,8 +38,9 @@ export async function POST(req: NextRequest) {
     }
 
     const contentSourceMode = scoutBrief.contentSourceMode || 'local_plus_interests';
+    const clickedAtDate = clickedAt ? new Date(clickedAt) : apiReceivedAt;
 
-    // Extract story metadata for the generation run
+    // Extract story metadata
     const rawStories: any[] = scoutBrief.stories || [];
     const MAX_POSTS = 3;
     const stories = rawStories.slice(0, MAX_POSTS);
@@ -39,25 +48,36 @@ export async function POST(req: NextRequest) {
     const storySources = stories.map((s: any) => s.source || '');
     const storyLinks = stories.map((s: any) => s.link || '');
 
-    // Create GenerationRun IMMEDIATELY so there is a traceable record
-    const generationRun = await prisma.generationRun.create({
-      data: {
-        userId,
-        businessId: businessId || null,
-        status: 'submitted',
-        selectedStoryTitles: storyTitles,
-        selectedStorySources: storySources,
-        selectedStoryLinks: storyLinks,
-        storyCount: stories.length,
-        clickedAt: clickedAt ? new Date(clickedAt) : new Date(requestReceivedAt),
-      },
-    });
+    // ── STEP 1: Create GenerationRun IMMEDIATELY ────────────────────────────
+    let generationRun;
+    try {
+      generationRun = await prisma.generationRun.create({
+        data: {
+          userId,
+          businessId: businessId || null,
+          status: 'creating_workflow',
+          selectedStoryTitles: storyTitles,
+          selectedStorySources: storySources,
+          selectedStoryLinks: storyLinks,
+          storyCount: stories.length,
+          clickedAt: clickedAtDate,
+          apiReceivedAt,
+        },
+      });
+    } catch (dbErr: any) {
+      console.error('[social/generate] CRITICAL: Failed to create GenerationRun:', dbErr);
+      return NextResponse.json(
+        { error: 'Failed to create generation run record', detail: dbErr.message },
+        { status: 500 }
+      );
+    }
 
     const runCreatedAt = Date.now();
-    const clickToRunMs = runCreatedAt - (clickedAt ? new Date(clickedAt).getTime() : requestReceivedAt);
-    console.log(`[social/generate] GenerationRun ${generationRun.id} created in ${clickToRunMs}ms`);
+    const clickToApiMs = apiReceivedMs - clickedAtDate.getTime();
+    const apiToRunMs = runCreatedAt - apiReceivedMs;
+    console.log(`[social/generate] GenerationRun ${generationRun.id} created | click_to_api=${clickToApiMs}ms api_to_run=${apiToRunMs}ms`);
 
-    // Resolve website URL — prefer businessId lookup, then analysis, then fallback
+    // ── STEP 2: Resolve website URL ─────────────────────────────────────────
     let websiteUrl: string | null = null;
     let resolvedAnalysisId = analysisId || null;
 
@@ -99,47 +119,122 @@ export async function POST(req: NextRequest) {
     }
 
     if (!websiteUrl) {
-      // Mark generation run as failed
       await prisma.generationRun.update({
         where: { id: generationRun.id },
-        data: { status: 'failed', failStep: 'resolve_website', failError: 'No website URL found', failedAt: new Date() },
+        data: { status: 'workflow_creation_failed', failStep: 'resolve_website', failError: 'No website URL found', failedAt: new Date() },
       });
       return NextResponse.json(
-        { error: 'No website URL found. Complete a business analysis first.', generationRunId: generationRun.id },
+        { error: 'No website URL found. Complete a business analysis first.', generationRunId: generationRun.id, status: 'workflow_creation_failed' },
         { status: 400 }
       );
     }
 
-    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl} stories=${stories.length} (raw=${rawStories.length}, max=${MAX_POSTS}) runId=${generationRun.id}`);
+    console.log(`[social/generate] businessId=${businessId || 'none'} mode=${contentSourceMode} url=${websiteUrl} stories=${stories.length} runId=${generationRun.id}`);
 
-    // Send to Tombstone creative workflow
-    const result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary || '', {
-      contentSourceMode,
-      stories,
-      businessId: businessId || undefined,
+    // ── STEP 3: Create Tombstone workflow ────────────────────────────────────
+    const workflowCreateStartedAt = new Date();
+    await prisma.generationRun.update({
+      where: { id: generationRun.id },
+      data: { workflowCreateStartedAt },
     });
 
-    if (!result.success) {
+    let result;
+    try {
+      result = await createSocialMissions(websiteUrl, scoutBrief.scoutSummary || '', {
+        contentSourceMode,
+        stories,
+        businessId: businessId || undefined,
+      });
+    } catch (tombstoneErr: any) {
+      const failedAt = new Date();
       await prisma.generationRun.update({
         where: { id: generationRun.id },
-        data: { status: 'failed', failStep: 'tombstone_dispatch', failError: 'Failed to create Tombstone workflow', failedAt: new Date() },
+        data: {
+          status: 'workflow_creation_failed',
+          failStep: 'tombstone_dispatch',
+          failError: `Tombstone exception: ${tombstoneErr.message}`,
+          failedAt,
+        },
       });
+      console.error(`[social/generate] Tombstone exception for runId=${generationRun.id}:`, tombstoneErr.message);
       return NextResponse.json(
-        { error: 'Failed to create social content mission in Tombstone', generationRunId: generationRun.id },
+        { error: 'Tombstone workflow creation threw an exception', generationRunId: generationRun.id, status: 'workflow_creation_failed' },
         { status: 502 }
       );
     }
 
     const workflowCreatedAt = new Date();
-    const socialMissionId = result.workflowIds.join(',');
+    const workflowCreateDurationMs = workflowCreatedAt.getTime() - workflowCreateStartedAt.getTime();
 
-    // Update generation run with workflow info
+    // ── HARD FAILURE GUARD 1: No success flag ───────────────────────────────
+    if (!result.success) {
+      await prisma.generationRun.update({
+        where: { id: generationRun.id },
+        data: {
+          status: 'workflow_creation_failed',
+          failStep: 'tombstone_dispatch',
+          failError: 'Tombstone returned success=false — no workflow created',
+          failedAt: workflowCreatedAt,
+          workflowCreatedAt,
+        },
+      });
+      console.error(`[social/generate] FAILURE: Tombstone returned success=false for runId=${generationRun.id}`);
+      return NextResponse.json(
+        { error: 'Failed to create Tombstone workflow', generationRunId: generationRun.id, status: 'workflow_creation_failed' },
+        { status: 502 }
+      );
+    }
+
+    // ── HARD FAILURE GUARD 2: No workflow IDs ───────────────────────────────
+    if (!result.workflowIds || result.workflowIds.length === 0) {
+      await prisma.generationRun.update({
+        where: { id: generationRun.id },
+        data: {
+          status: 'workflow_creation_failed',
+          failStep: 'tombstone_no_workflows',
+          failError: 'Tombstone returned success but no workflowIds',
+          failedAt: workflowCreatedAt,
+          workflowCreatedAt,
+        },
+      });
+      console.error(`[social/generate] FAILURE: No workflowIds returned for runId=${generationRun.id}`);
+      return NextResponse.json(
+        { error: 'Tombstone returned success but no workflow was created', generationRunId: generationRun.id, status: 'workflow_creation_failed' },
+        { status: 502 }
+      );
+    }
+
+    // ── HARD FAILURE GUARD 3: No task IDs ───────────────────────────────────
+    if (!result.allTaskIds || result.allTaskIds.length === 0) {
+      await prisma.generationRun.update({
+        where: { id: generationRun.id },
+        data: {
+          status: 'workflow_creation_failed',
+          failStep: 'tombstone_no_tasks',
+          failError: `Tombstone returned ${result.workflowIds.length} workflow(s) but 0 tasks`,
+          failedAt: workflowCreatedAt,
+          workflowIds: result.workflowIds,
+          workflowCreatedAt,
+        },
+      });
+      console.error(`[social/generate] FAILURE: No taskIds returned for runId=${generationRun.id} wf=${result.workflowIds}`);
+      return NextResponse.json(
+        { error: 'Tombstone created workflow but no tasks', generationRunId: generationRun.id, status: 'workflow_creation_failed', workflowIds: result.workflowIds },
+        { status: 502 }
+      );
+    }
+
+    // ── SUCCESS: Update GenerationRun with workflow info ─────────────────────
+    const socialMissionId = result.workflowIds.join(',');
+    const firstTaskId = String(result.allTaskIds[0]);
+
     await prisma.generationRun.update({
       where: { id: generationRun.id },
       data: {
-        status: 'workflow_created',
+        status: 'workflow_running',
         workflowIds: result.workflowIds,
         tombstoneTaskIds: result.allTaskIds.map(String),
+        firstTaskId,
         workflowCreatedAt,
       },
     });
@@ -149,27 +244,35 @@ export async function POST(req: NextRequest) {
       await prisma.analysis.update({
         where: { id: resolvedAnalysisId },
         data: { socialMissionId },
-      });
+      }).catch(() => {}); // non-critical
     }
 
-    const totalDispatchMs = Date.now() - requestReceivedAt;
-    console.log(`[social/generate] Social mission created: ${socialMissionId} (${result.allTaskIds.length} tasks) mode=${contentSourceMode} runId=${generationRun.id} dispatchMs=${totalDispatchMs}`);
+    const totalDispatchMs = Date.now() - apiReceivedMs;
+    console.log(
+      `[social/generate] SUCCESS runId=${generationRun.id} ` +
+      `workflows=${result.workflowIds.length} tasks=${result.allTaskIds.length} ` +
+      `click_to_api=${clickToApiMs}ms api_to_run=${apiToRunMs}ms ` +
+      `workflow_create=${workflowCreateDurationMs}ms total_dispatch=${totalDispatchMs}ms`
+    );
 
     return NextResponse.json({
       success: true,
+      generationRunId: generationRun.id,
+      status: 'workflow_running',
       socialMissionId,
       taskCount: result.allTaskIds.length,
       workflowIds: result.workflowIds,
+      firstTaskId,
       contentSourceMode,
-      generationRunId: generationRun.id,
       timing: {
-        clickToRunCreatedMs: clickToRunMs,
-        runToWorkflowCreatedMs: workflowCreatedAt.getTime() - runCreatedAt,
+        clickToApiMs,
+        apiToRunCreatedMs: apiToRunMs,
+        workflowCreateDurationMs,
         totalDispatchMs,
       },
     });
   } catch (error: any) {
-    console.error('Social generate error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('[social/generate] Unhandled error:', error);
+    return NextResponse.json({ error: error.message, status: 'error' }, { status: 500 });
   }
 }
