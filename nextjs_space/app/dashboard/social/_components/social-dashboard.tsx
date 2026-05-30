@@ -806,8 +806,24 @@ export default function SocialDashboard() {
 
   const handleProgressComplete = async () => {
     // Import completed posts from Tombstone
-    const pollResult = await pollMissions(false);
-    const importedCount = pollResult?.imported ?? 0;
+    // Retry with delays — the Tombstone content queue may not be updated immediately after the workflow completes
+    let pollResult = await pollMissions(false);
+    let importedCount = pollResult?.imported ?? 0;
+
+    if (importedCount === 0) {
+      const MAX_RETRIES = 5;
+      const RETRY_DELAY_MS = 15_000;
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        console.log(`[handleProgressComplete] Poll returned 0 imports, retrying in ${RETRY_DELAY_MS / 1000}s (attempt ${attempt}/${MAX_RETRIES})...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+        pollResult = await pollMissions(false);
+        importedCount = pollResult?.imported ?? 0;
+        if (importedCount > 0) {
+          console.log(`[handleProgressComplete] Retry ${attempt} succeeded: imported ${importedCount} post(s)`);
+          break;
+        }
+      }
+    }
 
     // Refresh the post list
     await fetchPosts();
