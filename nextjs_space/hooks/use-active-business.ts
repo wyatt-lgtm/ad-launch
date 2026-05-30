@@ -7,12 +7,23 @@ export interface BusinessInfo {
   id: string;
   websiteUrl: string;
   businessName: string | null;
+  /** Derived from websiteUrl — e.g. "blazinghog.com" */
+  businessDomain: string;
   businessCity: string | null;
   businessState: string | null;
   businessZip: string | null;
   createdAt: string;
   updatedAt: string;
   _count: { analyses: number };
+}
+
+/** Extract clean domain from a URL string */
+function extractDomain(url: string): string {
+  try {
+    return new URL(url.startsWith('http') ? url : `https://${url}`).hostname.replace(/^www\./, '');
+  } catch {
+    return url.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+  }
 }
 
 interface UseActiveBusinessResult {
@@ -84,6 +95,7 @@ export function useActiveBusiness(): UseActiveBusinessResult {
         id: b.id,
         websiteUrl: b.websiteUrl,
         businessName: b.businessName,
+        businessDomain: extractDomain(b.websiteUrl || ''),
         businessCity: b.businessCity,
         businessState: b.businessState,
         businessZip: b.businessZip,

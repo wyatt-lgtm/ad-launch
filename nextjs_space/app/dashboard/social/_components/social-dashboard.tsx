@@ -87,6 +87,9 @@ interface SocialPost {
   generationStartedAt: string | null;
   generationCompletedAt: string | null;
   totalGenerationTimeMs: number | null;
+  businessId: string | null;
+  businessName: string | null;
+  businessWebsiteUrl: string | null;
 }
 
 interface SocialAccount {
@@ -552,7 +555,11 @@ export default function SocialDashboard() {
     const tombstoneRes = await fetch('/api/social/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scoutBrief: brief, clickedAt }),
+      body: JSON.stringify({
+        scoutBrief: brief,
+        businessId: activeBusinessId || undefined,
+        clickedAt,
+      }),
     });
     const tombstoneData = await tombstoneRes.json();
 
@@ -1927,6 +1934,12 @@ export default function SocialDashboard() {
                               <MapPin className="w-3 h-3" /> {post.tradeAreaZip}
                             </span>
                           )}
+                          {post.businessName && (
+                            <span className="inline-flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                              <Building2 className="w-3 h-3" />
+                              {post.businessName}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           {post.status === 'pending_approval' && (
@@ -1966,6 +1979,16 @@ export default function SocialDashboard() {
                           </button>
                         </div>
                       </div>
+
+                      {/* Business mismatch warning */}
+                      {activeBusinessId && post.businessId && post.businessId !== activeBusinessId && (
+                        <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                          <p className="text-xs text-amber-700">
+                            This post belongs to <strong>{post.businessName || 'another business'}</strong> — not the currently selected business.
+                          </p>
+                        </div>
+                      )}
 
                       {/* Source headline */}
                       {post.rssItemTitle && (

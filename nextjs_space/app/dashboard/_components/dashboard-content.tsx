@@ -11,6 +11,7 @@ import {
 import UrlInputForm from '../../components/url-input-form';
 import CreditBadge from '../../components/credit-badge';
 import BillingSection from '../../components/billing-section';
+import { useActiveBusiness } from '@/hooks/use-active-business';
 
 const STORAGE_KEY = 'adlaunch_active_business_id';
 
@@ -36,9 +37,11 @@ interface BusinessItem {
 export default function DashboardContent() {
   const { data: session, status: sessionStatus } = useSession() || {};
   const router = useRouter();
+  const bizCtx = useActiveBusiness();
   const [businesses, setBusinesses] = useState<BusinessItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewAnalysis, setShowNewAnalysis] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (sessionStatus === 'unauthenticated') {
@@ -134,13 +137,29 @@ export default function DashboardContent() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
-                className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group"
+                className={`bg-white rounded-xl p-5 shadow-sm border-2 transition-all cursor-pointer group ${
+                  bizCtx.activeBusiness?.id === biz.id
+                    ? 'border-blue-500 ring-2 ring-blue-200 shadow-blue-100'
+                    : 'border-gray-100 hover:shadow-md hover:border-gray-200'
+                }`}
                 onClick={() => {
-                  // Persist this business as the active selection
-                  try { localStorage.setItem(STORAGE_KEY, biz.id); } catch {}
-                  try { sessionStorage.setItem(STORAGE_KEY, biz.id); } catch {}
-                  console.log('[BusinessContext] selected business changed', { selected_business_id: biz.id, selected_business_name: biz.businessName });
-                  // Go to latest analysis result or analysis tracker
+                  // Set active business via hook (handles localStorage + cross-tab sync)
+                  bizCtx.setActiveBusiness({
+                    id: biz.id,
+                    websiteUrl: biz.websiteUrl,
+                    businessName: biz.businessName,
+                    businessDomain: (() => { try { return new URL(biz.websiteUrl.startsWith('http') ? biz.websiteUrl : `https://${biz.websiteUrl}`).hostname.replace(/^www\./, ''); } catch { return biz.websiteUrl; } })(),
+                    businessCity: biz.businessCity,
+                    businessState: biz.businessState,
+                    businessZip: biz.businessZip,
+                    createdAt: biz.createdAt,
+                    updatedAt: biz.updatedAt,
+                    _count: biz._count,
+                  });
+                  // Show toast
+                  setToastMsg(`Current Business set to ${displayName}`);
+                  setTimeout(() => setToastMsg(null), 3000);
+                  // Navigate
                   if (latestAnalysis) {
                     const route = latestAnalysis.status === 'completed'
                       ? `/results/${latestAnalysis.id}`
@@ -203,6 +222,14 @@ export default function DashboardContent() {
       {businesses.length > 0 && (
         <div className="mt-8">
           <BillingSection businessId={businesses[0].id} />
+        </div>
+      )}
+
+      {/* Toast */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 bg-blue-600 text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 animate-fade-in-up">
+          <Building2 className="w-4 h-4" />
+          {toastMsg}
         </div>
       )}
     </div>

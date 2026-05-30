@@ -3,8 +3,9 @@
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send, Coins } from 'lucide-react';
+import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send, Coins, Building2 } from 'lucide-react';
 import { useState } from 'react';
+import { useActiveBusiness } from '@/hooks/use-active-business';
 
 interface NavItem {
   href: string;
@@ -18,6 +19,7 @@ export default function Header() {
   const { data: session, status } = useSession() || {};
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+  const bizCtx = useActiveBusiness();
 
   const publicNav: NavItem[] = [
     { href: '/search', label: 'Find Businesses', icon: Search, matchPaths: ['/search'] },
@@ -67,6 +69,7 @@ export default function Header() {
   const allNav = status === 'authenticated' ? [...publicNav, ...authNav] : publicNav;
 
   return (
+    <>
     <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-100 shadow-sm">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
         <Link href="/" className="flex items-center gap-2 group">
@@ -134,5 +137,25 @@ export default function Header() {
         </div>
       )}
     </header>
+
+    {/* Global Business Context Banner */}
+    {status === 'authenticated' && pathname !== '/' && pathname !== '/login' && pathname !== '/register' && (
+      <div className="bg-slate-50 border-b border-slate-200">
+        <div className="max-w-[1200px] mx-auto px-4 sm:px-6 flex items-center gap-2 h-9 text-xs">
+          <Building2 className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+          {bizCtx.activeBusiness ? (
+            <>
+              <span className="font-semibold text-slate-700">Current Business:</span>
+              <span className="text-slate-900 font-medium">{bizCtx.activeBusiness.businessName || bizCtx.activeBusiness.businessDomain}</span>
+              <span className="text-slate-400 hidden sm:inline">·</span>
+              <span className="text-slate-500 hidden sm:inline">{bizCtx.activeBusiness.businessDomain}</span>
+            </>
+          ) : (
+            <span className="text-amber-600 font-medium">No business selected — select one from the Dashboard</span>
+          )}
+        </div>
+      </div>
+    )}
+    </>
   );
 }

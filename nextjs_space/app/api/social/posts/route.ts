@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: 'desc' },
         take: limit,
         skip: offset,
+        include: { business: { select: { businessName: true, websiteUrl: true } } },
       }),
       prisma.socialPost.count({ where }),
     ]);
@@ -52,6 +53,9 @@ export async function GET(req: NextRequest) {
         generationStartedAt: (post as any).generationStartedAt || null,
         generationCompletedAt: (post as any).generationCompletedAt || null,
         totalGenerationTimeMs: (post as any).totalGenerationTimeMs || null,
+        businessId: (post as any).businessId || null,
+        businessName: (post as any).business?.businessName || null,
+        businessWebsiteUrl: (post as any).business?.websiteUrl || null,
       };
       if (!post.imageUrl) return base;
       // Already a public S3 URL — keep as-is

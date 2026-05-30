@@ -345,6 +345,18 @@ export async function createSocialMissions(
     normalizedUrl,
   );
 
+  // Preflight: validate the identity lock matches the selected business
+  const preflight = validateIdentityPreflight({
+    selectedBusinessName: options.businessName,
+    selectedBusinessDomain: options.businessDomain,
+    identityLockName: options.businessName,
+    identityLockDomain: options.businessDomain,
+  });
+  if (!preflight.valid) {
+    console.error(`[tombstone] IDENTITY_PREFLIGHT_FAILED: ${preflight.error}`);
+    throw new Error(preflight.error);
+  }
+
   // If no individual stories provided, fall back to single command with full brief
   if (stories.length === 0) {
     console.log(`[tombstone] No individual stories — sending single command for: ${normalizedUrl}`);
@@ -418,6 +430,60 @@ export async function createSocialMissions(
  * for mission titles, brand bridges, CTAs, and creative output — regardless
  * of what any scraped website returns.
  */
+/**
+ * Preflight validation: ensures selected business identity matches the identity lock.
+ * Throws a descriptive error if mismatched.
+ */
+export function validateIdentityPreflight(opts: {
+  selectedBusinessName?: string;
+  selectedBusinessDomain?: string;
+  identityLockName?: string;
+  identityLockDomain?: string;
+  commandText?: string;
+}): { valid: boolean; error?: string } {
+  const selName = (opts.selectedBusinessName || '').toLowerCase().trim();
+  const selDomain = (opts.selectedBusinessDomain || '').toLowerCase().replace(/^www\./, '').trim();
+  const lockName = (opts.identityLockName || '').toLowerCase().trim();
+  const lockDomain = (opts.identityLockDomain || '').toLowerCase().replace(/^www\./, '').trim();
+
+  if (!selName && !selDomain) {
+    return { valid: false, error: 'No business selected. Please select a business before generating.' };
+  }
+
+  // Check identity lock name matches
+  if (lockName && selName && lockName !== selName && !lockName.includes(selName) && !selName.includes(lockName)) {
+    return {
+      valid: false,
+      error: `Business identity mismatch: selected business is "${opts.selectedBusinessName}", but command was built for "${opts.identityLockName}".`,
+    };
+  }
+
+  // Check identity lock domain matches
+  if (lockDomain && selDomain && lockDomain !== selDomain && !lockDomain.includes(selDomain) && !selDomain.includes(lockDomain)) {
+    return {
+      valid: false,
+      error: `Business identity mismatch: selected domain is "${opts.selectedBusinessDomain}", but command targets "${opts.identityLockDomain}".`,
+    };
+  }
+
+  // Check command text for foreign advertiser names (if command is provided)
+  if (opts.commandText && selName) {
+    // Extract advertiser name from lock block in command
+    const lockMatch = opts.commandText.match(/Advertiser Business Name:\s*(.+)/i);
+    if (lockMatch) {
+      const cmdAdvName = lockMatch[1].trim().toLowerCase();
+      if (cmdAdvName !== selName && !cmdAdvName.includes(selName) && !selName.includes(cmdAdvName)) {
+        return {
+          valid: false,
+          error: `Business identity mismatch: selected business is "${opts.selectedBusinessName}", but identity lock advertiser is "${lockMatch[1].trim()}".`,
+        };
+      }
+    }
+  }
+
+  return { valid: true };
+}
+
 function buildIdentityLockBlock(
   businessName: string,
   businessDomain: string,
