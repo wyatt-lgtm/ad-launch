@@ -478,6 +478,7 @@ model PostPackage {
   suggestedAngle  String      @default("")
   completedAt     DateTime?
   completionEmailSent Boolean  @default(false)
+  qaRejectReason      String?
   // Credit tracking
   creditChargedAt     DateTime?
   creditCost          Int?         @default(0)
