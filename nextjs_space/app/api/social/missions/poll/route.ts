@@ -157,18 +157,27 @@ export async function POST(req: NextRequest) {
           const caption = detail.base_caption || detail.preview_text || item.preview_text || '';
           const cta = detail.cta || '';
           const hashtags = Array.isArray(detail.hashtags) ? detail.hashtags : [];
-          const imageUrl = item.first_image_url || '';
+          const rawImageUrl = item.first_image_url || '';
 
-          // Resolve image URL through Tombstone artifacts if it's an R2 key
-          let resolvedImageUrl = imageUrl;
-          if (imageUrl && !imageUrl.startsWith('http')) {
+          // Extract the R2 key from presigned URLs so we can resolve fresh URLs on-demand.
+          // Presigned R2 URLs look like: https://<bucket>.r2.cloudflarestorage.com/<bucket-name>/<key>?X-Amz-...
+          // We strip the query string and the bucket prefix to get just the artifact key.
+          let imageKey = rawImageUrl;
+          if (rawImageUrl.startsWith('http')) {
             try {
-              const artRes = await fetch(`${TOMBSTONE_URL}/artifacts/resolve?key=${encodeURIComponent(imageUrl)}`);
-              if (artRes.ok) {
-                const artData = await artRes.json();
-                resolvedImageUrl = artData.url || imageUrl;
+              const parsed = new URL(rawImageUrl);
+              // Path is like /tombstoner2/renders/task_1559/file.png
+              // Remove leading slash and bucket prefix
+              let pathPart = parsed.pathname.replace(/^\//, '');
+              // Remove bucket name prefix if present (e.g. "tombstoner2/")
+              const bucketPrefix = 'tombstoner2/';
+              if (pathPart.startsWith(bucketPrefix)) {
+                pathPart = pathPart.slice(bucketPrefix.length);
               }
-            } catch { /* keep original */ }
+              imageKey = pathPart;
+            } catch {
+              imageKey = rawImageUrl;
+            }
           }
 
           // Try to determine post type from campaign name or summary
@@ -186,7 +195,7 @@ export async function POST(req: NextRequest) {
             workflowId: item.workflow_id || null,
             caption: caption + (cta ? `\n\n${cta}` : ''),
             hashtags,
-            imageUrl: resolvedImageUrl || null,
+            imageUrl: imageKey || null,
             postType: 'general',
             sourceType: campaignName ? 'campaign' : null,
             newsAngle: campaignName || null,

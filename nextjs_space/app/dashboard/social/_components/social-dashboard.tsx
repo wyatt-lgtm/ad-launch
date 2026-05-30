@@ -16,6 +16,46 @@ import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
 import GenerationProgress from './generation-progress';
 
+/**
+ * Build a proxy URL for an image key (R2 artifact path or legacy full URL).
+ * Uses /api/social/image-proxy which resolves, fetches, and caches the image server-side.
+ */
+function proxyImageUrl(imageUrl: string): string {
+  if (!imageUrl) return '';
+  // Non-R2 full URLs (S3, external) — pass through to proxy which handles them
+  return `/api/social/image-proxy?key=${encodeURIComponent(imageUrl)}`;
+}
+
+/** Small component that displays images through the proxy */
+function ResolvedImage({ imageUrl, alt, className }: { imageUrl: string; alt: string; className?: string }) {
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  if (error) {
+    return <span className="text-xs text-gray-400">Image unavailable</span>;
+  }
+
+  return (
+    <>
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center text-gray-400 z-0">
+          <div className="flex flex-col items-center gap-2">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span className="text-xs">Loading image…</span>
+          </div>
+        </div>
+      )}
+      <img
+        src={proxyImageUrl(imageUrl)}
+        alt={alt}
+        className={className || 'relative w-full h-full object-contain z-10'}
+        onLoad={() => setLoading(false)}
+        onError={() => { setLoading(false); setError(true); }}
+      />
+    </>
+  );
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 interface SocialPost {
@@ -773,7 +813,7 @@ export default function SocialDashboard() {
     setDownloadingId(post.id);
     const slug = (post.caption || 'post').slice(0, 40).replace(/[^a-zA-Z0-9]+/g, '_').replace(/_+$/, '');
     try {
-      const imgRes = await fetch(post.imageUrl);
+      const imgRes = await fetch(proxyImageUrl(post.imageUrl));
       if (imgRes.ok) {
         const imgBlob = await imgRes.blob();
         const ext = imgBlob.type.includes('png') ? 'png' : imgBlob.type.includes('webp') ? 'webp' : 'jpg';
@@ -858,7 +898,7 @@ export default function SocialDashboard() {
     // Download image if available
     if (post.imageUrl) {
       try {
-        const imgRes = await fetch(post.imageUrl);
+        const imgRes = await fetch(proxyImageUrl(post.imageUrl));
         if (imgRes.ok) {
           const imgBlob = await imgRes.blob();
           const ext = imgBlob.type.includes('png') ? 'png' : imgBlob.type.includes('webp') ? 'webp' : 'jpg';
@@ -1902,26 +1942,10 @@ export default function SocialDashboard() {
 
                       {/* Post image (from Tombstone creative workflow) */}
                       {post.imageUrl && (
-                        <div className="relative w-full max-w-md mx-auto aspect-[2/3] bg-gray-100 rounded-lg overflow-hidden mb-3">
-                          <div className="absolute inset-0 flex items-center justify-center text-gray-400 img-loading-indicator">
-                            <div className="flex flex-col items-center gap-2">
-                              <Loader2 className="w-6 h-6 animate-spin" />
-                              <span className="text-xs">Loading image…</span>
-                            </div>
-                          </div>
-                          <img
-                            src={post.imageUrl}
+                        <div className="relative w-full max-w-md mx-auto aspect-[4/5] bg-gray-100 rounded-lg overflow-hidden mb-3">
+                          <ResolvedImage
+                            imageUrl={post.imageUrl}
                             alt={post.newsAngle || 'Social post image'}
-                            className="relative w-full h-full object-contain z-10"
-                            onLoad={(e) => {
-                              const indicator = (e.target as HTMLImageElement).parentElement?.querySelector('.img-loading-indicator');
-                              if (indicator) (indicator as HTMLElement).style.display = 'none';
-                            }}
-                            onError={(e) => {
-                              const indicator = (e.target as HTMLImageElement).parentElement?.querySelector('.img-loading-indicator');
-                              if (indicator) (indicator as HTMLElement).innerHTML = '<span class="text-xs text-gray-400">Image unavailable</span>';
-                              (e.target as HTMLImageElement).style.display = 'none';
-                            }}
                           />
                         </div>
                       )}
