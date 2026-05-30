@@ -258,17 +258,39 @@ export async function POST(req: NextRequest) {
 
     const now = new Date();
 
-    // Separate posts with usable output from incomplete shells
+    // Validate required fields and separate complete from incomplete/failed
     const completePosts: any[] = [];
     const incompletePosts: any[] = [];
     for (const post of posts) {
+      const missing: string[] = [];
+      if (!post.caption?.trim()) missing.push('caption');
+      if (!post.imageUrl) missing.push('imageUrl');
+      if (!post.cta) missing.push('cta');
+      if (!post.sourceName && !post.sourceArticleTitle) missing.push('source_attribution');
+      if (!post.sourceArticleUrl) missing.push('sourceArticleUrl');
+
+      post._missingFields = missing;
+      post._importError = null;
+
       const hasCaption = !!post.caption?.trim();
       const hasImage = !!post.imageUrl;
+
       if (hasCaption || hasImage) {
-        completePosts.push(post);
+        // Has at least some renderable content — mark as complete but track missing fields
+        if (missing.length > 0 && !hasCaption) {
+          // Has image but no caption — generation_incomplete
+          post._importStatus = 'generation_incomplete';
+          post._importError = `Missing required fields: ${missing.join(', ')}`;
+          incompletePosts.push(post);
+        } else {
+          completePosts.push(post);
+        }
       } else {
+        // No caption AND no image — generation_failed
+        post._importStatus = 'generation_failed';
+        post._importError = `No usable output — missing: ${missing.join(', ')}`;
         incompletePosts.push(post);
-        console.warn(`[missions/poll] Incomplete post skipped: wf=${post.workflowId} task=${post.tombstoneTaskId} — no caption or image`);
+        console.warn(`[missions/poll] Failed post: wf=${post.workflowId} task=${post.tombstoneTaskId} — ${post._importError}`);
       }
     }
 
@@ -311,33 +333,39 @@ export async function POST(req: NextRequest) {
       skipDuplicates: true,
     });
 
-    // Create shell records for incomplete posts so they're visible with a failed status
+    // Create shell records for incomplete/failed posts so they're visible with diagnostic info
+    let incompleteCreated = 0;
     if (incompletePosts.length > 0) {
-      await prisma.socialPost.createMany({
+      const result = await prisma.socialPost.createMany({
         data: incompletePosts.map((post) => {
           const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
+          const status = post._importStatus || 'generation_failed';
+          // Build caption with diagnostic info for failed/incomplete posts
+          const diagCaption = post.caption?.trim()
+            ? post.caption
+            : `[${status === 'generation_incomplete' ? 'Generation incomplete' : 'Generation failed'} — ${post._importError || 'no usable output'}]`;
           return {
             userId,
             analysisId: ref?.analysisId || socialDefaultAnalysisId,
             businessId: ref?.businessId || socialDefaultBusinessId,
-            caption: post.caption || '[Generation incomplete — no output]',
+            caption: diagCaption,
             hashtags: [],
-            imageUrl: null,
+            imageUrl: post.imageUrl || null,
             imagePrompt: null,
             postType: post.postType || 'general',
             sourceType: post.sourceType || null,
             newsAngle: post.newsAngle || null,
             patternType: null,
-            rssItemTitle: null,
-            rssItemLink: null,
+            rssItemTitle: post.sourceArticleTitle || null,
+            rssItemLink: post.sourceArticleUrl || null,
             platforms: post.platforms || [],
-            status: 'generation_failed',
+            status,
             tombstoneTaskId: post.tombstoneTaskId || null,
             workflowId: post.workflowId || null,
             sourceName: post.sourceName || null,
             sourceArticleTitle: post.sourceArticleTitle || null,
             sourceArticleUrl: post.sourceArticleUrl || null,
-            cta: null,
+            cta: post.cta || null,
             generationRunId: generationRun?.id || null,
             generationStartedAt: generationRun?.clickedAt || null,
             generationCompletedAt: now,
@@ -348,7 +376,8 @@ export async function POST(req: NextRequest) {
         }),
         skipDuplicates: true,
       });
-      console.warn(`[missions/poll] Created ${incompletePosts.length} incomplete shell records with status=generation_failed`);
+      incompleteCreated = result.count;
+      console.warn(`[missions/poll] Created ${incompleteCreated} incomplete/failed shell records (${incompletePosts.map(p => p._importStatus).join(', ')})`);
     }
 
     // Update GenerationRun to completed
@@ -368,14 +397,27 @@ export async function POST(req: NextRequest) {
       console.log(`[missions/poll] GenerationRun ${generationRun.id} completed in ${totalMs}ms`);
     }
 
-    console.log(`[missions/poll] Imported ${createdPosts.count} social posts (runId=${generationRun?.id || 'none'})`);
+    const totalImported = createdPosts.count + incompleteCreated;
+    console.log(`[missions/poll] Imported ${createdPosts.count} complete + ${incompleteCreated} incomplete social posts (runId=${generationRun?.id || 'none'})`);
 
     return NextResponse.json({
       polled: workflowIds.length,
-      imported: createdPosts.count,
+      imported: totalImported,
+      importedComplete: createdPosts.count,
+      importedIncomplete: incompleteCreated,
       pending: 0,
       status: 'imported',
-      message: `Successfully imported ${createdPosts.count} social posts!`,
+      message: `Imported ${createdPosts.count} post${createdPosts.count !== 1 ? 's' : ''}` +
+        (incompleteCreated > 0 ? ` (${incompleteCreated} incomplete/failed)` : '') + '.',
+      diagnostics: incompletePosts.map(p => ({
+        tombstoneTaskId: p.tombstoneTaskId,
+        workflowId: p.workflowId,
+        status: p._importStatus,
+        missingFields: p._missingFields,
+        importError: p._importError,
+        hasCaption: !!p.caption?.trim(),
+        hasImage: !!p.imageUrl,
+      })),
     });
   } catch (error: any) {
     console.error('Social missions poll error:', error);
