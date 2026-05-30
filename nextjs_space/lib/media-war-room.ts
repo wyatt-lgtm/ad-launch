@@ -20,6 +20,17 @@ export interface WarRoomInput {
   visualDirection: string;
   generationPrompt: string;
   storyContext?: string;
+  storyVisualBrief?: {
+    is_story_based?: boolean;
+    story_subject?: string;
+    story_people?: string;
+    story_setting?: string;
+    story_action?: string;
+    story_emotional_theme?: string;
+    brand_connection?: string;
+    required_visual_elements?: string[];
+    forbidden_generic_imagery?: string[];
+  };
   restrictedClaims?: string[];
   mediaType?: 'image' | 'video' | 'audio';
 }
@@ -55,12 +66,28 @@ Rules:
 10. TEXT_OVERFLOW – Reject if text overlay instructions are too long or likely to be malformed/cropped.
 11. WEAK_HOOK – Reject if the design lacks a strong visual hook that would stop a user from scrolling.
 12. LANDSCAPE_SOCIAL_FEED – Reject if the creative direction or generation prompt specifies landscape orientation (16:9) for a social media feed post. Social feed creative MUST use 4:5 portrait for mobile-first viewing. Revise to 4:5 portrait unless the placement explicitly requires landscape.
-13. STORY_GENERIC_IMAGERY – For RSS/story-based posts: FAIL if the prompt describes generic category imagery instead of story-specific visuals from the article. The image must visually communicate the article's subject with at least 2 story-specific elements. For non-story posts, this rule auto-PASSES.
+
+=== RSS / STORY-BASED POST RULES (13–18) ===
+These rules apply ONLY when the brief references an article, RSS source, trending topic, or story context. For non-story posts (direct brand/product ads), rules 13–18 auto-PASS.
+
+13. STORY_RELEVANCE – Does the image concept clearly communicate the article's actual subject? The viewer should understand what the story is about from the image alone. FAIL if the concept is about generic rural internet, WiFi equipment, or abstract connectivity symbols when the story is about people, events, community, business, or leadership. Score 0–5; hard-fail if score < 4.
+14. STORY_VISUAL_EVIDENCE – Does the concept include at least 2 visible elements directly tied to the specific story (e.g., a named event, a specific person's role, a described setting, an action from the article)? Generic elements (modem, router, antenna, WiFi arcs, fence post, rolling hills) do NOT count as story-specific. FAIL if fewer than 2 story-specific visual elements are described. Score 0–5.
+15. HUMAN_ACTION_MATCH – If the story is about people, leadership, work, events, family, community, or business, the image concept MUST show a relevant human/action scene — not only a product, landscape, modem, tower, or abstract WiFi symbol. FAIL if the story involves people but the concept shows only equipment or scenery. Score 0–5.
+16. PRODUCT_AS_BRIDGE – The advertiser's product (e.g., Blazing Hog modem, antenna, router) should appear as the enabler of the story, NOT replace the story. The product is the bridge, not the subject. FAIL if the product/equipment is the primary visual subject instead of the story. Score 0–5.
+17. GENERIC_IMAGE_REJECTION – Hard fail any concept that could be reused for almost any rural internet / connectivity post without changing the meaning. If you removed the headline and this image could run on any ISP's social feed, it fails. Score 0–5; hard-fail if score < 3.
+18. MOBILE_FORMAT_RSS – RSS/social post images should default to portrait (4:5) or vertical format unless landscape was explicitly requested in the brief. FAIL if the concept specifies landscape for an RSS/social post. Score 0–5.
 
 After evaluating all rules:
 - If ALL rules pass: decision = "approved"
 - If 1-3 rules fail but fixable: decision = "revise", provide improved versions
 - If 4+ rules fail or concept is fundamentally flawed: decision = "reject"
+- ADDITIONAL HARD FAIL: If ANY of these conditions are true, decision MUST be "reject" regardless of other rules:
+  - STORY_RELEVANCE score < 4
+  - STORY_VISUAL_EVIDENCE identifies fewer than 2 story-specific elements
+  - The image is generic rural internet equipment only (GENERIC_IMAGE_REJECTION score < 3)
+  - The image does not visually connect the article to the advertiser
+  - CTA or headline would be unreadable on mobile
+  - The image defaults to landscape for an RSS/social post
 
 Provide an overall quality score from 0 to 100.
 
@@ -85,8 +112,14 @@ Respond with raw JSON only (no markdown fences). Schema:
     { "id": "TEXT_OVERFLOW", "result": "PASS|FAIL", "reason": "..." },
     { "id": "WEAK_HOOK", "result": "PASS|FAIL", "reason": "..." },
     { "id": "LANDSCAPE_SOCIAL_FEED", "result": "PASS|FAIL", "reason": "..." },
-    { "id": "STORY_GENERIC_IMAGERY", "result": "PASS|FAIL", "reason": "..." }
+    { "id": "STORY_RELEVANCE", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "STORY_VISUAL_EVIDENCE", "result": "PASS|FAIL", "reason": "...", "sub_score": 0, "story_elements_found": ["element1", "element2"] },
+    { "id": "HUMAN_ACTION_MATCH", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "PRODUCT_AS_BRIDGE", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "GENERIC_IMAGE_REJECTION", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "MOBILE_FORMAT_RSS", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 }
   ],
+  "story_scores": { "story_relevance": 0, "story_visual_evidence": 0, "blazing_hog_connection": 0, "human_action_clarity": 0, "mobile_readability": 0, "generic_stock_penalty": 0 },
   "score": 72,
   "decision": "approved|revise|reject",
   "improvement_notes": ["..."],
@@ -135,6 +168,19 @@ export async function reviewMediaConceptBeforeGeneration(
     input.generationPrompt || '(none)',
     ``,
     input.storyContext ? `Story/topic context:\n${input.storyContext}` : '',
+    input.storyVisualBrief?.is_story_based ? [
+      '',
+      '=== STORY VISUAL BRIEF (RSS/article-based post) ===',
+      `Story Subject: ${input.storyVisualBrief.story_subject || 'N/A'}`,
+      `Story People: ${input.storyVisualBrief.story_people || 'N/A'}`,
+      `Story Setting: ${input.storyVisualBrief.story_setting || 'N/A'}`,
+      `Story Action: ${input.storyVisualBrief.story_action || 'N/A'}`,
+      `Story Emotional Theme: ${input.storyVisualBrief.story_emotional_theme || 'N/A'}`,
+      `Brand Connection: ${input.storyVisualBrief.brand_connection || 'N/A'}`,
+      `Required Visual Elements: ${(input.storyVisualBrief.required_visual_elements || []).join(', ') || 'N/A'}`,
+      `Forbidden Generic Imagery: ${(input.storyVisualBrief.forbidden_generic_imagery || []).join(', ') || 'N/A'}`,
+      '=== END STORY VISUAL BRIEF ===',
+    ].join('\n') : '',
     input.restrictedClaims?.length
       ? `Restricted claims (must NOT appear): ${input.restrictedClaims.join(', ')}`
       : '',
@@ -154,7 +200,7 @@ export async function reviewMediaConceptBeforeGeneration(
           { role: 'user', content: userContent },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 1500,
+        max_tokens: 2500,
         temperature: 0.15,
       }),
     });

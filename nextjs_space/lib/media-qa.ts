@@ -3,7 +3,7 @@
  * customer-visible.
  *
  * Generalised from `post-qa.ts` to support any media type.
- * Hard-fail rules for rendered images:
+ * Core hard-fail rules (1-10) for rendered images:
  *  1.  >~15% blank / unused canvas space
  *  2.  Image CTA doesn't match approved CTA
  *  3.  Image subject doesn't visibly support the post topic
@@ -15,6 +15,14 @@
  *  9.  Unreadable overlay text (contrast, size, font issues)
  *  10. Off-brand or misleading imagery
  *
+ * RSS / Story-based post rules (11-16):
+ *  11. Story relevance (score 0-5, hard-fail < 4)
+ *  12. Story-specific visual evidence (min 2 elements)
+ *  13. Human/action match for people stories
+ *  14. Product-as-bridge (product enables story, not replaces it)
+ *  15. Generic image rejection (score 0-5, hard-fail < 3)
+ *  16. Mobile format (portrait 4:5 default for RSS/social)
+ *
  * Searchable log prefix: MEDIA_FINAL_QA_*
  */
 
@@ -25,6 +33,17 @@ export interface MediaQaInput {
   cta: string;
   businessName: string;
   storyTitle: string;
+  storyVisualBrief?: {
+    is_story_based?: boolean;
+    story_subject?: string;
+    story_people?: string;
+    story_setting?: string;
+    story_action?: string;
+    story_emotional_theme?: string;
+    brand_connection?: string;
+    required_visual_elements?: string[];
+    forbidden_generic_imagery?: string[];
+  };
   mediaType?: 'image' | 'video' | 'audio';
   platform?: string;
 }
@@ -39,7 +58,7 @@ export interface MediaQaResult {
 const SYSTEM_PROMPT = `You are a senior creative quality-assurance reviewer for social-media ad images.
 You will receive an image and contextual metadata (post copy, headline, CTA, business name, story title).
 
-Evaluate the image against these TEN hard-fail rules. For each rule, output PASS or FAIL with a brief reason.
+Evaluate the image against these sixteen rules (ten core + six RSS/story). For each rule, output PASS or FAIL with a brief reason.
 
 Rules:
 1. BLANK_SPACE – Reject if roughly more than 15% of the canvas is blank, solid-colour filler, or otherwise unused.
@@ -52,9 +71,28 @@ Rules:
 8. ASPECT_RATIO_MISMATCH – Reject if the image is landscape/horizontal when the expected output is portrait/mobile-first for a social media feed. RSS/social feed creative should default to portrait (4:5) format. Landscape images for social feed posts are a hard fail unless landscape was explicitly requested. Failure message: "RSS social creative should default to portrait/mobile-first format unless landscape was explicitly requested."
 9. TEXT_READABILITY – Reject if any overlay text has poor contrast, is too small, uses illegible fonts, or is obscured by the background.
 10. BRAND_ALIGNMENT – Reject if the imagery is off-brand, misleading, or contradicts the business's identity/values.
-11. STORY_VISUAL_RELEVANCE – For RSS/story-based posts: Reject if the rendered image shows generic category imagery instead of story-specific visuals. The image must visually communicate the article's subject. If the image could be reused for any generic post in the same category, it fails. For non-story posts, this rule auto-PASSES.
 
-After evaluating all eleven rules, provide an overall quality score from 0 to 100.
+=== RSS / STORY-BASED POST RULES (11–16) ===
+These rules apply ONLY when the story/topic context references an article, RSS source, trending topic, or news story. For non-story posts (direct brand/product ads), rules 11–16 auto-PASS.
+
+11. STORY_RELEVANCE – Does the rendered image clearly communicate the article's actual subject? The viewer should understand what the story is about from the image alone. FAIL if the image shows generic rural internet equipment, WiFi symbols, or abstract connectivity when the story is about people, events, community, business, or leadership. Score 0–5; hard-fail if score < 4.
+12. STORY_VISUAL_EVIDENCE – Does the rendered image include at least 2 visible elements directly tied to the specific story (e.g., a named event, a person in a relevant role, a described setting, an action from the article)? Generic elements (modem, router, antenna, WiFi arcs, fence post, rolling hills) do NOT count as story-specific. FAIL if fewer than 2 story-specific visual elements are visible. Score 0–5.
+13. HUMAN_ACTION_MATCH – If the story is about people, leadership, work, events, family, community, or business, the image MUST show a relevant human/action scene — not only a product, landscape, modem, tower, or abstract WiFi symbol. FAIL if the story involves people but the image shows only equipment or scenery. Score 0–5.
+14. PRODUCT_AS_BRIDGE – The advertiser's product (e.g., Blazing Hog modem, antenna, router) should appear as the enabler of the story, NOT replace the story. The product is the bridge, not the subject. FAIL if the product/equipment is the primary visual subject instead of the story. Score 0–5.
+15. GENERIC_IMAGE_REJECTION – Hard fail any image that could be reused for almost any rural internet / connectivity post without changing the meaning. If you removed the headline and this image could run on any ISP's social feed, it fails. Score 0–5; hard-fail if score < 3.
+16. MOBILE_FORMAT_RSS – RSS/social post images should be portrait (4:5) or vertical format. FAIL if the rendered image is landscape for an RSS/social post when portrait was expected. Score 0–5.
+
+After evaluating all sixteen rules, provide:
+- Individual rule results with sub-scores for story rules (0–5)
+- A story_scores object with: story_relevance (0–5), story_visual_evidence (0–5), blazing_hog_connection (0–5), human_action_clarity (0–5), mobile_readability (0–5), generic_stock_penalty (0–5)
+- An overall quality score from 0 to 100
+- ADDITIONAL HARD FAIL: If ANY of these conditions are true, the image FAILS regardless of other rules:
+  - STORY_RELEVANCE score < 4
+  - Fewer than 2 story-specific visual elements are visible
+  - The image is generic rural internet equipment only (GENERIC_IMAGE_REJECTION score < 3)
+  - The image does not visually connect the article to the advertiser
+  - CTA or headline is unreadable on mobile
+  - The image is landscape for an RSS/social post
 
 Respond with raw JSON only (no markdown fences). Schema:
 {
@@ -69,8 +107,14 @@ Respond with raw JSON only (no markdown fences). Schema:
     { "id": "ASPECT_RATIO_MISMATCH", "result": "PASS|FAIL", "reason": "..." },
     { "id": "TEXT_READABILITY",     "result": "PASS|FAIL", "reason": "..." },
     { "id": "BRAND_ALIGNMENT",     "result": "PASS|FAIL", "reason": "..." },
-    { "id": "STORY_VISUAL_RELEVANCE", "result": "PASS|FAIL", "reason": "..." }
+    { "id": "STORY_RELEVANCE", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "STORY_VISUAL_EVIDENCE", "result": "PASS|FAIL", "reason": "...", "sub_score": 0, "story_elements_found": ["element1", "element2"] },
+    { "id": "HUMAN_ACTION_MATCH", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "PRODUCT_AS_BRIDGE", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "GENERIC_IMAGE_REJECTION", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 },
+    { "id": "MOBILE_FORMAT_RSS", "result": "PASS|FAIL", "reason": "...", "sub_score": 0 }
   ],
+  "story_scores": { "story_relevance": 0, "story_visual_evidence": 0, "blazing_hog_connection": 0, "human_action_clarity": 0, "mobile_readability": 0, "generic_stock_penalty": 0 },
   "score": 72
 }
 `;
@@ -109,8 +153,21 @@ export async function reviewRenderedMediaBeforeReady(
         `CTA (approved): ${cta || '(none provided)'}`,
         `Post copy: ${postCopy}`,
         input.platform ? `Target platform: ${input.platform}` : '',
+        ...(input.storyVisualBrief?.is_story_based ? [
+          '',
+          '=== STORY VISUAL BRIEF (RSS/article-based post) ===',
+          `Story Subject: ${input.storyVisualBrief.story_subject || 'N/A'}`,
+          `Story People: ${input.storyVisualBrief.story_people || 'N/A'}`,
+          `Story Setting: ${input.storyVisualBrief.story_setting || 'N/A'}`,
+          `Story Action: ${input.storyVisualBrief.story_action || 'N/A'}`,
+          `Story Emotional Theme: ${input.storyVisualBrief.story_emotional_theme || 'N/A'}`,
+          `Brand Connection: ${input.storyVisualBrief.brand_connection || 'N/A'}`,
+          `Required Visual Elements: ${(input.storyVisualBrief.required_visual_elements || []).join(', ') || 'N/A'}`,
+          `Forbidden Generic Imagery: ${(input.storyVisualBrief.forbidden_generic_imagery || []).join(', ') || 'N/A'}`,
+          '=== END STORY VISUAL BRIEF ===',
+        ] : []),
         '',
-        'Evaluate the attached image against the ten hard-fail rules.',
+        'Evaluate the attached image against all sixteen rules (ten core + six RSS/story rules).',
       ].filter(Boolean).join('\n'),
     },
     {
@@ -133,7 +190,7 @@ export async function reviewRenderedMediaBeforeReady(
           { role: 'user', content: userContent },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 1500,
+        max_tokens: 2500,
         temperature: 0.1,
       }),
     });
