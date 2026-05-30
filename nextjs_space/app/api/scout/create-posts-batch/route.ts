@@ -111,6 +111,7 @@ export async function POST(req: NextRequest) {
         scoutReportId: report.id,
         storyId: story.id,
         postPackageId: postPackage.id,
+        businessName: report.business.businessName || undefined,
       },
     );
 

@@ -81,13 +81,21 @@ export async function POST(req: NextRequest) {
     let websiteUrl: string | null = null;
     let resolvedAnalysisId = analysisId || null;
 
+    let businessName: string | null = null;
+    let businessDomain: string | null = null;
+
     if (businessId) {
       const biz = await prisma.business.findUnique({
         where: { id: businessId },
-        select: { websiteUrl: true, userId: true },
+        select: { websiteUrl: true, userId: true, businessName: true },
       });
       if (biz && biz.userId === userId) {
         websiteUrl = biz.websiteUrl;
+        businessName = biz.businessName || null;
+        // Extract domain from business websiteUrl for identity anchoring
+        try {
+          businessDomain = new URL(biz.websiteUrl.startsWith('http') ? biz.websiteUrl : `https://${biz.websiteUrl}`).hostname;
+        } catch { businessDomain = biz.websiteUrl; }
       }
     }
 
@@ -144,6 +152,8 @@ export async function POST(req: NextRequest) {
         contentSourceMode,
         stories,
         businessId: businessId || undefined,
+        businessName: businessName || undefined,
+        businessDomain: businessDomain || undefined,
       });
     } catch (tombstoneErr: any) {
       const failedAt = new Date();

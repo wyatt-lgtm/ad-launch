@@ -113,6 +113,7 @@ export async function GET(req: NextRequest) {
         scoutReportId: scoutReportId || '',
         storyId: story.id,
         postPackageId: postPackage.id,
+        businessName: business.businessName || undefined,
       },
     );
 

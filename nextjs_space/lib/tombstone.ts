@@ -324,6 +324,8 @@ export async function createSocialMissions(
     contentSourceMode?: string;
     stories?: { headline: string; source?: string; category?: string; type?: string; link?: string }[];
     businessId?: string;
+    businessName?: string;
+    businessDomain?: string;
   } = {},
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -335,10 +337,19 @@ export async function createSocialMissions(
   // Load saved business profile to avoid full re-analysis
   const profileBlock = options.businessId ? await getBusinessProfileBlock(options.businessId) : '';
 
+  // Build advertiser identity lock block — ensures downstream agents never
+  // confuse the RSS article's source with the actual advertiser
+  const identityLockBlock = buildIdentityLockBlock(
+    options.businessName || '',
+    options.businessDomain || normalizedUrl,
+    normalizedUrl,
+  );
+
   // If no individual stories provided, fall back to single command with full brief
   if (stories.length === 0) {
     console.log(`[tombstone] No individual stories — sending single command for: ${normalizedUrl}`);
     const command = [
+      identityLockBlock,
       `review ${normalizedUrl} and create 1 social media post promoting the business.`,
       `Focus on the business brand, services, and unique value proposition found on the website.`,
       `Use colors, logo, and brand voice from the website.`,
@@ -368,7 +379,7 @@ export async function createSocialMissions(
   // Process sequentially — Tombstone serialises commands so parallel sends cause timeouts
   for (let i = 0; i < stories.length; i++) {
     const story = stories[i];
-    const command = buildStoryCommand(normalizedUrl, story, platforms, mode, profileBlock);
+    const command = buildStoryCommand(normalizedUrl, story, platforms, mode, profileBlock, identityLockBlock);
     console.log(`[tombstone] Sending command ${i + 1}/${stories.length}: "${story.headline?.slice(0, 60)}..." (${story.type || 'interest'})`);
 
     const result = await sendCommand(command);
@@ -398,6 +409,46 @@ export async function createSocialMissions(
 }
 
 /**
+ * Build an ADVERTISER IDENTITY LOCK block that anchors the business identity
+ * throughout the entire Tombstone pipeline. This prevents downstream agents
+ * from accidentally adopting the identity of a scraped RSS article source
+ * (e.g. a Fetch Wireless article scrape overriding a Blazing Hog campaign).
+ *
+ * When present, Jim Bridger and all downstream agents MUST use this identity
+ * for mission titles, brand bridges, CTAs, and creative output — regardless
+ * of what any scraped website returns.
+ */
+function buildIdentityLockBlock(
+  businessName: string,
+  businessDomain: string,
+  websiteUrl: string,
+): string {
+  // Extract a clean domain for matching (strip protocol + www)
+  const cleanDomain = businessDomain
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/.*$/, '');
+
+  if (!businessName && !cleanDomain) return '';
+
+  return [
+    ``,
+    `--- ADVERTISER IDENTITY LOCK (authoritative — overrides any scraped identity) ---`,
+    businessName ? `Advertiser Business Name: ${businessName}` : '',
+    `Advertiser Domain: ${cleanDomain}`,
+    `Advertiser Website URL: ${websiteUrl}`,
+    ``,
+    `RULES:`,
+    `1. ALL mission titles, brand bridges, CTAs, and creative output MUST reference this advertiser.`,
+    `2. If you scrape a URL that belongs to a DIFFERENT business, use that content as TOPIC CONTEXT only — the brand identity is ALWAYS the advertiser above.`,
+    `3. Do NOT adopt the name, logo, colors, or voice of any scraped third-party site. The creative must represent the advertiser.`,
+    `4. If the RSS story source or scraped article is from a competitor or unrelated brand, explicitly position the advertiser in relation to that topic.`,
+    `--- END ADVERTISER IDENTITY LOCK ---`,
+    ``,
+  ].filter(Boolean).join('\n');
+}
+
+/**
  * Build a Tombstone command for a single story/content item.
  *
  * IMPORTANT: The command text includes clearly labeled RSS story metadata
@@ -411,6 +462,7 @@ function buildStoryCommand(
   platforms: string[],
   mode: string,
   profileBlock: string = '',
+  identityLockBlock: string = '',
 ): string {
   const type = story.type || 'interest';
   const platformStr = platforms.join(', ');
@@ -432,6 +484,7 @@ function buildStoryCommand(
 
   if (type === 'event') {
     return [
+      identityLockBlock,
       `review ${websiteUrl} and create 1 social media post tied to an upcoming event/holiday.`,
       `The post should connect the business to this event in a creative, engaging way.`,
       `Use the business brand colors and voice from the website.`,
@@ -444,6 +497,7 @@ function buildStoryCommand(
 
   if (type === 'local_news') {
     return [
+      identityLockBlock,
       `review ${websiteUrl} and create 1 social media post that connects the business to local news.`,
       `The post should tie the business to this local community news in a way that feels natural and relevant.`,
       `Use the business brand colors and voice from the website.`,
@@ -456,6 +510,7 @@ function buildStoryCommand(
 
   if (type === 'business') {
     return [
+      identityLockBlock,
       `review ${websiteUrl} and create 1 social media post promoting the business.`,
       `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
       `Use colors, logo, and brand voice from the website. Make it feel authentic.`,
@@ -467,6 +522,7 @@ function buildStoryCommand(
 
   // Default: interest/trending headline
   return [
+    identityLockBlock,
     `review ${websiteUrl} and create 1 social media post that connects the business to a trending topic.`,
     `The post should show the business's expertise and relevance to this topic — thought leadership style.`,
     `Use the business brand colors and voice from the website.`,
@@ -498,6 +554,7 @@ export async function createScoutStoryMission(
     scoutReportId: string;
     storyId: string;
     postPackageId: string;
+    businessName?: string;
   },
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -506,7 +563,15 @@ export async function createScoutStoryMission(
   // Load saved business profile to avoid full re-analysis
   const profileBlock = await getBusinessProfileBlock(meta.businessId);
 
+  // Build identity lock from meta if available, otherwise from URL
+  const identityLock = buildIdentityLockBlock(
+    meta.businessName || '',
+    normalizedUrl,
+    normalizedUrl,
+  );
+
   const command = [
+    identityLock,
     `review ${normalizedUrl} and create 1 social media post based on the story below.`,
     `This is a single-story post creation from the Daily Scout Email.`,
     `Create EXACTLY 1 post — do not generate variants or multiple outputs.`,
@@ -571,8 +636,10 @@ export async function createWeeklyTipMission(
 
   // Load saved business profile to avoid full re-analysis
   const profileBlock = opts.businessId ? await getBusinessProfileBlock(opts.businessId) : '';
+  const identityLock = buildIdentityLockBlock(opts.businessName || '', normalizedUrl, normalizedUrl);
 
   const command = [
+    identityLock,
     `review ${normalizedUrl} and create 1 social media post based on the weekly tip topic below.`,
     `This is an EVERGREEN CONTENT task — do NOT use RSS, news, or external stories.`,
     `Write a helpful, value-driven post that positions the business as a knowledgeable authority.`,

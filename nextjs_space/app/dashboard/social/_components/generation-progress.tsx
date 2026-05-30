@@ -314,7 +314,22 @@ export default function GenerationProgress({
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg mb-4">
             <p className="text-sm font-medium text-red-800">Failed at: {failedStep.label}</p>
             {failedStep.error && (
-              <p className="text-xs text-red-600 mt-1">{failedStep.error}</p>
+              <div className="mt-1">
+                <p className="text-xs text-red-600">
+                  {failedStep.error.includes('render_prompt') || failedStep.error.includes('preflight')
+                    ? '🎨 Creative contract issue — the image prompt was too vague or missing. The system will retry with a stronger prompt.'
+                    : failedStep.error.includes('identity') || failedStep.error.includes('IDENTITY_MISMATCH')
+                    ? '🎯 Brand identity mismatch — the wrong business name was used. The system has been updated to prevent this.'
+                    : failedStep.error.includes('source') || failedStep.error.includes('mismatch')
+                    ? '📰 Source content mismatch — the article content didn\'t match the selected story.'
+                    : failedStep.error}
+                </p>
+                {(failedStep.error.includes('render_prompt') || failedStep.error.includes('identity') || failedStep.error.includes('preflight')) && (
+                  <p className="text-[10px] text-red-500 mt-1 italic">
+                    Technical: {failedStep.error.slice(0, 200)}
+                  </p>
+                )}
+              </div>
             )}
             <p className="text-[10px] text-red-500 font-mono mt-1">
               {failedStep.taskId && `Task #${failedStep.taskId} · `}
