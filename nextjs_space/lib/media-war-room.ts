@@ -55,6 +55,7 @@ Rules:
 10. TEXT_OVERFLOW – Reject if text overlay instructions are too long or likely to be malformed/cropped.
 11. WEAK_HOOK – Reject if the design lacks a strong visual hook that would stop a user from scrolling.
 12. LANDSCAPE_SOCIAL_FEED – Reject if the creative direction or generation prompt specifies landscape orientation (16:9) for a social media feed post. Social feed creative MUST use 4:5 portrait for mobile-first viewing. Revise to 4:5 portrait unless the placement explicitly requires landscape.
+13. STORY_GENERIC_IMAGERY – For RSS/story-based posts: FAIL if the prompt describes generic category imagery instead of story-specific visuals from the article. The image must visually communicate the article's subject with at least 2 story-specific elements. For non-story posts, this rule auto-PASSES.
 
 After evaluating all rules:
 - If ALL rules pass: decision = "approved"
@@ -83,7 +84,8 @@ Respond with raw JSON only (no markdown fences). Schema:
     { "id": "STOCK_LIKELY", "result": "PASS|FAIL", "reason": "..." },
     { "id": "TEXT_OVERFLOW", "result": "PASS|FAIL", "reason": "..." },
     { "id": "WEAK_HOOK", "result": "PASS|FAIL", "reason": "..." },
-    { "id": "LANDSCAPE_SOCIAL_FEED", "result": "PASS|FAIL", "reason": "..." }
+    { "id": "LANDSCAPE_SOCIAL_FEED", "result": "PASS|FAIL", "reason": "..." },
+    { "id": "STORY_GENERIC_IMAGERY", "result": "PASS|FAIL", "reason": "..." }
   ],
   "score": 72,
   "decision": "approved|revise|reject",

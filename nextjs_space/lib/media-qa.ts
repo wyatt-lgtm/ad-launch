@@ -52,8 +52,9 @@ Rules:
 8. ASPECT_RATIO_MISMATCH – Reject if the image is landscape/horizontal when the expected output is portrait/mobile-first for a social media feed. RSS/social feed creative should default to portrait (4:5) format. Landscape images for social feed posts are a hard fail unless landscape was explicitly requested. Failure message: "RSS social creative should default to portrait/mobile-first format unless landscape was explicitly requested."
 9. TEXT_READABILITY – Reject if any overlay text has poor contrast, is too small, uses illegible fonts, or is obscured by the background.
 10. BRAND_ALIGNMENT – Reject if the imagery is off-brand, misleading, or contradicts the business's identity/values.
+11. STORY_VISUAL_RELEVANCE – For RSS/story-based posts: Reject if the rendered image shows generic category imagery instead of story-specific visuals. The image must visually communicate the article's subject. If the image could be reused for any generic post in the same category, it fails. For non-story posts, this rule auto-PASSES.
 
-After evaluating all ten rules, provide an overall quality score from 0 to 100.
+After evaluating all eleven rules, provide an overall quality score from 0 to 100.
 
 Respond with raw JSON only (no markdown fences). Schema:
 {
@@ -67,7 +68,8 @@ Respond with raw JSON only (no markdown fences). Schema:
     { "id": "COMPOSITION",         "result": "PASS|FAIL", "reason": "..." },
     { "id": "ASPECT_RATIO_MISMATCH", "result": "PASS|FAIL", "reason": "..." },
     { "id": "TEXT_READABILITY",     "result": "PASS|FAIL", "reason": "..." },
-    { "id": "BRAND_ALIGNMENT",     "result": "PASS|FAIL", "reason": "..." }
+    { "id": "BRAND_ALIGNMENT",     "result": "PASS|FAIL", "reason": "..." },
+    { "id": "STORY_VISUAL_RELEVANCE", "result": "PASS|FAIL", "reason": "..." }
   ],
   "score": 72
 }
