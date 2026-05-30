@@ -255,6 +255,7 @@ export async function POST(req: NextRequest) {
         platforms: post.platforms,
         status: 'pending_approval',
         tombstoneTaskId: post.tombstoneTaskId || null,
+        workflowId: post.workflowId || null,
       };
       }),
       skipDuplicates: true,

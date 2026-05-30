@@ -38,17 +38,23 @@ export async function GET(req: NextRequest) {
     ]);
 
     // Convert private R2 image URLs to proxy URLs that our server can resolve
+    // Also expose tombstoneTaskId and workflowId for the frontend
     const resolved = posts.map((post) => {
-      if (!post.imageUrl) return post;
+      const base = {
+        ...post,
+        tombstoneTaskId: post.tombstoneTaskId || null,
+        workflowId: (post as any).workflowId || null,
+      };
+      if (!post.imageUrl) return base;
       // Already a public S3 URL — keep as-is
-      if (post.imageUrl.includes('.s3.') && post.imageUrl.includes('amazonaws.com')) return post;
+      if (post.imageUrl.includes('.s3.') && post.imageUrl.includes('amazonaws.com')) return base;
       // R2 URL — route through our image proxy to avoid presigned URL issues
       const r2Match = post.imageUrl.match(/r2\.cloudflarestorage\.com\/[^/]+\/(.+?)(\?|$)/);
       if (r2Match) {
         const key = r2Match[1];
-        return { ...post, imageUrl: `/api/social/image-proxy?key=${encodeURIComponent(key)}` };
+        return { ...base, imageUrl: `/api/social/image-proxy?key=${encodeURIComponent(key)}` };
       }
-      return post;
+      return base;
     });
 
     return NextResponse.json({ posts: resolved, total, limit, offset });

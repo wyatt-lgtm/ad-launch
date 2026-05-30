@@ -1191,9 +1191,9 @@ export async function getSocialWorkflowResults(workflowIds: string[]) {
                 sourceAttribution: parsed?.source_attribution ?? null,
                 platforms: parsed.platforms ?? ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
               });
-            } else if (parsed?.background_asset_path && parsed?.status === 'success') {
+            } else if (parsed?.status === 'success' && (parsed?.background_asset_path || parsed?.image_asset_path || parsed?.asset_path || parsed?.r2_key || parsed?.final_image_url || parsed?.image_url)) {
               // Render-only output (no caption in render task) — pull copy from upstream Creative Direction
-              const artifactPath = parsed.background_asset_path;
+              const artifactPath = parsed.background_asset_path || parsed.image_asset_path || parsed.asset_path || parsed.r2_key || parsed.final_image_url || parsed.image_url;
               const imageUrl = artifactPath ? await resolveArtifactUrl(artifactPath) : null;
 
               // Find Creative Direction task in same workflow for caption/copy

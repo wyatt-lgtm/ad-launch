@@ -77,6 +77,8 @@ interface SocialPost {
   tradeAreaZip: string | null;
   patternType: string | null;
   createdAt: string;
+  tombstoneTaskId: string | null;
+  workflowId: string | null;
 }
 
 interface SocialAccount {
@@ -1922,6 +1924,44 @@ export default function SocialDashboard() {
                         </div>
                       )}
 
+                      {/* Post image — displayed prominently above caption */}
+                      {post.imageUrl ? (
+                        <div className="mb-3">
+                          <div className="relative w-full max-w-md mx-auto aspect-[4/5] bg-gray-100 rounded-lg overflow-hidden">
+                            <ResolvedImage
+                              imageUrl={post.imageUrl}
+                              alt={post.newsAngle || 'Social post image'}
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 mt-2">
+                            <button
+                              onClick={() => window.open(proxyImageUrl(post.imageUrl!), '_blank')}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors"
+                            >
+                              <Eye className="w-3 h-3" /> View Full Image
+                            </button>
+                            <button
+                              onClick={() => downloadImage(post)}
+                              disabled={downloadingId === post.id}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
+                            >
+                              {downloadingId === post.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                              Download
+                            </button>
+                          </div>
+                        </div>
+                      ) : post.tombstoneTaskId && (post.status === 'pending_approval' || post.status === 'approved' || post.status === 'downloaded') ? (
+                        <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                            <div>
+                              <p className="text-xs font-medium text-amber-700">Image generated but URL unavailable</p>
+                              <p className="text-xs text-amber-600 mt-0.5">Task #{post.tombstoneTaskId} — the render completed but the image URL could not be resolved. Try re-polling or check the workflow directly.</p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
                       {/* Caption */}
                       {isEditing ? (
                         <div className="mb-3">
@@ -1938,16 +1978,6 @@ export default function SocialDashboard() {
                         </div>
                       ) : (
                         <p className="text-sm text-gray-800 leading-relaxed mb-3 whitespace-pre-wrap">{post.caption}</p>
-                      )}
-
-                      {/* Post image (from Tombstone creative workflow) */}
-                      {post.imageUrl && (
-                        <div className="relative w-full max-w-md mx-auto aspect-[4/5] bg-gray-100 rounded-lg overflow-hidden mb-3">
-                          <ResolvedImage
-                            imageUrl={post.imageUrl}
-                            alt={post.newsAngle || 'Social post image'}
-                          />
-                        </div>
                       )}
 
                       {/* Hashtags */}
@@ -1968,6 +1998,14 @@ export default function SocialDashboard() {
                         </p>
                       )}
 
+                      {/* Task / Workflow details */}
+                      {(post.tombstoneTaskId || post.workflowId) && (
+                        <div className="flex items-center gap-3 mb-3 text-[10px] text-gray-400 font-mono">
+                          {post.tombstoneTaskId && <span>Task #{post.tombstoneTaskId}</span>}
+                          {post.workflowId && <span>WF {post.workflowId}</span>}
+                        </div>
+                      )}
+
                       {/* Action buttons */}
                       <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-gray-50">
                         {/* Copy Post Text */}
@@ -1978,18 +2016,6 @@ export default function SocialDashboard() {
                           {copiedId === post.id ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
                           {copiedId === post.id ? 'Copied!' : 'Copy Post Text'}
                         </button>
-
-                        {/* Download Image (only when image exists) */}
-                        {post.imageUrl && (
-                          <button
-                            onClick={() => downloadImage(post)}
-                            disabled={downloadingId === post.id}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-50"
-                          >
-                            {downloadingId === post.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />}
-                            Download Image
-                          </button>
-                        )}
 
                         {/* Download Package */}
                         <button
