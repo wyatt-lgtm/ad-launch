@@ -79,6 +79,10 @@ interface SocialPost {
   createdAt: string;
   tombstoneTaskId: string | null;
   workflowId: string | null;
+  sourceName: string | null;
+  sourceArticleTitle: string | null;
+  sourceArticleUrl: string | null;
+  cta: string | null;
 }
 
 interface SocialAccount {
@@ -1997,6 +2001,39 @@ export default function SocialDashboard() {
                           <strong className="text-gray-500">Angle:</strong> {post.newsAngle}
                         </p>
                       )}
+
+                      {/* CTA */}
+                      {post.cta && (
+                        <div className="mb-3 flex items-center gap-2">
+                          <span className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wide">CTA</span>
+                          <span className="text-xs text-gray-600 font-medium">{post.cta}</span>
+                        </div>
+                      )}
+
+                      {/* Source Article */}
+                      {(post.sourceName || post.sourceArticleTitle || post.sourceArticleUrl) ? (
+                        <div className="mb-3 p-2.5 bg-blue-50 rounded-lg border border-blue-100">
+                          <p className="text-[10px] font-semibold text-blue-600 uppercase tracking-wide mb-1">Source Article</p>
+                          {post.sourceArticleTitle && (
+                            <p className="text-xs font-medium text-gray-700 mb-0.5">{post.sourceArticleTitle}</p>
+                          )}
+                          {post.sourceName && (
+                            <p className="text-[10px] text-gray-500">via {post.sourceName}</p>
+                          )}
+                          {post.sourceArticleUrl && (
+                            <a href={post.sourceArticleUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-500 hover:text-blue-700 underline break-all mt-1 inline-block">
+                              {post.sourceArticleUrl}
+                            </a>
+                          )}
+                        </div>
+                      ) : post.tombstoneTaskId ? (
+                        <div className="mb-3 p-2.5 bg-amber-50 rounded-lg border border-amber-200">
+                          <p className="text-xs text-amber-700 font-medium flex items-center gap-1">
+                            <span className="text-amber-500">⚠</span>
+                            Source article link missing — post may be incomplete
+                          </p>
+                        </div>
+                      ) : null}
 
                       {/* Task / Workflow details */}
                       {(post.tombstoneTaskId || post.workflowId) && (

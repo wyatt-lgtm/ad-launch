@@ -44,6 +44,10 @@ export async function GET(req: NextRequest) {
         ...post,
         tombstoneTaskId: post.tombstoneTaskId || null,
         workflowId: (post as any).workflowId || null,
+        sourceName: (post as any).sourceName || null,
+        sourceArticleTitle: (post as any).sourceArticleTitle || null,
+        sourceArticleUrl: (post as any).sourceArticleUrl || null,
+        cta: (post as any).cta || null,
       };
       if (!post.imageUrl) return base;
       // Already a public S3 URL — keep as-is

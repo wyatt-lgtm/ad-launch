@@ -157,6 +157,12 @@ export async function POST(req: NextRequest) {
           const caption = detail.base_caption || detail.preview_text || item.preview_text || '';
           const cta = detail.cta || '';
           const hashtags = Array.isArray(detail.hashtags) ? detail.hashtags : [];
+
+          // Extract source attribution (from Jim Bridger / Ogilvy upstream)
+          const srcAttr = detail.source_attribution || {};
+          const sourceName = srcAttr.source_name || null;
+          const sourceArticleTitle = srcAttr.article_title || null;
+          const sourceArticleUrl = srcAttr.article_url || null;
           const rawImageUrl = item.first_image_url || '';
 
           // Extract the R2 key from presigned URLs so we can resolve fresh URLs on-demand.
@@ -200,6 +206,10 @@ export async function POST(req: NextRequest) {
             sourceType: campaignName ? 'campaign' : null,
             newsAngle: campaignName || null,
             platforms: ['facebook', 'instagram', 'youtube', 'tiktok', 'pinterest', 'snapchat'],
+            sourceName,
+            sourceArticleTitle,
+            sourceArticleUrl,
+            cta: cta || null,
           };
         } catch (e: any) {
           console.warn(`[missions/poll] Failed to enrich task ${item.task_id}:`, e.message);
@@ -256,6 +266,10 @@ export async function POST(req: NextRequest) {
         status: 'pending_approval',
         tombstoneTaskId: post.tombstoneTaskId || null,
         workflowId: post.workflowId || null,
+        sourceName: post.sourceName || null,
+        sourceArticleTitle: post.sourceArticleTitle || null,
+        sourceArticleUrl: post.sourceArticleUrl || null,
+        cta: post.cta || null,
       };
       }),
       skipDuplicates: true,

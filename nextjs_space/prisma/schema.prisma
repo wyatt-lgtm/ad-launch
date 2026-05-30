@@ -666,9 +666,13 @@ model SocialPost {
   patternType     String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
-  tombstoneTaskId String?
-  workflowId      String?
-  businessId      String?
+  tombstoneTaskId     String?
+  workflowId          String?
+  businessId          String?
+  sourceName          String?
+  sourceArticleTitle  String?
+  sourceArticleUrl    String?
+  cta                 String?
   analysis        Analysis? @relation(fields: [analysisId], references: [id])
   business        Business? @relation(fields: [businessId], references: [id])
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
