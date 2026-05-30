@@ -49,7 +49,7 @@ Rules:
 5. BUSINESS_CONNECTION – Reject if the image has no clear visual or textual tie to the business/product.
 6. STOCK_GENERIC – Reject if the image appears to be unmodified generic stock photography with no specificity.
 7. COMPOSITION – Reject if the primary subject is too small, off-frame, or the layout is cluttered/confusing.
-8. ASPECT_RATIO – Reject if the image aspect ratio is clearly wrong for a social media post (e.g., extreme horizontal crop for a vertical feed).
+8. ASPECT_RATIO_MISMATCH – Reject if the image is landscape/horizontal when the expected output is portrait/mobile-first for a social media feed. RSS/social feed creative should default to portrait (4:5) format. Landscape images for social feed posts are a hard fail unless landscape was explicitly requested. Failure message: "RSS social creative should default to portrait/mobile-first format unless landscape was explicitly requested."
 9. TEXT_READABILITY – Reject if any overlay text has poor contrast, is too small, uses illegible fonts, or is obscured by the background.
 10. BRAND_ALIGNMENT – Reject if the imagery is off-brand, misleading, or contradicts the business's identity/values.
 
@@ -65,7 +65,7 @@ Respond with raw JSON only (no markdown fences). Schema:
     { "id": "BUSINESS_CONNECTION", "result": "PASS|FAIL", "reason": "..." },
     { "id": "STOCK_GENERIC",       "result": "PASS|FAIL", "reason": "..." },
     { "id": "COMPOSITION",         "result": "PASS|FAIL", "reason": "..." },
-    { "id": "ASPECT_RATIO",        "result": "PASS|FAIL", "reason": "..." },
+    { "id": "ASPECT_RATIO_MISMATCH", "result": "PASS|FAIL", "reason": "..." },
     { "id": "TEXT_READABILITY",     "result": "PASS|FAIL", "reason": "..." },
     { "id": "BRAND_ALIGNMENT",     "result": "PASS|FAIL", "reason": "..." }
   ],

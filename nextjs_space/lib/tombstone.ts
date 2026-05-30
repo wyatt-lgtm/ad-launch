@@ -346,12 +346,16 @@ function buildStoryCommand(
     `--- END RSS STORY METADATA ---`,
   ].filter(Boolean).join('\n');
 
+  // Portrait/mobile-first instruction for all RSS/social posts
+  const portraitInstruction = `Image creative MUST be portrait 4:5 aspect ratio (1080×1350), mobile-first, full-frame composition. Do NOT generate landscape images.`;
+
   if (type === 'event') {
     return [
       `review ${websiteUrl} and create 1 social media post tied to an upcoming event/holiday.`,
       `The post should connect the business to this event in a creative, engaging way.`,
       `Use the business brand colors and voice from the website.`,
       `Target platforms: ${platformStr}.`,
+      portraitInstruction,
       profileBlock,
       rssMetaBlock,
     ].filter(Boolean).join('\n');
@@ -363,6 +367,7 @@ function buildStoryCommand(
       `The post should tie the business to this local community news in a way that feels natural and relevant.`,
       `Use the business brand colors and voice from the website.`,
       `Target platforms: ${platformStr}.`,
+      portraitInstruction,
       profileBlock,
       rssMetaBlock,
     ].filter(Boolean).join('\n');
@@ -374,6 +379,7 @@ function buildStoryCommand(
       `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
       `Use colors, logo, and brand voice from the website. Make it feel authentic.`,
       `Target platforms: ${platformStr}.`,
+      portraitInstruction,
       profileBlock,
     ].filter(Boolean).join('\n');
   }
@@ -384,6 +390,7 @@ function buildStoryCommand(
     `The post should show the business's expertise and relevance to this topic — thought leadership style.`,
     `Use the business brand colors and voice from the website.`,
     `Target platforms: ${platformStr}.`,
+    portraitInstruction,
     profileBlock,
     rssMetaBlock,
   ].filter(Boolean).join('\n');
@@ -424,6 +431,7 @@ export async function createScoutStoryMission(
     `Create EXACTLY 1 post — do not generate variants or multiple outputs.`,
     `Use the business brand colors and voice from the website.`,
     `Target platforms: facebook, instagram.`,
+    `Image creative MUST be portrait 4:5 aspect ratio (1080×1350), mobile-first, full-frame composition. Do NOT generate landscape images.`,
     profileBlock,
     `--- SCOUT STORY CONTEXT ---`,
     `source: daily_scout_email`,

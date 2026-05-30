@@ -54,6 +54,7 @@ Rules:
 9. STOCK_LIKELY – Reject if the prompt is likely to produce generic stock-like output with no brand specificity.
 10. TEXT_OVERFLOW – Reject if text overlay instructions are too long or likely to be malformed/cropped.
 11. WEAK_HOOK – Reject if the design lacks a strong visual hook that would stop a user from scrolling.
+12. LANDSCAPE_SOCIAL_FEED – Reject if the creative direction or generation prompt specifies landscape orientation (16:9) for a social media feed post. Social feed creative MUST use 4:5 portrait for mobile-first viewing. Revise to 4:5 portrait unless the placement explicitly requires landscape.
 
 After evaluating all rules:
 - If ALL rules pass: decision = "approved"
@@ -81,7 +82,8 @@ Respond with raw JSON only (no markdown fences). Schema:
     { "id": "RESTRICTED_CLAIMS", "result": "PASS|FAIL", "reason": "..." },
     { "id": "STOCK_LIKELY", "result": "PASS|FAIL", "reason": "..." },
     { "id": "TEXT_OVERFLOW", "result": "PASS|FAIL", "reason": "..." },
-    { "id": "WEAK_HOOK", "result": "PASS|FAIL", "reason": "..." }
+    { "id": "WEAK_HOOK", "result": "PASS|FAIL", "reason": "..." },
+    { "id": "LANDSCAPE_SOCIAL_FEED", "result": "PASS|FAIL", "reason": "..." }
   ],
   "score": 72,
   "decision": "approved|revise|reject",

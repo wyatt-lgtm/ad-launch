@@ -13,14 +13,14 @@ function sanitizeProgressMessage(msg: string): string {
   const s = String(msg || '');
   if (/fal|gpt-image|openai|render provider|image model/i.test(s)) {
     if (/direction|render direction/i.test(s)) return 'Creating visual direction';
-    if (/image|render|generation/i.test(s)) return 'Generating final image';
-    return 'Preparing your post';
+    if (/image|render|generation/i.test(s)) return 'Creating portrait social image';
+    return 'Preparing feed-ready image';
   }
   // Strip any stray internal terms that might slip through raw task data
   return s
     .replace(/\b(FAL|fal\.ai|gpt-image-\d+|gpt_image\d*|GPT[- ]?image|OpenAI|render provider|image model)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
-    .trim() || 'Preparing your post';
+    .trim() || 'Generating mobile-ready creative';
 }
 
 /**
