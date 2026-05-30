@@ -5,7 +5,8 @@ import { prisma } from '@/lib/db';
 import { getSocialWorkflowResults } from '@/lib/tombstone';
 import { sendNotificationEmailHelper, buildCompletionEmailHtml } from '@/lib/scout-email';
 import { chargeForPostPackage, refundPostPackage } from '@/lib/credits';
-import { runPostQa } from '@/lib/post-qa';
+import { reviewMediaConceptBeforeGeneration } from '@/lib/media-war-room';
+import { reviewRenderedMediaBeforeReady } from '@/lib/media-qa';
 import { logCosts, estimateImagePostCosts } from '@/lib/cost-ledger';
 
 /**
@@ -111,20 +112,61 @@ export async function POST(req: NextRequest) {
       if (wfResult.status === 'completed' && wfResult.posts.length > 0) {
         const post = wfResult.posts[0];
 
-        // ── QA Gate: visual + content quality check before promoting to ready ──
-        const qaInput = {
+        // ── War Room: concept-level review of the creative direction ──
+        const warRoomInput = {
+          businessName: pkg.business?.businessName || '',
+          platform: 'facebook',
+          postCopy: post.caption || '',
+          headline: post.newsAngle || '',
+          cta: '',
+          visualDirection: post.imagePrompt || '',
+          generationPrompt: post.imagePrompt || '',
+          storyContext: pkg.storyTitle || '',
+          mediaType: 'image' as const,
+        };
+
+        const warRoom = await reviewMediaConceptBeforeGeneration(warRoomInput);
+
+        if (warRoom.decision === 'reject' && warRoom.score >= 0) {
+          const rejectReason = warRoom.failReasons.join(' | ').slice(0, 2000);
+          await prisma.postPackage.updateMany({
+            where: { id: pkg.id, status: 'generating' },
+            data: {
+              status: 'rejected',
+              postCopy: post.caption || '',
+              headline: post.newsAngle || '',
+              cta: '',
+              hashtags: post.hashtags || [],
+              imageUrl: post.imageUrl || '',
+              completedAt: new Date(),
+              warRoomStatus: 'reject',
+              warRoomScore: warRoom.score,
+              warRoomRejectReason: rejectReason,
+            },
+          });
+          console.warn(
+            `[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId} biz=${pkg.businessId}: WAR ROOM REJECTED (score=${warRoom.score}). Reasons: ${rejectReason}`,
+          );
+          results.push({ id: pkg.id, status: 'war_room_rejected', detail: rejectReason });
+          continue;
+        }
+        // Log War Room pass/revise
+        if (warRoom.score >= 0) {
+          console.log(`[completion-check][${runId}] Package ${pkg.id}: WAR ROOM ${warRoom.decision.toUpperCase()} (score=${warRoom.score})`);
+        }
+
+        // ── Final QA Gate: visual + content quality check on rendered media ──
+        const qaResult = await reviewRenderedMediaBeforeReady({
           imageUrl: post.imageUrl || '',
           postCopy: post.caption || '',
           headline: post.newsAngle || '',
-          cta: '',  // populated from workflow; empty = no CTA to match
+          cta: '',
           businessName: pkg.business?.businessName || '',
           storyTitle: pkg.storyTitle || '',
-        };
-
-        const qaResult = await runPostQa(qaInput);
+          mediaType: 'image',
+        });
 
         if (!qaResult.passed && qaResult.score >= 0) {
-          // QA rejected this image — mark rejected, store reasons, skip credit charge & email
           const rejectReason = qaResult.failReasons.join(' | ').slice(0, 2000);
           await prisma.postPackage.updateMany({
             where: { id: pkg.id, status: 'generating' },
@@ -136,18 +178,21 @@ export async function POST(req: NextRequest) {
               hashtags: post.hashtags || [],
               imageUrl: post.imageUrl || '',
               completedAt: new Date(),
+              warRoomStatus: warRoom.decision,
+              warRoomScore: warRoom.score >= 0 ? warRoom.score : undefined,
+              qaScore: qaResult.score,
               qaRejectReason: rejectReason,
             },
           });
           console.warn(
-            `[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId} biz=${pkg.businessId}: QA REJECTED (score=${qaResult.score}). Reasons: ${rejectReason}`,
+            `[completion-check][${runId}] Package ${pkg.id} wf=${pkg.workflowId} biz=${pkg.businessId}: FINAL QA REJECTED (score=${qaResult.score}). Reasons: ${rejectReason}`,
           );
           results.push({ id: pkg.id, status: 'qa_rejected', detail: rejectReason });
           continue;
         }
-        // QA passed (or pass-through on LLM failure, score=-1)
+        // Both gates passed
         if (qaResult.score >= 0) {
-          console.log(`[completion-check][${runId}] Package ${pkg.id}: QA PASSED (score=${qaResult.score})`);
+          console.log(`[completion-check][${runId}] Package ${pkg.id}: FINAL QA PASSED (score=${qaResult.score})`);
         }
 
         // ATOMIC CLAIM: Only one runner can transition generating → ready.
@@ -162,6 +207,9 @@ export async function POST(req: NextRequest) {
             hashtags: post.hashtags || [],
             imageUrl: post.imageUrl || '',
             completedAt: new Date(),
+            warRoomStatus: warRoom.score >= 0 ? warRoom.decision : undefined,
+            warRoomScore: warRoom.score >= 0 ? warRoom.score : undefined,
+            qaScore: qaResult.score >= 0 ? qaResult.score : undefined,
           },
         });
 

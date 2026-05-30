@@ -1,6 +1,8 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
+import { reviewMediaConceptBeforeGeneration } from '@/lib/media-war-room';
+import { reviewRenderedMediaBeforeReady } from '@/lib/media-qa';
 
 const IMAGE_API = 'https://apps.abacus.ai/v1/chat/completions';
 
@@ -37,6 +39,29 @@ export async function POST(request: NextRequest) {
       '- Incorporate the user\'s specific request while maintaining professional ad quality',
     ].join('\n');
 
+    // ── War Room: review edit concept before generation ──
+    const warRoom = await reviewMediaConceptBeforeGeneration({
+      businessName: angle ?? 'Ad',
+      platform: 'facebook',
+      postCopy: caption ?? '',
+      headline: headline ?? '',
+      cta: '',
+      visualDirection: prompt,
+      generationPrompt: fullPrompt,
+      mediaType: 'image',
+    });
+
+    if (warRoom.decision === 'reject') {
+      console.warn(`[edit-ad] War Room REJECTED edit concept: ${warRoom.failReasons.join(' | ')}`);
+      return NextResponse.json({ error: 'Creative concept needs improvement. Please refine your edit request.' }, { status: 422 });
+    }
+
+    let finalPrompt = fullPrompt;
+    if (warRoom.decision === 'revise' && warRoom.revisedGenerationPrompt) {
+      console.log('[edit-ad] War Room REVISED edit prompt');
+      finalPrompt = warRoom.revisedGenerationPrompt;
+    }
+
     const res = await fetch(IMAGE_API, {
       method: 'POST',
       headers: {
@@ -46,7 +71,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         model: 'gpt-5.1',
         messages: [
-          { role: 'user', content: fullPrompt },
+          { role: 'user', content: finalPrompt },
         ],
         modalities: ['image'],
         image_config: { image_size: '1024x1536', quality: 'high' },
@@ -80,6 +105,23 @@ export async function POST(request: NextRequest) {
     if (!imageUrl) {
       console.error('No images in response:', JSON.stringify(data).slice(0, 800));
       return NextResponse.json({ error: 'No image was generated' }, { status: 500 });
+    }
+
+    // ── Post-generation QA ──
+    const qaResult = await reviewRenderedMediaBeforeReady({
+      imageUrl,
+      postCopy: caption ?? '',
+      headline: headline ?? '',
+      cta: '',
+      businessName: angle ?? 'Ad',
+      storyTitle: prompt,
+      mediaType: 'image',
+      platform: 'facebook',
+    });
+
+    if (!qaResult.passed && qaResult.score >= 0) {
+      console.warn(`[edit-ad] Post-gen QA REJECTED: ${qaResult.failReasons.join(' | ')}`);
+      return NextResponse.json({ error: 'Generated image did not pass quality review. Please try a different edit.' }, { status: 422 });
     }
 
     return NextResponse.json({ imageUrl });

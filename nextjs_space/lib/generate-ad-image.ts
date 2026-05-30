@@ -6,6 +6,8 @@
 
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { createS3Client, getBucketConfig } from './aws-config';
+import { reviewMediaConceptBeforeGeneration } from './media-war-room';
+import { reviewRenderedMediaBeforeReady } from './media-qa';
 
 const IMAGE_API = 'https://apps.abacus.ai/v1/chat/completions';
 
@@ -136,6 +138,32 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
   ].join('\n');
 
   try {
+    // ── War Room: review concept before expensive generation ──
+    const warRoomInput = {
+      businessName: brief.businessName,
+      platform: 'facebook',
+      postCopy: brief.subheadline,
+      headline: brief.headline,
+      cta: brief.cta,
+      visualDirection: `${brief.angle ?? 'general'} angle ad for ${brief.industry}. Brand colors: ${brief.brandColors}. ${brief.logoDescription}.`,
+      generationPrompt: prompt,
+      mediaType: 'image' as const,
+    };
+
+    const warRoom = await reviewMediaConceptBeforeGeneration(warRoomInput);
+
+    if (warRoom.decision === 'reject') {
+      console.warn(`[generate-ad] War Room REJECTED concept for ${brief.businessName} (${brief.angle}): ${warRoom.failReasons.join(' | ')}`);
+      return null;
+    }
+
+    // Use revised prompt if War Room improved it
+    let finalPrompt = prompt;
+    if (warRoom.decision === 'revise' && warRoom.revisedGenerationPrompt) {
+      console.log(`[generate-ad] War Room REVISED prompt for ${brief.businessName} (${brief.angle})`);
+      finalPrompt = warRoom.revisedGenerationPrompt;
+    }
+
     console.log(`[generate-ad] Starting GPT-5.1 generation for ${brief.businessName} (${brief.angle ?? 'general'})...`);
     const startTime = Date.now();
 
@@ -147,7 +175,7 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
       },
       body: JSON.stringify({
         model: 'gpt-5.1',
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: finalPrompt }],
         modalities: ['image'],
         image_config: { image_size: '1024x1536', quality: 'high' },
       }),
@@ -185,6 +213,26 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
     // Upload to S3
     const imageUrl = await uploadAdImageToS3(base64Data, brief.businessName, brief.angle ?? 'ad');
     console.log(`[generate-ad] Upload complete: ${imageUrl ? 'success' : 'failed'}`);
+
+    // ── Post-generation QA: review rendered image ──
+    if (imageUrl) {
+      const qaResult = await reviewRenderedMediaBeforeReady({
+        imageUrl,
+        postCopy: brief.subheadline,
+        headline: brief.headline,
+        cta: brief.cta,
+        businessName: brief.businessName,
+        storyTitle: `${brief.angle ?? 'general'} ad for ${brief.businessName}`,
+        mediaType: 'image',
+        platform: 'facebook',
+      });
+
+      if (!qaResult.passed && qaResult.score >= 0) {
+        console.warn(`[generate-ad] Post-gen QA REJECTED image for ${brief.businessName} (${brief.angle}): ${qaResult.failReasons.join(' | ')}`);
+        return null;
+      }
+    }
+
     return imageUrl;
   } catch (err: any) {
     console.error('[generate-ad] Error:', err?.message);
