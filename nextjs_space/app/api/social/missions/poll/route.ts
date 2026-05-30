@@ -212,16 +212,27 @@ export async function POST(req: NextRequest) {
     }
 
     // Map each post to the correct analysis/business via its workflowId
+    // If the workflowMap lookup fails (e.g. content queue didn't return workflow_id),
+    // try to find the analysis that MOST RECENTLY had its socialMissionId set
+    // (i.e. the one that triggered this generation).
     const defaultAnalysisId = analyses[0].id;
     const defaultBusinessId = analyses[0].businessId || null;
+
+    // Find the most recent analysis that has a socialMissionId (the one that triggered generation)
+    const socialAnalysis = analyses.find(a => a.socialMissionId);
+    const socialDefaultAnalysisId = socialAnalysis?.id || defaultAnalysisId;
+    const socialDefaultBusinessId = socialAnalysis?.businessId || defaultBusinessId;
 
     const createdPosts = await prisma.socialPost.createMany({
       data: posts.map((post) => {
         const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
+        if (!ref && post.workflowId) {
+          console.warn(`[missions/poll] workflowMap miss for wf=${post.workflowId} task=${post.tombstoneTaskId} — using socialDefault (${socialDefaultBusinessId})`);
+        }
         return {
         userId,
-        analysisId: ref?.analysisId || defaultAnalysisId,
-        businessId: ref?.businessId || defaultBusinessId,
+        analysisId: ref?.analysisId || socialDefaultAnalysisId,
+        businessId: ref?.businessId || socialDefaultBusinessId,
         caption: post.caption,
         hashtags: post.hashtags,
         imageUrl: post.imageUrl,
