@@ -60,17 +60,42 @@ export async function POST(request: NextRequest) {
         }, { status: 422 });
       }
 
-      // Cloudflare/bot-protection often returns 403 with challenge headers —
-      // treat these as "reachable but bot-blocked" rather than truly unreachable.
-      const cfChallenged = res.status === 403 && (
+      // Bot-protection / WAF detection — many hosting providers return 403 to datacenter IPs.
+      // Treat these as "reachable but bot-blocked" rather than truly unreachable.
+      const serverHeader = res.headers.get('server')?.toLowerCase() || '';
+      const botBlocked = res.status === 403 && (
+        // Cloudflare
         res.headers.get('cf-mitigated') === 'challenge' ||
-        res.headers.get('server')?.toLowerCase().includes('cloudflare') ||
-        res.headers.get('cf-ray')
+        serverHeader.includes('cloudflare') ||
+        res.headers.get('cf-ray') ||
+        // Hostinger CDN
+        serverHeader.includes('hcdn') ||
+        res.headers.get('platform')?.toLowerCase() === 'hostinger' ||
+        // Sucuri WAF
+        res.headers.get('x-sucuri-id') ||
+        serverHeader.includes('sucuri') ||
+        // Wordfence / generic WordPress WAF
+        serverHeader.includes('wordfence') ||
+        // StackPath / Highwinds / MaxCDN
+        serverHeader.includes('stackpath') ||
+        serverHeader.includes('highwinds') ||
+        // Imperva / Incapsula
+        res.headers.get('x-iinfo') ||
+        serverHeader.includes('incapsula') ||
+        // Akamai
+        res.headers.get('x-akamai-transformed') ||
+        // AWS WAF
+        res.headers.get('x-amzn-waf-action') ||
+        // Generic: any 403 with a known CDN/hosting server header likely means bot-blocked
+        serverHeader.includes('nginx') ||
+        serverHeader.includes('apache') ||
+        serverHeader.includes('litespeed') ||
+        serverHeader.includes('openresty')
       );
 
-      // Treat non-CF 4xx/5xx as unreachable, but 2xx/3xx means site exists
-      if (res.status >= 400 && !cfChallenged) {
-        console.warn(`[analyze] Website error: ${normalizedUrl} (status: ${res.status})`);
+      // Treat non-blocked 4xx/5xx as unreachable, but 2xx/3xx means site exists
+      if (res.status >= 400 && !botBlocked) {
+        console.warn(`[analyze] Website error: ${normalizedUrl} (status: ${res.status}, server: ${serverHeader || 'unknown'})`);
         return NextResponse.json({
           error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
         }, { status: 422 });
@@ -78,8 +103,8 @@ export async function POST(request: NextRequest) {
 
       siteReachable = true;
 
-      if (cfChallenged) {
-        console.log(`[analyze] Cloudflare challenge detected for ${normalizedUrl} (status: ${res.status}) — treating as reachable, skipping HTML`);
+      if (botBlocked) {
+        console.log(`[analyze] Bot/WAF block detected for ${normalizedUrl} (status: ${res.status}, server: ${serverHeader}) — treating as reachable, skipping HTML`);
         htmlBody = '';
       } else {
         htmlBody = await res.text().catch(() => '');
