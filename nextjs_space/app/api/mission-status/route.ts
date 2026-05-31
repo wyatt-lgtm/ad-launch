@@ -305,7 +305,11 @@ export async function GET(request: NextRequest) {
         // Build SEO data from Zig's audit (or fallback to live audit)
         const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl, analysisId);
         const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
-        const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl);
+        const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl, {
+          businessName: (analysis as any).businessName ?? '',
+          city: analysis.businessCity ?? '',
+          state: analysis.businessState ?? '',
+        });
         const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl, {
           businessId: analysis.businessId ?? '',
           location: [analysis.businessCity, analysis.businessState].filter(Boolean).join(', '),
@@ -509,7 +513,11 @@ export async function GET(request: NextRequest) {
           const results = await getWorkflowResults(completedWfIds);
           const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl, analysisId);
           const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
-          const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl);
+          const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl, {
+            businessName: (analysis as any).businessName ?? '',
+            city: analysis.businessCity ?? '',
+            state: analysis.businessState ?? '',
+          });
           const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl, {
             businessId: analysis.businessId ?? '',
             location: [analysis.businessCity, analysis.businessState].filter(Boolean).join(', '),
@@ -801,8 +809,8 @@ async function buildSeoData(research: any, creative: any, marketing: any, websit
   }
 
   return {
-    businessName: biz?.name ?? 'Unknown',
-    industry: biz?.category ?? 'Unknown',
+    businessName: biz?.name || 'Your Business',
+    industry: biz?.category && biz.category.toLowerCase() !== 'unknown' ? biz.category : 'local business',
     coreOffer: biz?.core_offer ?? '',
     targetCustomer: biz?.target_customer ?? '',
     products: biz?.products ?? [],
@@ -980,77 +988,277 @@ function fitToCharLimit(text: string, maxChars: number): string {
   return truncated.slice(0, lastSpace).trim();
 }
 
-function buildGoogleAds(research: any, creative: any, websiteUrl: string) {
+function buildGoogleAds(research: any, creative: any, websiteUrl: string, extra?: { businessName?: string; city?: string; state?: string }) {
   const biz = research?.business_summary ?? {};
-  const voice = research?.brand_voice ?? {};
   const constraints = research?.messaging_constraints ?? {};
   const ads = creative?.ads ?? [];
 
-  const businessName = biz?.name ?? 'Your Business';
-  const coreOffer = biz?.core_offer ?? 'our services';
-  const targetCustomer = biz?.target_customer ?? 'customers';
-  const category = biz?.category ?? 'business';
-  const geo = biz?.geo ?? '';
+  const H_MAX = 30;
+  const D_MAX = 90;
 
-  const H_MAX = 30; // Google Ads headline limit (including spaces)
-  const D_MAX = 90; // Google Ads description limit (including spaces)
+  // ── Placeholder detection ─────────────────────────────────────────
+  const POISON_WORDS = ['unknown', 'undefined', 'null', 'none', 'n/a', '[placeholder]', 'your business'];
+  const isPoisoned = (s: string | undefined | null): boolean => {
+    if (!s) return true;
+    const lower = s.trim().toLowerCase();
+    if (!lower) return true;
+    return POISON_WORDS.some(p => lower === p || lower.includes(p));
+  };
 
-  // Build display URL
+  // ── Resolve business name (strip page-title junk) ─────────────────
+  const cleanPageTitle = (raw: string): string => {
+    if (!raw) return '';
+    // Strip common prefixes: "Home - ", "Welcome to ", "Home | "
+    let cleaned = raw.replace(/^(home\s*[-–|:]\s*)/i, '').trim();
+    cleaned = cleaned.replace(/^(welcome\s+to\s+)/i, '').trim();
+    // Strip trailing " | Page Name" or " - Page Name"
+    cleaned = cleaned.replace(/\s*[|–-]\s*(home|about|contact|services).*$/i, '').trim();
+    return cleaned;
+  };
+
+  let businessName = '';
+  // Priority: analysis record > research summary > page title cleanup
+  if (extra?.businessName && !isPoisoned(extra.businessName)) {
+    businessName = extra.businessName;
+  } else if (biz?.name && !isPoisoned(biz.name)) {
+    businessName = cleanPageTitle(biz.name);
+  }
+  if (!businessName) {
+    // Last resort: derive from domain
+    try {
+      const parsed = new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`);
+      const host = parsed.hostname.replace(/^www\./, '').replace(/\.(com|net|org|co|io|biz|us|shop)$/i, '');
+      businessName = host.charAt(0).toUpperCase() + host.slice(1);
+    } catch {
+      businessName = 'Our Business';
+    }
+  }
+  console.log(`[buildGoogleAds] resolved businessName="${businessName}" (source: ${extra?.businessName ? 'analysis' : biz?.name ? 'research' : 'domain'})`);
+
+  // ── Resolve category (NEVER use "Unknown") ────────────────────────
+  const inferCategoryFromName = (name: string, domain: string): string => {
+    const combined = `${name} ${domain}`.toLowerCase();
+    const categoryMap: [RegExp, string][] = [
+      [/pretzel|bake|bakery|bread|dough/, 'pretzel bakery'],
+      [/pizza|pie|slice/, 'pizza restaurant'],
+      [/internet|isp|broadband|fiber|wireless|hog/, 'internet service provider'],
+      [/turf|lawn|landscape|mow|grass|yard/, 'landscaping & lawn care'],
+      [/plumb/, 'plumbing services'],
+      [/hvac|heat|cool|air\s*condition/, 'HVAC services'],
+      [/roofing|roof/, 'roofing services'],
+      [/electric/, 'electrical services'],
+      [/dental|dentist/, 'dental practice'],
+      [/auto|car|mechanic|tire/, 'auto services'],
+      [/restaurant|diner|grill|cafe|coffee|bar|tavern|pub/, 'restaurant'],
+      [/salon|barber|hair|beauty|spa/, 'salon & beauty'],
+      [/fitness|gym|workout|yoga|crossfit/, 'fitness center'],
+      [/real\s*estate|realtor|realty|property/, 'real estate'],
+      [/insurance|insure/, 'insurance services'],
+      [/law|legal|attorney/, 'legal services'],
+      [/clean|maid|janitorial/, 'cleaning services'],
+      [/pet|vet|veterinary|grooming/, 'pet services'],
+      [/photo|video|media/, 'photography & media'],
+      [/market|advertis|agency|creative/, 'marketing agency'],
+    ];
+    for (const [rx, cat] of categoryMap) {
+      if (rx.test(combined)) return cat;
+    }
+    return '';
+  };
+
+  let category = '';
+  if (biz?.category && !isPoisoned(biz.category)) {
+    category = biz.category;
+  }
+  if (!category) {
+    category = inferCategoryFromName(businessName, websiteUrl);
+  }
+  if (!category) {
+    // Try products/services
+    const products = biz?.products ?? [];
+    if (products.length > 0) {
+      const firstProduct = typeof products[0] === 'string' ? products[0] : products[0]?.name ?? '';
+      if (firstProduct && !isPoisoned(firstProduct)) category = firstProduct;
+    }
+  }
+  if (!category) category = 'local business';
+  console.log(`[buildGoogleAds] resolved category="${category}"`);
+
+  // ── Resolve other fields ──────────────────────────────────────────
+  let coreOffer = (biz?.core_offer && !isPoisoned(biz.core_offer)) ? biz.core_offer : '';
+  if (!coreOffer) coreOffer = category;
+
+  let targetCustomer = (biz?.target_customer && !isPoisoned(biz.target_customer)) ? biz.target_customer : '';
+
+  const geo = [extra?.city, extra?.state].filter(Boolean).join(', ') || biz?.geo || '';
+
+  // ── Display URL ───────────────────────────────────────────────────
   let displayUrl = websiteUrl;
   try {
     const parsed = new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`);
     displayUrl = parsed.hostname.replace(/^www\./, '');
   } catch { /* keep as-is */ }
 
-  // Generate headlines from ad copy — fit to limit at word boundaries
-  const headlines: string[] = [];
-  if (ads[0]?.headline) headlines.push(fitToCharLimit(ads[0].headline, H_MAX));
-  headlines.push(fitToCharLimit(`${businessName} | ${category}`, H_MAX));
-  headlines.push(fitToCharLimit(`Top ${category} ${geo ? 'in ' + geo : 'Near You'}`, H_MAX));
-  if (coreOffer !== 'our services') headlines.push(fitToCharLimit(`Get ${coreOffer}`, H_MAX));
-  headlines.push(fitToCharLimit(`Trusted ${category} Services`, H_MAX));
-  if (ads[1]?.headline) headlines.push(fitToCharLimit(ads[1].headline, H_MAX));
-  // Ensure at least 5 unique headlines
-  const uniqueHeadlines = [...new Set(headlines)].filter(h => h.length > 0).slice(0, 6);
+  console.log(`[buildGoogleAds] coreOffer="${coreOffer}" targetCustomer="${targetCustomer}" geo="${geo}" displayUrl="${displayUrl}"`);
 
-  // Generate descriptions — fit to limit at word boundaries
-  const descriptions: string[] = [];
-  if (ads[0]?.body_copy) descriptions.push(fitToCharLimit(ads[0].body_copy, D_MAX));
-  descriptions.push(fitToCharLimit(`${businessName} offers ${coreOffer} for ${targetCustomer}. Contact us today!`, D_MAX));
-  descriptions.push(fitToCharLimit(`Looking for ${category}? ${businessName} delivers quality results. Get started now.`, D_MAX));
-  if (ads[1]?.body_copy) descriptions.push(fitToCharLimit(ads[1].body_copy, D_MAX));
-  const uniqueDescriptions = [...new Set(descriptions)].filter(d => d.length > 0).slice(0, 4);
+  // ── Sanitize a single ad copy string ──────────────────────────────
+  const sanitize = (s: string): string | null => {
+    if (!s || !s.trim()) return null;
+    let cleaned = s.trim();
+    // Fix double spaces
+    cleaned = cleaned.replace(/\s{2,}/g, ' ');
+    // Fix empty template fragments: "for ." "offers for ." "for customers."
+    cleaned = cleaned.replace(/\bfor\s*\./g, '.').replace(/\boffers\s+for\s*\./g, '.').trim();
+    // Remove trailing prepositions (incomplete sentences)
+    cleaned = cleaned.replace(/\s+(with|for|and|the|to|in|of|at|by|from|on|or|a|an)\s*$/i, '').trim();
+    // Check for poison words
+    if (isPoisoned(cleaned)) return null;
+    return cleaned;
+  };
 
-  // Generate keywords
-  const keywords: string[] = [];
-  const allowedTopics = constraints?.allowed_topics ?? [];
-  keywords.push(category);
-  keywords.push(`${category} ${geo ?? 'near me'}`);
-  keywords.push(`best ${category}`);
-  keywords.push(businessName.toLowerCase());
-  if (coreOffer !== 'our services') keywords.push(coreOffer.toLowerCase());
-  for (const topic of allowedTopics.slice(0, 5)) {
-    if (typeof topic === 'string') keywords.push(topic.toLowerCase());
+  // ── Validate a headline ───────────────────────────────────────────
+  const isValidHeadline = (h: string | null): h is string => {
+    if (!h) return false;
+    if (h.length < 8) return false;  // too short
+    if (h.length > H_MAX) return false;
+    if (isPoisoned(h)) return false;
+    return true;
+  };
+
+  // ── Validate a description ────────────────────────────────────────
+  const isValidDescription = (d: string | null): d is string => {
+    if (!d) return false;
+    if (d.length < 30) return false;  // too short for a useful description
+    if (d.length > D_MAX) return false;
+    if (isPoisoned(d)) return false;
+    // Check for incomplete endings
+    const lastWord = d.split(/\s+/).pop()?.toLowerCase() ?? '';
+    if (['with', 'for', 'and', 'the', 'to', 'in', 'of', 'a', 'an'].includes(lastWord)) return false;
+    return true;
+  };
+
+  // ── Build headlines ───────────────────────────────────────────────
+  const rawHeadlines: (string | null)[] = [];
+
+  // From upstream creative
+  for (const ad of ads.slice(0, 3)) {
+    if (ad?.headline) rawHeadlines.push(sanitize(fitToCharLimit(cleanPageTitle(ad.headline), H_MAX)));
   }
-  keywords.push(`${category} services`);
-  keywords.push(`local ${category}`);
-  const uniqueKeywords = [...new Set(keywords)].slice(0, 10);
 
-  // Sitelink extensions
+  // Template headlines (only if fields are clean)
+  rawHeadlines.push(sanitize(fitToCharLimit(`${businessName} | ${category}`, H_MAX)));
+  if (geo) rawHeadlines.push(sanitize(fitToCharLimit(`Top ${category} in ${geo}`, H_MAX)));
+  if (coreOffer && coreOffer !== category) rawHeadlines.push(sanitize(fitToCharLimit(`Get ${coreOffer} Today`, H_MAX)));
+  rawHeadlines.push(sanitize(fitToCharLimit(`Trusted ${category}`, H_MAX)));
+  rawHeadlines.push(sanitize(fitToCharLimit(`${businessName} — Learn More`, H_MAX)));
+  rawHeadlines.push(sanitize(fitToCharLimit(`Quality ${category}`, H_MAX)));
+  rawHeadlines.push(sanitize(fitToCharLimit(`Visit ${businessName} Today`, H_MAX)));
+
+  const validHeadlines = [...new Set(rawHeadlines.filter(isValidHeadline))].slice(0, 6);
+
+  // Ensure minimum 3 headlines with safe fallbacks
+  const fallbackHeadlines = [
+    fitToCharLimit(`${businessName}`, H_MAX),
+    fitToCharLimit(`Discover ${businessName}`, H_MAX),
+    fitToCharLimit(`${businessName} — Contact Us`, H_MAX),
+    fitToCharLimit(`Your Local ${category}`, H_MAX),
+    fitToCharLimit(`${category} You Can Trust`, H_MAX),
+  ].filter(isValidHeadline);
+
+  while (validHeadlines.length < 3 && fallbackHeadlines.length > 0) {
+    const fb = fallbackHeadlines.shift()!;
+    if (!validHeadlines.includes(fb)) validHeadlines.push(fb);
+  }
+
+  // ── Build descriptions ────────────────────────────────────────────
+  const rawDescriptions: (string | null)[] = [];
+
+  // From upstream creative
+  for (const ad of ads.slice(0, 2)) {
+    if (ad?.body_copy) rawDescriptions.push(sanitize(fitToCharLimit(ad.body_copy, D_MAX)));
+  }
+
+  // Template descriptions (only use fields that are clean)
+  if (targetCustomer) {
+    rawDescriptions.push(sanitize(fitToCharLimit(
+      `${businessName} provides quality ${coreOffer} for ${targetCustomer}. Contact us today!`, D_MAX
+    )));
+  } else {
+    rawDescriptions.push(sanitize(fitToCharLimit(
+      `${businessName} provides quality ${coreOffer}. Contact us today!`, D_MAX
+    )));
+  }
+  rawDescriptions.push(sanitize(fitToCharLimit(
+    `Looking for a great ${category}? ${businessName} delivers quality results.`, D_MAX
+  )));
+  if (geo) {
+    rawDescriptions.push(sanitize(fitToCharLimit(
+      `${businessName} is your trusted ${category} in ${geo}. Visit us today!`, D_MAX
+    )));
+  }
+
+  const validDescriptions = [...new Set(rawDescriptions.filter(isValidDescription))].slice(0, 4);
+
+  // Ensure minimum 2 descriptions
+  const fallbackDescriptions = [
+    fitToCharLimit(`Visit ${businessName} for quality ${coreOffer}. See why customers trust us!`, D_MAX),
+    fitToCharLimit(`Discover what makes ${businessName} the right choice. Learn more today!`, D_MAX),
+    fitToCharLimit(`${businessName} offers excellent ${category} service. Get started now!`, D_MAX),
+  ].filter(isValidDescription);
+
+  while (validDescriptions.length < 2 && fallbackDescriptions.length > 0) {
+    const fb = fallbackDescriptions.shift()!;
+    if (!validDescriptions.includes(fb)) validDescriptions.push(fb);
+  }
+
+  // ── Build keywords ────────────────────────────────────────────────
+  const rawKeywords: string[] = [];
+  const allowedTopics = constraints?.allowed_topics ?? [];
+
+  rawKeywords.push(businessName.toLowerCase());
+  rawKeywords.push(category.toLowerCase());
+  if (geo) rawKeywords.push(`${category} ${geo}`.toLowerCase());
+  rawKeywords.push(`${category} near me`);
+  rawKeywords.push(`best ${category}`);
+  if (coreOffer && coreOffer !== category) rawKeywords.push(coreOffer.toLowerCase());
+  for (const topic of allowedTopics.slice(0, 5)) {
+    if (typeof topic === 'string' && !isPoisoned(topic)) rawKeywords.push(topic.toLowerCase());
+  }
+  rawKeywords.push(`local ${category}`);
+
+  const validKeywords = [...new Set(rawKeywords)]
+    .filter(kw => kw.length >= 3 && !isPoisoned(kw))
+    .slice(0, 10);
+
+  // ── Sitelinks ─────────────────────────────────────────────────────
   const sitelinks = [
-    { title: 'Our Services', description: `View all ${category} services we offer` },
-    { title: 'About Us', description: `Learn why ${businessName} is trusted` },
+    { title: 'Our Services', description: `Explore ${category} options from ${businessName}` },
+    { title: 'About Us', description: `Learn why customers choose ${businessName}` },
     { title: 'Contact Us', description: 'Get in touch for a free consultation' },
     { title: 'Reviews', description: 'See what our customers say about us' },
   ];
+
+  // ── Final quality gate: reject any item that still has poison ─────
+  const finalHeadlines = validHeadlines.filter(h => !isPoisoned(h) && h.length >= 8);
+  const finalDescriptions = validDescriptions.filter(d => !isPoisoned(d) && d.length >= 30);
+  const finalKeywords = validKeywords.filter(kw => !isPoisoned(kw));
+
+  const rejectedCount = (validHeadlines.length - finalHeadlines.length)
+    + (validDescriptions.length - finalDescriptions.length)
+    + (validKeywords.length - finalKeywords.length);
+  if (rejectedCount > 0) {
+    console.log(`[buildGoogleAds] quality gate rejected ${rejectedCount} item(s)`);
+  }
+
+  console.log(`[buildGoogleAds] final: ${finalHeadlines.length} headlines, ${finalDescriptions.length} descriptions, ${finalKeywords.length} keywords`);
 
   return {
     businessName,
     websiteUrl,
     displayUrl,
-    headlines: uniqueHeadlines,
-    descriptions: uniqueDescriptions,
-    keywords: uniqueKeywords,
+    headlines: finalHeadlines,
+    descriptions: finalDescriptions,
+    keywords: finalKeywords,
     sitelinks,
   };
 }
