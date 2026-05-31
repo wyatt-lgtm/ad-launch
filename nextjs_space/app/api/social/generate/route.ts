@@ -96,6 +96,19 @@ export async function POST(req: NextRequest) {
         try {
           businessDomain = new URL(biz.websiteUrl.startsWith('http') ? biz.websiteUrl : `https://${biz.websiteUrl}`).hostname;
         } catch { businessDomain = biz.websiteUrl; }
+
+        // Ensure we have an analysisId so socialMissionId can be stored
+        if (!resolvedAnalysisId) {
+          const bizAnalysis = await prisma.analysis.findFirst({
+            where: { businessId, userId },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true },
+          });
+          if (bizAnalysis) {
+            resolvedAnalysisId = bizAnalysis.id;
+            console.log(`[social/generate] Resolved analysisId=${resolvedAnalysisId} from businessId=${businessId}`);
+          }
+        }
       }
     }
 
