@@ -255,6 +255,19 @@ export async function POST(req: NextRequest) {
         orderBy: { createdAt: 'desc' },
       });
     }
+    // Fallback: if no workflow match, find the most recent pending GenerationRun for this user
+    if (!generationRun) {
+      generationRun = await prisma.generationRun.findFirst({
+        where: {
+          userId,
+          status: { not: 'completed' },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (generationRun) {
+        console.log(`[missions/poll] No workflow match — using most recent GenerationRun ${generationRun.id} (biz=${generationRun.businessId})`);
+      }
+    }
 
     const now = new Date();
 
@@ -297,13 +310,15 @@ export async function POST(req: NextRequest) {
     const createdPosts = await prisma.socialPost.createMany({
       data: completePosts.map((post) => {
         const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
+        // Fallback priority: workflowMap > generationRun.businessId > socialDefault
+        const fallbackBusinessId = generationRun?.businessId || socialDefaultBusinessId;
         if (!ref && post.workflowId) {
-          console.warn(`[missions/poll] workflowMap miss for wf=${post.workflowId} task=${post.tombstoneTaskId} — using socialDefault (${socialDefaultBusinessId})`);
+          console.warn(`[missions/poll] workflowMap miss for wf=${post.workflowId} task=${post.tombstoneTaskId} — using fallback biz=${fallbackBusinessId} (genRun=${generationRun?.id || 'none'})`);
         }
         return {
           userId,
           analysisId: ref?.analysisId || socialDefaultAnalysisId,
-          businessId: ref?.businessId || socialDefaultBusinessId,
+          businessId: ref?.businessId || fallbackBusinessId,
           caption: post.caption,
           hashtags: post.hashtags,
           imageUrl: post.imageUrl,
