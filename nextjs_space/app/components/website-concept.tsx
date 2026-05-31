@@ -200,12 +200,16 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         setWorkflowStatus(statusData.status ?? '');
         workflowRef.current = { workflowId: cw.workflowId, finalTaskId: cw.finalTaskId };
 
-        if ((statusData.status === 'completed' || statusData.status === 'error') && statusData.html) {
+        if (statusData.html) {
+          // HTML is available — show it regardless of War Room status
           const blob = new Blob([statusData.html], { type: 'text/html' });
           const url = URL.createObjectURL(blob);
           setGeneratedUrl(url);
+          if (statusData.status !== 'completed' && statusData.status !== 'error') {
+            setWorkflowStatus('completed');
+          }
         } else if (statusData.status !== 'completed' && statusData.status !== 'error') {
-          // Still in progress — resume polling
+          // Still in progress and no HTML yet — resume polling
           setGenerating(true);
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = setInterval(pollStatus, 5000);
@@ -265,7 +269,22 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           setGenerating(false);
         }
       } else {
-        // Still in progress — check for stall (no progress for 8+ minutes)
+        // Still in progress — but if Code Execution completed and HTML is
+        // available, show the website immediately. The War Room review step
+        // is a quality gate bonus, not a blocker for the user.
+        if (result.html) {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          const blob = new Blob([result.html], { type: 'text/html' });
+          const url = URL.createObjectURL(blob);
+          setGeneratedUrl(url);
+          window.open(url, '_blank');
+          setGenerating(false);
+          // Mark all completed steps visually, keep remaining as-is
+          setWorkflowStatus('completed');
+          return;
+        }
+
+        // Check for stall (no progress for 8+ minutes)
         const progressKey = (result.steps ?? []).map((s: any) => `${s.id}:${s.status}`).join('|');
         if (progressKey === lastProgressRef.current) {
           stallCountRef.current += 1;
