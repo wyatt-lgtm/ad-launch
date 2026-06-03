@@ -811,8 +811,8 @@ export default function SocialDashboard() {
     let importedCount = pollResult?.imported ?? 0;
 
     if (importedCount === 0) {
-      const MAX_RETRIES = 5;
-      const RETRY_DELAY_MS = 15_000;
+      const MAX_RETRIES = 8;
+      const RETRY_DELAY_MS = 4_000;
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         console.log(`[handleProgressComplete] Poll returned 0 imports, retrying in ${RETRY_DELAY_MS / 1000}s (attempt ${attempt}/${MAX_RETRIES})...`);
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));

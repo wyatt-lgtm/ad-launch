@@ -125,6 +125,7 @@ export default function GenerationProgress({
   const [elapsedMs, setElapsedMs] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
   const completeFired = useRef(false);
+  const prefetchFired = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTime = useRef(clickedAt ? new Date(clickedAt).getTime() : Date.now());
@@ -160,10 +161,17 @@ export default function GenerationProgress({
       setError(null);
       setPollCount(c => c + 1);
 
+      // Pre-fetch: when progress >= 80%, warm the content queue so import is faster on completion
+      if (result.progress >= 80 && !prefetchFired.current && result.status !== 'completed') {
+        prefetchFired.current = true;
+        fetch('/api/social/missions/poll', { method: 'POST' }).catch(() => {});
+      }
+
       if (result.status === 'completed' && !completeFired.current) {
         completeFired.current = true;
         if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
-        setTimeout(() => onComplete(), 1500);
+        // Fire onComplete immediately — no need for 1.5s delay
+        onComplete();
       }
     } catch (e: any) {
       console.warn('Progress poll error:', e.message);
@@ -171,11 +179,13 @@ export default function GenerationProgress({
     }
   }, [workflowIds, generationRunId, onComplete]);
 
+  // Adaptive polling: 6s normally, 3s when progress >= 80%
+  const pollIntervalMs = (data?.progress ?? 0) >= 80 ? 3000 : 6000;
   useEffect(() => {
     pollProgress();
-    intervalRef.current = setInterval(pollProgress, 6000);
+    intervalRef.current = setInterval(pollProgress, pollIntervalMs);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [pollProgress]);
+  }, [pollProgress, pollIntervalMs]);
 
   useEffect(() => {
     if (
