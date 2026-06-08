@@ -362,6 +362,158 @@ Return this exact JSON structure:
 }`;
 }
 
+// ─── Carousel From User-Written Draft Text ───────────────────────────
+
+const DRAFT_CAROUSEL_SYSTEM_PROMPT = `You are a social media content strategist who creates carousel posts from user-written text.
+You detect if the text contains lists, events, dates, tips, rankings, steps, or other structured content.
+If it does, you convert it into a carousel format. If not, you return post_type: "standard".
+
+RULES:
+- Keep the user's voice and intent. Improve grammar/flow but don't rewrite from scratch.
+- Keep each bullet under 12 words.
+- Each slide should have a short headline and 2-3 concise bullets.
+- Maximum 3 slides.
+- Prioritize items that are specific, timely, actionable.
+- If the text has dates/events, each slide groups 2-3 events chronologically.
+- If the text is NOT list-based, set post_type to "standard" and provide a fallback_reason.
+
+Respond with valid JSON only.`;
+
+/**
+ * Build a carousel package from user-written draft text (not an article URL).
+ * Detects list/event/tip content and creates slides.
+ */
+export async function buildCarouselFromDraft(
+  draftText: string,
+  businessContext: {
+    businessName: string;
+    industry?: string;
+    brandColors?: string;
+    websiteUrl?: string;
+  },
+): Promise<CarouselPackage> {
+  const apiKey = process.env.ABACUSAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('ABACUSAI_API_KEY not configured');
+  }
+
+  const prompt = `Analyze this user-written social media draft and determine if it should be a carousel post.
+
+USER DRAFT TEXT:
+${draftText.slice(0, 8000)}
+
+---
+
+BUSINESS CONTEXT:
+Name: ${businessContext.businessName}
+Industry: ${businessContext.industry || 'general'}
+${businessContext.brandColors ? `Brand colors: ${businessContext.brandColors}` : ''}
+${businessContext.websiteUrl ? `Website: ${businessContext.websiteUrl}` : ''}
+
+---
+
+INSTRUCTIONS:
+1. Detect if the text contains: event listings with dates, numbered tips/steps, rankings, lists of items, features, or other structured list-like content.
+2. If YES → post_type: "carousel". Extract each item/event as a key point.
+3. Apply slide distribution:
+   - 3 or fewer items → 1 slide per item
+   - 4-9 items → 3 slides, group evenly (chronologically for events)
+   - 10+ items → select best 6-9, create 3 slides
+4. For each slide:
+   - Short headline (5-8 words) summarizing the group
+   - 2-3 concise bullets (dates/times for events, key details for tips)
+   - image_prompt describing a visual theme
+5. Write a caption that:
+   - Hooks with the main value proposition
+   - Summarizes what the carousel covers
+   - Ends with a CTA for engagement
+6. If the text is NOT list-based → post_type: "standard", explain in fallback_reason.
+
+Return this exact JSON structure:
+{
+  "post_type": "carousel" or "standard",
+  "detected_article_type": "listicle" | "tips" | "ranking" | "how-to" | "events" | "standard_article",
+  "key_points": [
+    { "title": "...", "summary": "...", "importance_score": 1-10 }
+  ],
+  "slides": [
+    {
+      "slide_number": 1,
+      "headline": "...",
+      "bullets": ["...", "..."],
+      "image_prompt": "...",
+      "overlay_text": { "headline": "...", "bullets": ["...", "..."] }
+    }
+  ],
+  "caption": "...",
+  "platform_notes": {
+    "facebook": "...",
+    "instagram": "...",
+    "linkedin": "..."
+  },
+  "fallback_reason": null or "reason this isn't a carousel"
+}`;
+
+  console.log(`[carousel-draft] Analyzing user draft (${draftText.length} chars) for carousel potential`);
+
+  const res = await fetch(LLM_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: LLM_MODEL,
+      messages: [
+        { role: 'system', content: DRAFT_CAROUSEL_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.4,
+      max_tokens: 4000,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`LLM API error ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('Empty response from LLM');
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error('Failed to parse LLM response as JSON');
+  }
+
+  // Normalize using a synthetic ArticleContent
+  const syntheticArticle: ArticleContent = {
+    title: '',
+    publisher: businessContext.businessName,
+    headings: [],
+    listItems: [],
+    bodyText: draftText,
+    url: businessContext.websiteUrl || '',
+  };
+
+  const pkg = normalizeCarouselPackage(parsed, syntheticArticle);
+  // Override source fields since this is user-written, not an article
+  pkg.source_url = businessContext.websiteUrl || '';
+  pkg.source_publisher = businessContext.businessName;
+  pkg.article_title = '';
+  pkg.source_attribution = `Posted by ${businessContext.businessName}`;
+
+  console.log(`[carousel-draft] Result: type=${pkg.post_type}, detected=${pkg.detected_article_type}, slides=${pkg.slides.length}`);
+
+  return pkg;
+}
+
 // ─── Response Normalization ───────────────────────────────────────────
 
 function normalizeCarouselPackage(raw: any, article: ArticleContent): CarouselPackage {

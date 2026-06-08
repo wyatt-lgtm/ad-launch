@@ -199,6 +199,8 @@ export default function SocialDashboard() {
   // Create From My Own Post state
   const [showDraftForm, setShowDraftForm] = useState(false);
   const [draftText, setDraftText] = useState('');
+  const [draftArticleUrl, setDraftArticleUrl] = useState('');
+  const [draftForceCarousel, setDraftForceCarousel] = useState(false);
   const [draftPlatform, setDraftPlatform] = useState('');
   const [draftTone, setDraftTone] = useState('');
   const [draftCta, setDraftCta] = useState('');
@@ -692,15 +694,17 @@ export default function SocialDashboard() {
 
   // ── Create From My Own Post ─────────────────────────────────────────────
   const submitDraft = async () => {
-    if (!draftText.trim()) {
-      setDraftError('Please enter your draft post text.');
+    if (!draftText.trim() && !draftArticleUrl.trim()) {
+      setDraftError('Please enter your draft post text or an article URL.');
       return;
     }
     setDraftSubmitting(true);
     setDraftError(null);
 
-    const params = {
-      draftText: draftText.trim(),
+    const params: any = {
+      draftText: draftText.trim() || undefined,
+      articleUrl: draftArticleUrl.trim() || undefined,
+      forceCarousel: draftForceCarousel || undefined,
       platform: draftPlatform || undefined,
       tone: draftTone || undefined,
       cta: draftCta || undefined,
@@ -720,6 +724,12 @@ export default function SocialDashboard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit draft');
 
+      // If immediate result (article/carousel path — no Tombstone polling needed)
+      if (data.immediate && data.postId) {
+        // Refresh the post list to show the new post
+        fetchPosts();
+      }
+
       const wfIds: string[] = data.workflowIds || [];
       if (wfIds.length > 0) {
         setActiveWorkflowIds(wfIds);
@@ -732,6 +742,8 @@ export default function SocialDashboard() {
 
       // Reset form fields
       setDraftText('');
+      setDraftArticleUrl('');
+      setDraftForceCarousel(false);
       setDraftPlatform('');
       setDraftTone('');
       setDraftCta('');
@@ -1457,13 +1469,37 @@ export default function SocialDashboard() {
             </div>
 
             <div className="px-5 py-4 space-y-4">
-              {/* Draft text — required */}
+              {/* Article URL — optional */}
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1.5">Your Draft Post <span className="text-red-500">*</span></label>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                  Article URL <span className="text-gray-400">(optional)</span>
+                </label>
+                <div className="relative">
+                  <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="url"
+                    value={draftArticleUrl}
+                    onChange={e => setDraftArticleUrl(e.target.value)}
+                    placeholder="Paste an article URL to create a post from it…"
+                    className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Share interesting articles not in your news feeds — we&apos;ll create a branded post from it</p>
+              </div>
+
+              {/* Draft text */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                  Your Draft Post {!draftArticleUrl.trim() && <span className="text-red-500">*</span>}
+                  {draftArticleUrl.trim() && <span className="text-gray-400">(optional — adds your angle to the article)</span>}
+                </label>
                 <textarea
                   value={draftText}
                   onChange={e => setDraftText(e.target.value)}
-                  placeholder="Type or paste your post draft here…"
+                  placeholder={draftArticleUrl.trim()
+                    ? 'Add your angle or talking points (optional)…'
+                    : 'Type or paste your post draft here…'
+                  }
                   rows={4}
                   className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                 />
@@ -1506,17 +1542,37 @@ export default function SocialDashboard() {
                 </div>
               </div>
 
-              {/* Generate art checkbox */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={draftGenerateArt}
-                  onChange={e => setDraftGenerateArt(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                />
-                <ImageIcon className="w-4 h-4 text-gray-500" />
-                <span className="text-sm text-gray-700">Generate final art / image</span>
-              </label>
+              {/* Checkboxes: generate art + carousel format */}
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draftGenerateArt}
+                    onChange={e => setDraftGenerateArt(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                  />
+                  <ImageIcon className="w-4 h-4 text-gray-500" />
+                  <span className="text-sm text-gray-700">Generate final art / image</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draftForceCarousel || !!draftArticleUrl.trim()}
+                    onChange={e => setDraftForceCarousel(e.target.checked)}
+                    disabled={!!draftArticleUrl.trim()}
+                    className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500 disabled:opacity-50"
+                  />
+                  <Layers className="w-4 h-4 text-gray-500" />
+                  <span className="text-sm text-gray-700">
+                    Carousel format
+                    <span className="text-xs text-gray-400 ml-1">
+                      {draftArticleUrl.trim()
+                        ? '(auto for articles)'
+                        : '(auto-detects lists, events, tips)'}
+                    </span>
+                  </span>
+                </label>
+              </div>
 
               {/* Advanced options toggle */}
               <button
@@ -1607,7 +1663,10 @@ export default function SocialDashboard() {
               )}
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-500">
-                  1 polished post will be created{draftGenerateArt ? ' with artwork' : ''}
+                  {draftArticleUrl.trim()
+                    ? `Article will be turned into a ${draftGenerateArt ? 'visual ' : ''}post${(draftForceCarousel || draftArticleUrl.trim()) ? ' (carousel if list-based)' : ''}`
+                    : `1 polished post will be created${draftGenerateArt ? ' with artwork' : ''}${draftForceCarousel ? ' (carousel if list-based)' : ''}`
+                  }
                 </p>
                 <div className="flex items-center gap-2">
                   <button
@@ -1618,11 +1677,14 @@ export default function SocialDashboard() {
                   </button>
                   <button
                     onClick={submitDraft}
-                    disabled={draftSubmitting || !draftText.trim()}
+                    disabled={draftSubmitting || (!draftText.trim() && !draftArticleUrl.trim())}
                     className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-60"
                   >
                     {draftSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                    {draftSubmitting ? 'Submitting…' : 'Polish & Create'}
+                    {draftSubmitting
+                      ? (draftArticleUrl.trim() ? 'Creating post…' : 'Submitting…')
+                      : (draftArticleUrl.trim() ? 'Create From Article' : 'Polish & Create')
+                    }
                   </button>
                 </div>
               </div>
