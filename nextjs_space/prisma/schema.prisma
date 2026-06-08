@@ -494,6 +494,11 @@ model PostPackage {
   warRoomRejectReason String?
   qaScore             Int?
   qaRejectReason      String?
+  // Carousel fields
+  carouselData          Json?    // Full CarouselPackage JSON
+  carouselSlides        Json?    // Array of rendered slide metadata
+  carouselImageUrls     String[] @default([]) // S3 URLs for slide images
+  sourceAttribution     String?  // "Source: Publisher Name"
   // Credit tracking
   creditChargedAt     DateTime?
   creditCost          Int?         @default(0)
@@ -678,6 +683,11 @@ model SocialPost {
   generationStartedAt   DateTime?
   generationCompletedAt DateTime?
   totalGenerationTimeMs Int?
+  // Carousel fields
+  carouselData          Json?    // Full CarouselPackage JSON (key_points, slides metadata, platform_notes)
+  carouselSlides        Json?    // Array of {slide_number, headline, bullets, imageUrl} for rendered slides
+  carouselImageUrls     String[] @default([]) // S3 URLs for slide images (ordered)
+  sourceAttribution     String?  // "Source: Publisher Name"
   analysis        Analysis?      @relation(fields: [analysisId], references: [id])
   business        Business?      @relation(fields: [businessId], references: [id])
   generationRun   GenerationRun? @relation(fields: [generationRunId], references: [id])

@@ -10,11 +10,13 @@ import {
   Zap, RefreshCw, ChevronDown, ChevronUp, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
   List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare,
-  PenLine, Image as ImageIcon, Coins, Lock, Lightbulb, AlertTriangle
+  PenLine, Image as ImageIcon, Coins, Lock, Lightbulb, AlertTriangle, Layers
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
 import GenerationProgress from './generation-progress';
+import CarouselViewer from './carousel-viewer';
+import CarouselCreator from './carousel-creator';
 
 /**
  * Build a proxy URL for an image key (R2 artifact path or legacy full URL).
@@ -90,6 +92,11 @@ interface SocialPost {
   businessId: string | null;
   businessName: string | null;
   businessWebsiteUrl: string | null;
+  // Carousel fields
+  carouselData: any | null;
+  carouselSlides: any[] | null;
+  carouselImageUrls: string[] | null;
+  sourceAttribution: string | null;
 }
 
 interface SocialAccount {
@@ -175,6 +182,7 @@ export default function SocialDashboard() {
 
   // Weekly Tip state
   const [showWeeklyTipForm, setShowWeeklyTipForm] = useState(false);
+  const [showCarouselCreator, setShowCarouselCreator] = useState(false);
   const [wtTopic, setWtTopic] = useState('');
   const [wtCategory, setWtCategory] = useState('');
   const [wtAudience, setWtAudience] = useState('All customers');
@@ -238,6 +246,7 @@ export default function SocialDashboard() {
 
   // Fetch data — filter by active business when available
   const activeBusinessId = bizCtx.activeBusiness?.id;
+  const activeBizName = bizCtx.activeBusiness?.businessName || 'Business';
 
   // Load credit balance
   useEffect(() => {
@@ -1220,6 +1229,14 @@ export default function SocialDashboard() {
             <Lightbulb className="w-4 h-4" />
             Weekly Tip
           </button>
+          <button
+            onClick={() => setShowCarouselCreator(true)}
+            disabled={!activeBusinessId}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-colors shadow-sm bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-60"
+          >
+            <Layers className="w-4 h-4" />
+            Article Carousel
+          </button>
         </div>
       </div>
 
@@ -2155,8 +2172,16 @@ export default function SocialDashboard() {
                         );
                       })()}
 
-                      {/* Post image — displayed prominently above caption */}
-                      {post.imageUrl ? (
+                      {/* Post image / Carousel — displayed prominently above caption */}
+                      {post.postType === 'carousel' && post.carouselImageUrls && post.carouselImageUrls.length > 0 ? (
+                        <CarouselViewer
+                          slides={post.carouselSlides as any[] || []}
+                          imageUrls={post.carouselImageUrls}
+                          sourceAttribution={post.sourceAttribution || ''}
+                          onDownload={() => downloadImage(post)}
+                          downloading={downloadingId === post.id}
+                        />
+                      ) : post.imageUrl ? (
                         <div className="mb-3">
                           <div className="relative w-full max-w-md mx-auto aspect-[4/5] bg-gray-100 rounded-lg overflow-hidden">
                             <ResolvedImage
@@ -2440,6 +2465,15 @@ export default function SocialDashboard() {
             })}
           </div>
         </div>
+      )}
+      {/* Carousel Creator Modal */}
+      {showCarouselCreator && activeBusinessId && activeBizName && (
+        <CarouselCreator
+          businessId={activeBusinessId}
+          businessName={activeBizName}
+          onClose={() => setShowCarouselCreator(false)}
+          onPostCreated={() => fetchPosts()}
+        />
       )}
     </div>
   );
