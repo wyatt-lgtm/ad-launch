@@ -807,6 +807,18 @@ export async function createDraftPolishMission(
   if (options.offer) commandParts.push(`Offer/promotion to highlight: ${options.offer}`);
   if (options.artDirection) commandParts.push(`Image/art direction notes: ${options.artDirection}`);
 
+  // === SECONDARY TEXT LINES ===
+  // Extract key data points (dates, stats, schedules) from the user's draft.
+  // These will be rendered INTO the image as secondary text below the headline,
+  // ensuring important facts are visible in the visual, not just the caption.
+  commandParts.push(`\n=== IMAGE TEXT RULES ===`);
+  commandParts.push(`When creating the ad image, include key data points from the draft as SECONDARY TEXT in the image.`);
+  commandParts.push(`Examples of data points to include: dates, game schedules, event times, statistics, prices, deadlines.`);
+  commandParts.push(`Pass these as "secondary_text_lines" (array of short strings) in the creative direction output.`);
+  commandParts.push(`Each line should be concise (e.g. "Jun 12 vs Paraguay" not full sentences).`);
+  commandParts.push(`These lines appear below the headline and above the CTA in the rendered image.`);
+  commandParts.push(`Also ensure people/subjects in the image face TOWARD the main action/screen, not away from it.`);
+
   commandParts.push(`\nIMPORTANT: This is intent=copy_edit_user_post, source=user_written_post. Do NOT run RSS scouting or story discovery.`);
 
   const command = commandParts.join('\n');
