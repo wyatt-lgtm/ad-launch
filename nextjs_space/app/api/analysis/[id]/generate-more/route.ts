@@ -65,7 +65,7 @@ export async function POST(
     }
 
     console.log(`[generate-more] Creating 3 more ${lane} posts for ${analysisId}`);
-    const result = await createLaneMission(analysis.websiteUrl, lane as any, context, 3, undefined, analysis.businessId || undefined);
+    const result = await createLaneMission(analysis.websiteUrl, lane as any, context, 3, undefined, analysis.businessId || undefined, businessName);
 
     if (!result.success || !result.workflowId) {
       return NextResponse.json({ error: 'Failed to start generation' }, { status: 502 });

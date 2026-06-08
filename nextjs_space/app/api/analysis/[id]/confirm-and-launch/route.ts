@@ -225,7 +225,7 @@ export async function POST(
     try {
       // Sequential + exclude-list to avoid Tombstone race condition with duplicate workflow IDs
       let laneT0 = Date.now();
-      const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds, analysis.businessId || undefined, tombstoneBusinessId);
+const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
       laneTimes.website = Date.now() - laneT0;
       console.log(`[confirm-and-launch] Lane website: ${laneTimes.website}ms (success=${websiteResult.success})`);
       if (websiteResult.workflowId) {
@@ -235,7 +235,7 @@ export async function POST(
       }
 
       laneT0 = Date.now();
-      const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds, analysis.businessId || undefined, tombstoneBusinessId);
+const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
       laneTimes.news = Date.now() - laneT0;
       console.log(`[confirm-and-launch] Lane news: ${laneTimes.news}ms (success=${newsResult.success})`);
       if (newsResult.workflowId) {
@@ -245,7 +245,7 @@ export async function POST(
       }
 
       laneT0 = Date.now();
-      const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds, analysis.businessId || undefined, tombstoneBusinessId);
+const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
       laneTimes.holiday = Date.now() - laneT0;
       console.log(`[confirm-and-launch] Lane holiday: ${laneTimes.holiday}ms (success=${holidayResult.success})`);
       if (holidayResult.workflowId) {

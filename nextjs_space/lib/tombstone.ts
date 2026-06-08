@@ -236,6 +236,7 @@ export async function createLaneMission(
   count: number = 1,
   excludeWorkflowIds?: string[],
   businessId?: string,
+  businessName?: string,
   tombstoneBusinessId?: number | string | null,
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -243,9 +244,17 @@ export async function createLaneMission(
   // Load saved business profile to avoid full re-analysis
   const profileBlock = await getBusinessProfileBlock(businessId);
 
+  // Build identity lock to prevent cross-business contamination
+  const identityLock = buildIdentityLockBlock(
+    businessName || '',
+    normalizedUrl,
+    normalizedUrl,
+  );
+
   let command = '';
   if (lane === 'website') {
     command = [
+      identityLock,
       `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} promoting the business.`,
       `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
       `Use colors, logo, and brand voice from the website. Make it feel authentic — like the business owner wrote it.`,
@@ -254,6 +263,7 @@ export async function createLaneMission(
     ].filter(Boolean).join('\n');
   } else if (lane === 'news') {
     command = [
+      identityLock,
       `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} that connects the business to local news.`,
       `The post should tie the business to local community news in a way that feels natural and relevant.`,
       `Use the business brand colors and voice from the website.`,
@@ -270,6 +280,7 @@ export async function createLaneMission(
     ].filter(Boolean).join('\n');
   } else if (lane === 'holiday') {
     command = [
+      identityLock,
       `review ${normalizedUrl} and create ${count} social media post${count > 1 ? 's' : ''} tied to an upcoming holiday or seasonal event.`,
       `The post should connect the business to the holiday/event in a creative, engaging way.`,
       `Use the business brand colors and voice from the website.`,
