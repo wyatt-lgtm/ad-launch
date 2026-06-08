@@ -186,6 +186,25 @@ export async function POST(req: NextRequest) {
             }
           }
 
+          // Look up workflow_id from Tombstone task endpoint if content queue didn't include it
+          let resolvedWorkflowId = item.workflow_id || null;
+          if (!resolvedWorkflowId) {
+            try {
+              const taskRes = await fetch(`${TOMBSTONE_URL}/tasks/${item.task_id}`, {
+                headers: { Accept: 'application/json' }, cache: 'no-store',
+              });
+              if (taskRes.ok) {
+                const taskData = await taskRes.json();
+                resolvedWorkflowId = taskData.workflow_id || null;
+                if (resolvedWorkflowId) {
+                  console.log(`[missions/poll] Resolved workflow_id=${resolvedWorkflowId} for task ${item.task_id} via /tasks endpoint`);
+                }
+              }
+            } catch (e: any) {
+              console.warn(`[missions/poll] Failed to look up workflow_id for task ${item.task_id}:`, e.message);
+            }
+          }
+
           // Try to determine post type from campaign name or summary
           const pv = detail.platform_variants;
           let campaignName = '';
@@ -198,7 +217,7 @@ export async function POST(req: NextRequest) {
 
           return {
             tombstoneTaskId: String(item.task_id),
-            workflowId: item.workflow_id || null,
+            workflowId: resolvedWorkflowId,
             caption: caption + (cta ? `\n\n${cta}` : ''),
             hashtags,
             imageUrl: imageKey || null,

@@ -105,22 +105,54 @@ export async function POST(req: NextRequest) {
 
     const socialMissionId = result.workflowIds.join(',');
 
-    // Store mission ID on the most recent analysis for polling
-    const recentAnalysis = await prisma.analysis.findFirst({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true, socialMissionId: true },
-    });
+    // Store mission ID on the correct business's analysis for polling
+    // Priority: analysis for the selected business > most recent analysis
+    let targetAnalysis = resolvedBusinessId
+      ? await prisma.analysis.findFirst({
+          where: { userId, businessId: resolvedBusinessId },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, socialMissionId: true },
+        })
+      : null;
 
-    if (recentAnalysis) {
+    if (!targetAnalysis) {
+      // Fallback: most recent analysis (shouldn't happen if business is properly selected)
+      targetAnalysis = await prisma.analysis.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, socialMissionId: true },
+      });
+      if (targetAnalysis) {
+        console.warn(`[create-from-draft] No analysis for business ${resolvedBusinessId}, falling back to most recent analysis ${targetAnalysis.id}`);
+      }
+    }
+
+    if (targetAnalysis) {
       // Append to existing socialMissionId if present
-      const existing = recentAnalysis.socialMissionId || '';
+      const existing = targetAnalysis.socialMissionId || '';
       const updated = existing ? `${existing},${socialMissionId}` : socialMissionId;
       await prisma.analysis.update({
-        where: { id: recentAnalysis.id },
+        where: { id: targetAnalysis.id },
         data: { socialMissionId: updated },
       });
+      console.log(`[create-from-draft] Stored workflow ${socialMissionId} on analysis ${targetAnalysis.id} (business=${resolvedBusinessId})`);
     }
+
+    // Create a GenerationRun so the poll route can map this workflow to the correct business
+    const now = new Date();
+    const generationRun = await prisma.generationRun.create({
+      data: {
+        userId,
+        businessId: resolvedBusinessId,
+        status: 'polling',
+        workflowIds: result.workflowIds,
+        tombstoneTaskIds: result.allTaskIds.map(String),
+        clickedAt: now,
+        runCreatedAt: now,
+        workflowCreatedAt: now,
+      },
+    });
+    console.log(`[create-from-draft] Created GenerationRun ${generationRun.id} for business=${resolvedBusinessId} workflows=${socialMissionId}`);
 
     console.log(`[create-from-draft] Mission created: ${socialMissionId} (${result.allTaskIds.length} tasks)`);
 
@@ -129,6 +161,7 @@ export async function POST(req: NextRequest) {
       socialMissionId,
       workflowIds: result.workflowIds,
       taskCount: result.allTaskIds.length,
+      generationRunId: generationRun.id,
       intent: 'copy_edit_user_post',
       source: 'user_written_post',
     });
