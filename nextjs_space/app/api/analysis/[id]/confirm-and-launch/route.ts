@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { createLaneMission } from '@/lib/tombstone';
+import { createLaneMission, createProvisionalBusiness, TombstoneError } from '@/lib/tombstone';
 import { getUpcomingEvents } from '@/lib/social/upcoming-events';
 import { generateContentBrief } from '@/lib/rss/trade-area-feed';
 
@@ -80,6 +80,79 @@ export async function POST(
       }
     }
 
+    // ── Ensure a Tombstone provisional business exists BEFORE launching ──
+    // The Tombstone /commands isolation gate REQUIRES an integer business_id
+    // for all customer-facing content. We create (or reuse) a provisional
+    // business so every generated post is scoped to this business. Without
+    // this, the backend rejects every command with HTTP 400 and the whole
+    // pipeline silently fails. This is the root cause of the production bug.
+    let tombstoneBusinessId: number | null = analysis.tombstoneBusinessId ?? null;
+    let tombstoneBusinessUuid: string | null = analysis.tombstoneBusinessUuid ?? null;
+
+    // Reuse an id already attached to the linked Business record if present.
+    if (tombstoneBusinessId == null && analysis.businessId) {
+      try {
+        const biz = await prisma.business.findUnique({
+          where: { id: analysis.businessId },
+          select: { tombstoneBusinessId: true, tombstoneBusinessUuid: true },
+        });
+        if (biz?.tombstoneBusinessId != null) {
+          tombstoneBusinessId = biz.tombstoneBusinessId;
+          tombstoneBusinessUuid = biz.tombstoneBusinessUuid ?? null;
+        }
+      } catch (e: any) {
+        console.error('[confirm-and-launch] Business lookup for tombstone id failed (non-fatal):', e?.message);
+      }
+    }
+
+    if (tombstoneBusinessId == null) {
+      try {
+        console.log(`[confirm-and-launch] Creating provisional Tombstone business for: ${businessName || analysis.websiteUrl}`);
+        const provisional = await createProvisionalBusiness({
+          businessName: businessName || analysis.businessName || analysis.websiteUrl,
+          address: [businessAddr, businessCity, businessState, businessZip].filter(Boolean).join(', ') || undefined,
+          website: analysis.websiteUrl,
+          phone: businessPhone || undefined,
+        });
+        tombstoneBusinessId = provisional.businessId;
+        tombstoneBusinessUuid = provisional.businessUuid;
+
+        // Persist on the analysis (always) and the Business record (if linked).
+        await prisma.analysis.update({
+          where: { id: analysisId },
+          data: {
+            tombstoneBusinessId,
+            tombstoneBusinessUuid,
+          },
+        });
+        if (analysis.businessId) {
+          await prisma.business.update({
+            where: { id: analysis.businessId },
+            data: { tombstoneBusinessId, tombstoneBusinessUuid },
+          }).catch((e: any) => console.error('[confirm-and-launch] Business tombstone id sync failed (non-fatal):', e?.message));
+        }
+        console.log(`[confirm-and-launch] Provisional business ready: business_id=${tombstoneBusinessId} uuid=${tombstoneBusinessUuid}`);
+      } catch (err: any) {
+        const isTomb = err instanceof TombstoneError;
+        const backendStatus = isTomb ? err.backendStatus : null;
+        const backendError = isTomb ? err.backendError : String(err?.message || err);
+        console.error('[confirm-and-launch] Provisional business creation failed:', backendStatus, backendError);
+        await prisma.analysis.update({
+          where: { id: analysisId },
+          data: { status: 'error' },
+        }).catch(() => {});
+        return NextResponse.json({
+          success: false,
+          analysisId,
+          status: 'error',
+          stage: 'provisional_business',
+          backend_status: backendStatus,
+          backend_error: backendError,
+          error: 'Could not register your business with the content pipeline. Please try again.',
+        }, { status: 502 });
+      }
+    }
+
     // ── Gather context for news and holiday lanes (parallel) ─────────
     console.log(`[confirm-and-launch] Gathering context for: ${analysis.websiteUrl}`);
     const contextStart = Date.now();
@@ -152,7 +225,7 @@ export async function POST(
     try {
       // Sequential + exclude-list to avoid Tombstone race condition with duplicate workflow IDs
       let laneT0 = Date.now();
-      const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds, analysis.businessId || undefined);
+      const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds, analysis.businessId || undefined, tombstoneBusinessId);
       laneTimes.website = Date.now() - laneT0;
       console.log(`[confirm-and-launch] Lane website: ${laneTimes.website}ms (success=${websiteResult.success})`);
       if (websiteResult.workflowId) {
@@ -162,7 +235,7 @@ export async function POST(
       }
 
       laneT0 = Date.now();
-      const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds, analysis.businessId || undefined);
+      const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds, analysis.businessId || undefined, tombstoneBusinessId);
       laneTimes.news = Date.now() - laneT0;
       console.log(`[confirm-and-launch] Lane news: ${laneTimes.news}ms (success=${newsResult.success})`);
       if (newsResult.workflowId) {
@@ -172,7 +245,7 @@ export async function POST(
       }
 
       laneT0 = Date.now();
-      const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds, analysis.businessId || undefined);
+      const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds, analysis.businessId || undefined, tombstoneBusinessId);
       laneTimes.holiday = Date.now() - laneT0;
       console.log(`[confirm-and-launch] Lane holiday: ${laneTimes.holiday}ms (success=${holidayResult.success})`);
       if (holidayResult.workflowId) {
@@ -201,6 +274,11 @@ export async function POST(
 
       if (Object.keys(laneWorkflows).length === 0) {
         console.error('[confirm-and-launch] All lane missions failed');
+        // Surface the real backend status/error from the first lane that
+        // failed instead of masking it behind a generic HTTP 200 message.
+        const failed = [websiteResult, newsResult, holidayResult].find(
+          (r: any) => r && (r.backendStatus || r.backendError),
+        ) as any;
         await prisma.analysis.update({
           where: { id: analysisId },
           data: { status: 'error' },
@@ -209,8 +287,11 @@ export async function POST(
           success: false,
           analysisId,
           status: 'error',
+          stage: 'lane_missions',
+          backend_status: failed?.backendStatus ?? null,
+          backend_error: failed?.backendError ?? null,
           error: 'Analysis pipeline could not be created. Please try again.',
-        });
+        }, { status: 502 });
       }
 
       console.log(`[confirm-and-launch] Workflow IDs saved for ${analysisId}: ${JSON.stringify(laneWorkflows)}`);
@@ -226,8 +307,11 @@ export async function POST(
           success: false,
           analysisId,
           status: 'error',
+          stage: 'lane_missions',
+          backend_status: err instanceof TombstoneError ? err.backendStatus : null,
+          backend_error: err instanceof TombstoneError ? err.backendError : String(err?.message || err),
           error: 'Analysis pipeline could not be created. Please try again.',
-        });
+        }, { status: 502 });
       }
       // Partial creation — some lanes saved, others failed
       console.log(`[confirm-and-launch] Partial launch: ${Object.keys(laneWorkflows).length} lanes saved despite error`);

@@ -26,19 +26,96 @@ async function getBusinessProfileBlock(businessId: string | undefined, workflowI
 }
 
 /**
- * Submit a command to Tombstone OS. Returns created task IDs and workflow info.
+ * Create a PROVISIONAL business in Tombstone OS so the integer business_id
+ * required by the /commands isolation gate exists BEFORE any content command
+ * is sent. Called from the Ad Launch confirm-and-launch flow right after the
+ * customer verifies their address (and before they register an account).
+ *
+ * Returns { businessId, businessUuid } on success. Throws a structured
+ * TombstoneError on failure so callers can surface the real backend status
+ * instead of masking it.
  */
-async function sendCommand(command: string, excludeWorkflowIds?: string[]) {
+export class TombstoneError extends Error {
+  stage: string;
+  backendStatus: number | null;
+  backendError: string | null;
+  constructor(stage: string, message: string, backendStatus: number | null = null, backendError: string | null = null) {
+    super(message);
+    this.name = 'TombstoneError';
+    this.stage = stage;
+    this.backendStatus = backendStatus;
+    this.backendError = backendError;
+  }
+}
+
+export async function createProvisionalBusiness(input: {
+  businessName: string;
+  address?: string;
+  website?: string;
+  phone?: string;
+}): Promise<{ businessId: number; businessUuid: string }> {
+  const businessName = (input.businessName || '').trim();
+  if (!businessName) {
+    throw new TombstoneError('provisional_business', 'businessName is required to create a provisional business');
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  let res: Response;
+  try {
+    res = await fetch(`${TOMBSTONE_URL}/businesses/provisional`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        business_name: businessName,
+        address: input.address || undefined,
+        website: input.website || undefined,
+        phone: input.phone || undefined,
+      }),
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+  } catch (err: any) {
+    throw new TombstoneError('provisional_business', `Failed to reach Tombstone /businesses/provisional: ${err?.message || err}`, null, String(err?.message || err));
+  } finally {
+    clearTimeout(timer);
+  }
+  const data = await res.json().catch(() => ({} as any));
+  if (!res.ok) {
+    const detail = (data && (data.detail || data.error)) || `HTTP ${res.status}`;
+    console.error('[tombstone] /businesses/provisional error:', res.status, detail);
+    throw new TombstoneError('provisional_business', `Provisional business creation failed: ${detail}`, res.status, String(detail));
+  }
+  const businessId = data?.business_id;
+  const businessUuid = data?.business_uuid;
+  if (businessId == null || businessUuid == null) {
+    throw new TombstoneError('provisional_business', 'Provisional business response missing business_id/business_uuid', res.status, JSON.stringify(data));
+  }
+  console.log(`[tombstone] Provisional business created: business_id=${businessId} uuid=${businessUuid}`);
+  return { businessId: Number(businessId), businessUuid: String(businessUuid) };
+}
+
+/**
+ * Submit a command to Tombstone OS. Returns created task IDs and workflow info.
+ *
+ * `businessId` (the Tombstone integer business_id from /businesses/provisional)
+ * is REQUIRED by the backend isolation gate for customer-facing content — it is
+ * sent in the payload so every generated task is scoped to the correct business.
+ */
+async function sendCommand(command: string, excludeWorkflowIds?: string[], businessId?: number | string | null) {
   try {
     const t0 = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120000); // 120s timeout — Tombstone can be slow when cold
+    const payload: Record<string, any> = { command };
+    if (businessId !== undefined && businessId !== null && businessId !== '') {
+      payload.business_id = typeof businessId === 'string' ? businessId : Number(businessId);
+    }
     let res: Response;
     try {
       res = await fetch(`${TOMBSTONE_URL}/commands`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command }),
+        body: JSON.stringify(payload),
         cache: 'no-store',
         signal: controller.signal,
       });
@@ -52,8 +129,9 @@ async function sendCommand(command: string, excludeWorkflowIds?: string[]) {
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      const backendError = (data && (data.detail || data.error)) || `HTTP ${res.status}`;
       console.error('Tombstone /commands error:', res.status, data, `latency=${apiLatency}ms`);
-      return { success: false, data: null, workflowId: null, taskIds: [] };
+      return { success: false, data: null, workflowId: null, taskIds: [], backendStatus: res.status, backendError: String(backendError) };
     }
     const taskIds: number[] = data?.created_task_ids ?? [];
     let workflowId: string | null = null;
@@ -118,10 +196,10 @@ async function sendCommand(command: string, excludeWorkflowIds?: string[]) {
       }
     }
 
-    return { success: true, data, workflowId, taskIds };
+    return { success: true, data, workflowId, taskIds, backendStatus: res.status, backendError: null };
   } catch (err: any) {
     console.error('Tombstone command error:', err?.message, err?.cause || '');
-    return { success: false, data: null, workflowId: null, taskIds: [] };
+    return { success: false, data: null, workflowId: null, taskIds: [], backendStatus: null, backendError: String(err?.message || err) };
   }
 }
 
@@ -158,6 +236,7 @@ export async function createLaneMission(
   count: number = 1,
   excludeWorkflowIds?: string[],
   businessId?: string,
+  tombstoneBusinessId?: number | string | null,
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
 
@@ -207,14 +286,16 @@ export async function createLaneMission(
     ].filter(Boolean).join('\n');
   }
 
-  console.log(`[tombstone] Creating ${lane} lane mission (${count} posts) for: ${normalizedUrl}`);
-  const result = await sendCommand(command, excludeWorkflowIds);
+  console.log(`[tombstone] Creating ${lane} lane mission (${count} posts) for: ${normalizedUrl} (business_id=${tombstoneBusinessId ?? 'none'})`);
+  const result = await sendCommand(command, excludeWorkflowIds, tombstoneBusinessId);
 
   return {
     success: !!result.workflowId,
     workflowId: result.workflowId,
     taskIds: result.taskIds,
     lane,
+    backendStatus: (result as any).backendStatus ?? null,
+    backendError: (result as any).backendError ?? null,
   };
 }
 

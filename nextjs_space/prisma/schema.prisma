@@ -43,6 +43,9 @@ model Business {
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
   contentSourceMode String                   @default("local_plus_interests")
+  // Canonical Tombstone OS business identity, persisted for reuse across analyses.
+  tombstoneBusinessId   Int?
+  tombstoneBusinessUuid String?
   analyses          Analysis[]
   user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   feedPreferences   BusinessFeedPreference[]
@@ -169,6 +172,11 @@ model Analysis {
   updatedAt       DateTime     @updatedAt
   socialMissionId String?
   businessId      String?
+  // Canonical Tombstone OS business identity (created via POST /businesses/provisional).
+  // tombstoneBusinessId is the integer key the Tombstone /commands gate requires for
+  // customer-facing content; tombstoneBusinessUuid is the public token held until signup.
+  tombstoneBusinessId   Int?
+  tombstoneBusinessUuid String?
   ads             Ad[]
   business        Business?    @relation(fields: [businessId], references: [id])
   user            User?        @relation(fields: [userId], references: [id])
