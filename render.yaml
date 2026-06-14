@@ -1,0 +1,66 @@
+# Render Blueprint — Ad Launch Frontend
+# https://render.com/docs/blueprint-spec
+#
+# Deploy: link your GitHub repo (wyatt-lgtm/ad-launch) to Render,
+# point to this file, and set the environment variables listed below.
+
+services:
+  - type: web
+    name: ad-launch-frontend
+    runtime: docker
+    dockerfilePath: ./nextjs_space/Dockerfile
+    dockerContext: ./nextjs_space
+    region: oregon  # Change to match your Tombstone/DB region
+    plan: starter   # starter ($7/mo) or standard ($25/mo)
+    healthCheckPath: /api/auth/providers
+    autoDeploy: true
+    envVars:
+      # ── Required ──────────────────────────────────────────
+      - key: DATABASE_URL
+        sync: false  # Set in Render dashboard
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: NEXTAUTH_URL
+        sync: false  # e.g. https://connect.launchmarketing.com
+      - key: TOMBSTONE_API_URL
+        sync: false  # https://tombstone-api-xjc4.onrender.com
+
+      # ── API Keys ──────────────────────────────────────────
+      - key: ABACUSAI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: GHL_API_TOKEN
+        sync: false
+      - key: GHL_LOCATION_ID
+        sync: false
+
+      # ── AWS / S3 (image storage) ──────────────────────────
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_BUCKET_NAME
+        sync: false
+      - key: AWS_FOLDER_PREFIX
+        sync: false
+
+      # ── Notification IDs (Abacus) ─────────────────────────
+      - key: WEB_APP_ID
+        sync: false
+      - key: NOTIF_ID_EMAIL_CONFIRMATION
+        sync: false
+      - key: NOTIF_ID_PASSWORD_RESET
+        sync: false
+      - key: NOTIF_ID_DAILY_SCOUT_REPORT
+        sync: false
+      - key: NOTIF_ID_POST_READY
+        sync: false
+
+      # ── Build-time (set automatically) ────────────────────
+      - key: NODE_ENV
+        value: production
