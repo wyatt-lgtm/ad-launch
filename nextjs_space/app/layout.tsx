@@ -29,7 +29,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script src="https://apps.abacus.ai/chatllm/appllm-lib.js" />
         <style dangerouslySetInnerHTML={{ __html: '[data-hydration-error] { display: none !important; }' }} />
       </head>
       <body className={inter.className} suppressHydrationWarning>

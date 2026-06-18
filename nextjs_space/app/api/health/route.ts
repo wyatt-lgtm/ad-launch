@@ -11,21 +11,23 @@ import { prisma } from '@/lib/db';
 export async function GET() {
   const checks: Record<string, any> = {};
 
-  // 1. Environment variables (only vars the frontend is allowed to hold)
+  // 1. Required environment variables
   checks.env = {
     DATABASE_URL: process.env.DATABASE_URL ? 'set (' + process.env.DATABASE_URL.substring(0, 20) + '...)' : 'MISSING',
     NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET ? 'set' : 'MISSING',
     NEXTAUTH_URL: process.env.NEXTAUTH_URL || 'MISSING',
-    GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY ? 'set' : 'MISSING',
     TOMBSTONE_API_URL: process.env.TOMBSTONE_API_URL || 'MISSING',
+    GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY ? 'set' : 'MISSING',
+    ADMIN_API_KEY: process.env.ADMIN_API_KEY ? 'set' : 'MISSING',
+    EMAIL_PROVIDER: process.env.EMAIL_PROVIDER || 'log (default)',
     NODE_ENV: process.env.NODE_ENV || 'not set',
   };
 
   // Flag vars that should NOT be on the frontend (architecture violation)
-  const disallowed = ['OPENAI_API_KEY', 'ABACUSAI_API_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'AWS_BUCKET_NAME', 'AWS_FOLDER_PREFIX'];
+  const disallowed = ['OPENAI_API_KEY', 'ABACUSAI_API_KEY', 'WEB_APP_ID', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'];
   const leaked = disallowed.filter(k => !!process.env[k]);
   if (leaked.length > 0) {
-    checks.architecture_warning = `Disallowed model-provider keys present on frontend: ${leaked.join(', ')}. All AI/model calls must route through Tombstone.`;
+    checks.architecture_warning = `Disallowed keys present on frontend: ${leaked.join(', ')}. AI/model calls route through Tombstone; email uses EMAIL_PROVIDER.`;
   }
 
   // 2. Database connectivity

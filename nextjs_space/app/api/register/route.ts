@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { isBusinessEmail } from '@/lib/email-validation';
 import { createGHLContact } from '@/lib/ghl';
+import { sendEmail } from '@/lib/email';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
@@ -101,10 +102,6 @@ export async function POST(request: NextRequest) {
     const baseUrl = `${protocol}://${host}`;
     const confirmLink = `${baseUrl}/confirm?token=${confirmationToken}`;
 
-    const appUrl = process.env.NEXTAUTH_URL || baseUrl;
-    let appHostname = 'ad-launch';
-    try { appHostname = new URL(appUrl).hostname.split('.')[0]; } catch {}
-
     const htmlBody = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
         <div style="text-align: center; margin-bottom: 30px;">
@@ -124,27 +121,16 @@ export async function POST(request: NextRequest) {
 
     let emailSent = false;
     try {
-      const emailRes = await fetch('https://apps.abacus.ai/api/sendNotificationEmail', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deployment_token: process.env.ABACUSAI_API_KEY,
-          app_id: process.env.WEB_APP_ID,
-          notification_id: process.env.NOTIF_ID_EMAIL_CONFIRMATION,
-          subject: 'Confirm your email - Ad Launch',
-          body: htmlBody,
-          is_html: true,
-          recipient_email: email,
-          sender_email: `noreply@${appHostname}.abacusai.app`,
-          sender_alias: 'Ad Launch',
-        }),
+      emailSent = await sendEmail({
+        to: email,
+        subject: 'Confirm your email - Ad Launch',
+        html: htmlBody,
+        fromName: 'Ad Launch',
       });
-      const emailData = await emailRes.json().catch(() => ({}));
-      emailSent = !!emailData?.success;
-      if (!emailSent) {
-        console.error('[register] Email send failed:', JSON.stringify(emailData));
-      } else {
+      if (emailSent) {
         console.log('[register] Confirmation email sent to', email);
+      } else {
+        console.error('[register] Email send failed');
       }
     } catch (emailErr: any) {
       console.error('[register] Email send error:', emailErr?.message);

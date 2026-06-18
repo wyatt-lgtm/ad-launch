@@ -21,7 +21,7 @@ import { extractBusinessAddress, type ExtractedAddress } from '../lib/address-ex
 
 const prisma = new PrismaClient();
 
-const USER_AGENT = 'AdLaunch-NPRDiscovery/1.0 (+https://ad-launch-1nfyr8.abacusai.app)';
+const USER_AGENT = 'AdLaunch-NPRDiscovery/1.0 (+https://connect.launchmarketing.com)';
 const FETCH_TIMEOUT = 12000;
 const CONCURRENCY = 3;
 

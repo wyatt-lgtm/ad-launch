@@ -2,39 +2,20 @@
  * Shared email sending utility for scout workflow emails.
  */
 
+import { sendEmail } from '@/lib/email';
+
 export async function sendNotificationEmailHelper(opts: {
   to: string;
   subject: string;
   html: string;
-  notificationId: string;
+  notificationId?: string; // kept for signature compat, no longer used
 }): Promise<boolean> {
-  try {
-    const appHostname = (process.env.NEXTAUTH_URL || '').replace(/^https?:\/\//, '').split('/')[0];
-    const res = await fetch('https://apps.abacus.ai/api/sendNotificationEmail', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        deployment_token: process.env.ABACUSAI_API_KEY,
-        app_id: process.env.WEB_APP_ID,
-        notification_id: opts.notificationId,
-        subject: opts.subject,
-        body: opts.html,
-        is_html: true,
-        recipient_email: opts.to,
-        sender_email: `noreply@${appHostname}`,
-        sender_alias: 'Ad Launch',
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!data?.success) {
-      console.error('[scout-email] Send failed:', JSON.stringify(data));
-      return false;
-    }
-    return true;
-  } catch (err: any) {
-    console.error('[scout-email] Send error:', err?.message);
-    return false;
-  }
+  return sendEmail({
+    to: opts.to,
+    subject: opts.subject,
+    html: opts.html,
+    fromName: 'Ad Launch',
+  });
 }
 
 export function escHtml(s: string): string {

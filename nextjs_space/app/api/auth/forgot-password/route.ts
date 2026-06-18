@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { sendEmail } from '@/lib/email';
 import crypto from 'crypto';
 
 /**
@@ -41,15 +42,8 @@ export async function POST(request: Request) {
       });
 
       // Build reset link using the runtime host
-      const appHost = process.env.NEXTAUTH_URL || 'https://ad-launch-1nfyr8.abacusai.app';
+      const appHost = process.env.NEXTAUTH_URL || 'https://connect.launchmarketing.com';
       const resetLink = `${appHost}/reset-password?token=${token}`;
-
-      // Derive sender hostname
-      let appHostname = 'ad-launch-1nfyr8';
-      try {
-        const u = new URL(appHost);
-        appHostname = u.hostname.replace('.abacusai.app', '');
-      } catch {}
 
       const htmlBody = `
         <div style="font-family: 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
@@ -68,24 +62,14 @@ export async function POST(request: Request) {
       `;
 
       try {
-        const emailRes = await fetch('https://apps.abacus.ai/api/sendNotificationEmail', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deployment_token: process.env.ABACUSAI_API_KEY,
-            app_id: process.env.WEB_APP_ID,
-            notification_id: process.env.NOTIF_ID_PASSWORD_RESET,
-            subject: 'Reset your password - Ad Launch',
-            body: htmlBody,
-            is_html: true,
-            recipient_email: normalizedEmail,
-            sender_email: `noreply@${appHostname}.abacusai.app`,
-            sender_alias: 'Ad Launch',
-          }),
+        const emailSent = await sendEmail({
+          to: normalizedEmail,
+          subject: 'Reset your password - Ad Launch',
+          html: htmlBody,
+          fromName: 'Ad Launch',
         });
-        const emailData = await emailRes.json().catch(() => ({}));
-        if (!emailData?.success) {
-          console.error('[forgot-password] Email send failed:', JSON.stringify(emailData));
+        if (!emailSent) {
+          console.error('[forgot-password] Email send failed');
         } else {
           console.log('[forgot-password] Reset email sent to', normalizedEmail);
         }

@@ -20,7 +20,7 @@ import * as cheerio from 'cheerio';
 const prisma = new PrismaClient();
 
 const PILOT_STATES = ['CO', 'TX', 'FL', 'NC', 'MT'];
-const USER_AGENT = 'AdLaunch-GovFeedDiscovery/1.0 (+https://ad-launch-1nfyr8.abacusai.app)';
+const USER_AGENT = 'AdLaunch-GovFeedDiscovery/1.0 (+https://connect.launchmarketing.com)';
 const FETCH_TIMEOUT = 10000;
 const CONCURRENCY = 5; // parallel county lookups
 

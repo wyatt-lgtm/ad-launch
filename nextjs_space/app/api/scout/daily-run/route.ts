@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
   // Simple auth: admin API key check
   const authHeader = req.headers.get('authorization') || '';
   const apiKey = authHeader.replace('Bearer ', '') || req.nextUrl.searchParams.get('key') || '';
-  const expectedKey = process.env.ABACUSAI_API_KEY;
+  const expectedKey = process.env.ADMIN_API_KEY;
   if (!expectedKey || apiKey !== expectedKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -406,34 +406,15 @@ function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ── Send the email via Abacus notification API ──────────────────────────────
+// ── Send the email via configured provider ──────────────────────────────
+
+import { sendEmail } from '@/lib/email';
 
 async function sendScoutEmail(to: string, businessName: string, htmlBody: string): Promise<boolean> {
-  try {
-    const appHostname = (process.env.NEXTAUTH_URL || '').replace(/^https?:\/\//, '').split('/')[0];
-    const res = await fetch('https://apps.abacus.ai/api/sendNotificationEmail', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        deployment_token: process.env.ABACUSAI_API_KEY,
-        app_id: process.env.WEB_APP_ID,
-        notification_id: process.env.NOTIF_ID_DAILY_SCOUT_REPORT,
-        subject: `📰 Daily Scout Report — ${businessName}`,
-        body: htmlBody,
-        is_html: true,
-        recipient_email: to,
-        sender_email: `noreply@${appHostname}`,
-        sender_alias: 'Ad Launch Scout',
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!data?.success) {
-      console.error('[DailyScout] Email send failed:', JSON.stringify(data));
-      return false;
-    }
-    return true;
-  } catch (err: any) {
-    console.error('[DailyScout] Email send error:', err?.message);
-    return false;
-  }
+  return sendEmail({
+    to,
+    subject: `📰 Daily Scout Report — ${businessName}`,
+    html: htmlBody,
+    fromName: 'Ad Launch Scout',
+  });
 }

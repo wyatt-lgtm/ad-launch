@@ -45,7 +45,7 @@ const PROBE_PATHS = [
   '/rss/news',
 ];
 
-const USER_AGENT = 'AdLaunch-FeedDiscovery/1.0 (+https://ad-launch-1nfyr8.abacusai.app)';
+const USER_AGENT = 'AdLaunch-FeedDiscovery/1.0 (+https://connect.launchmarketing.com)';
 const FETCH_TIMEOUT = 8000;
 
 // ── Helpers ────────────────────────────────────────────────────────────────

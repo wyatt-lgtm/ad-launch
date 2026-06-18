@@ -20,11 +20,10 @@ import { logCosts, estimateImagePostCosts } from '@/lib/cost-ledger';
  * ## Scheduled Invocation
  *
  * This endpoint is designed to be called periodically:
- * - Abacus scheduled task runs every 1 hour as a safety net (automatic).
- * - For tighter latency, set up an external cron to POST every 5 minutes:
+ * - Set up an external cron to POST periodically (e.g. every 5–10 minutes):
  *
  *     curl -X POST https://connect.launchmarketing.com/api/scout/completion-check \
- *       -H "Authorization: Bearer YOUR_ABACUSAI_API_KEY"
+ *       -H "Authorization: Bearer YOUR_ADMIN_API_KEY"
  *
  *   Suitable cron services: cron-job.org, EasyCron, Render Cron Jobs, Railway,
  *   GitHub Actions (schedule), AWS EventBridge, or any scheduler that can fire HTTP POST.
@@ -40,7 +39,7 @@ import { logCosts, estimateImagePostCosts } from '@/lib/cost-ledger';
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get('authorization') || '';
   const apiKey = authHeader.replace('Bearer ', '') || req.nextUrl.searchParams.get('key') || '';
-  const expectedKey = process.env.ABACUSAI_API_KEY;
+  const expectedKey = process.env.ADMIN_API_KEY;
   if (!expectedKey || apiKey !== expectedKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -376,7 +375,7 @@ async function trySendCompletionEmail(
     to: pkg.user.email,
     subject: 'Your Ad Launch post is ready',
     html,
-    notificationId: process.env.NOTIF_ID_POST_READY || '',
+    notificationId: '', // legacy — no longer used
   });
 
   if (emailSent) {

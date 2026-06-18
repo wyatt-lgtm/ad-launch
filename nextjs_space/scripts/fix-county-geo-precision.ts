@@ -22,7 +22,7 @@ import { extractBusinessAddress } from '../lib/address-extractor';
 
 const prisma = new PrismaClient();
 
-const USER_AGENT = 'AdLaunch-GeoFix/1.0 (+https://ad-launch-1nfyr8.abacusai.app)';
+const USER_AGENT = 'AdLaunch-GeoFix/1.0 (+https://connect.launchmarketing.com)';
 const FETCH_TIMEOUT = 10000;
 
 // ── County name extraction from feed metadata ──────────────────────────
