@@ -37,6 +37,10 @@ COPY . .
 RUN sed -i '/output = /d' prisma/schema.prisma && \
     sed -i 's/binaryTargets = .*/binaryTargets = ["native", "debian-openssl-3.0.x"]/' prisma/schema.prisma
 
+# Remove outputFileTracingRoot (only needed for Abacus platform builds;
+# in Docker it resolves to "/" and nests server.js under .next/standalone/app/)
+RUN sed -i '/outputFileTracingRoot/d' next.config.js
+
 # Generate Prisma client
 RUN yarn prisma generate
 
