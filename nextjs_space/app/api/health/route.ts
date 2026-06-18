@@ -22,7 +22,7 @@ export async function GET() {
   };
 
   // Flag vars that should NOT be on the frontend (architecture violation)
-  const disallowed = ['OPENAI_API_KEY', 'ABACUSAI_API_KEY'];
+  const disallowed = ['OPENAI_API_KEY', 'ABACUSAI_API_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'AWS_BUCKET_NAME', 'AWS_FOLDER_PREFIX'];
   const leaked = disallowed.filter(k => !!process.env[k]);
   if (leaked.length > 0) {
     checks.architecture_warning = `Disallowed model-provider keys present on frontend: ${leaked.join(', ')}. All AI/model calls must route through Tombstone.`;

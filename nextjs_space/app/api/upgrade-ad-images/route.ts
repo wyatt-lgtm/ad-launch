@@ -26,9 +26,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Analysis not found or not completed' }, { status: 404 });
     }
 
-    // Skip if ads already have S3 URLs (already upgraded)
+    // Skip if all ads already have Tombstone-generated URLs (upgraded)
     const needsUpgrade = analysis.ads.filter(
-      (ad) => !ad.imageUrl?.includes('.s3.') || !ad.imageUrl?.includes('amazonaws.com')
+      (ad) => !ad.imageUrl || ad.imageUrl.includes('/artifacts/') || !ad.imageUrl.startsWith('http')
     );
     if (needsUpgrade.length === 0) {
       console.log(`[upgrade-ad-images] analysisId=${analysisId} — all ads already upgraded`);
@@ -46,8 +46,8 @@ export async function POST(req: NextRequest) {
     let upgraded = 0;
     for (let i = 0; i < Math.min(analysis.ads.length, adsData.length); i++) {
       const ad = analysis.ads[i];
-      // Skip already-upgraded ads
-      if (ad.imageUrl?.includes('.s3.') && ad.imageUrl?.includes('amazonaws.com')) continue;
+      // Skip already-upgraded ads (have a valid public URL)
+      if (ad.imageUrl?.startsWith('http') && !ad.imageUrl.includes('/artifacts/')) continue;
 
       try {
         const singleAdData = [adsData[i]];

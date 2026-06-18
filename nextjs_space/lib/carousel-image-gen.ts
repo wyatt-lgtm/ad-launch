@@ -6,8 +6,6 @@
  * Uploads to S3 and returns public URLs.
  */
 
-import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { createS3Client, getBucketConfig } from './aws-config';
 import type { CarouselSlide } from './article-carousel';
 
 const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
@@ -82,54 +80,7 @@ async function generateSlideImage(
     return data.imageUrl;
   }
 
-  const base64Data = data.base64;
-  if (!base64Data) {
-    console.error(`[carousel-img] No image data for slide ${slide.slide_number} from Tombstone (${elapsed}s)`);
-    return null;
-  }
-
-  console.log(`[carousel-img] Slide ${slide.slide_number} generated via Tombstone in ${elapsed}s, uploading to S3...`);
-
-  // Upload to S3 from frontend
-  const imageUrl = await uploadSlideToS3(
-    base64Data,
-    context.businessName,
-    slide.slide_number,
-  );
-
-  return imageUrl;
-}
-
-/**
- * Upload a carousel slide image to S3.
- */
-async function uploadSlideToS3(
-  base64Data: string,
-  businessName: string,
-  slideNumber: number,
-): Promise<string | null> {
-  try {
-    const s3 = createS3Client();
-    const { bucketName, folderPrefix } = getBucketConfig();
-
-    const safeName = businessName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 30);
-    const timestamp = Date.now();
-    const key = `${folderPrefix}public/carousels/${safeName}/slide-${slideNumber}-${timestamp}.png`;
-
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    await s3.send(new PutObjectCommand({
-      Bucket: bucketName,
-      Key: key,
-      Body: buffer,
-      ContentType: 'image/png',
-      ContentDisposition: 'inline',
-    }));
-
-    const region = process.env.AWS_REGION ?? 'us-west-2';
-    return `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
-  } catch (err: any) {
-    console.error(`[carousel-img] S3 upload failed for slide ${slideNumber}:`, err.message);
-    return null;
-  }
+  // Tombstone must return imageUrl — frontend does not upload to S3
+  console.error(`[carousel-img] Tombstone did not return imageUrl for slide ${slide.slide_number} (${elapsed}s)`);
+  return null;
 }

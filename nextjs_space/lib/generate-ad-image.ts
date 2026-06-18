@@ -4,8 +4,6 @@
  * Returns a public S3 URL for the generated image.
  */
 
-import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { createS3Client, getBucketConfig } from './aws-config';
 import { reviewMediaConceptBeforeGeneration } from './media-war-room';
 import { reviewRenderedMediaBeforeReady } from './media-qa';
 
@@ -155,74 +153,11 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
       return data.imageUrl;
     }
 
-    // Fallback: Tombstone returned base64, upload to S3 from frontend
-    const base64Data = data.base64;
-    if (!base64Data) {
-      console.error(`[generate-ad] No image data from Tombstone (${elapsed}s)`);
-      return null;
-    }
-
-    console.log(`[generate-ad] Image generated via Tombstone in ${elapsed}s, uploading to S3...`);
-    const imageUrl = await uploadAdImageToS3(base64Data, brief.businessName, brief.angle ?? 'ad');
-    console.log(`[generate-ad] Upload complete: ${imageUrl ? 'success' : 'failed'}`);
-
-    // ── Post-generation QA ──
-    if (imageUrl) {
-      const qaResult = await reviewRenderedMediaBeforeReady({
-        imageUrl,
-        postCopy: brief.subheadline,
-        headline: brief.headline,
-        cta: brief.cta,
-        businessName: brief.businessName,
-        storyTitle: `${brief.angle ?? 'general'} ad for ${brief.businessName}`,
-        mediaType: 'image',
-        platform: 'facebook',
-      });
-
-      if (!qaResult.passed && qaResult.score >= 0) {
-        console.warn(`[generate-ad] Post-gen QA REJECTED image for ${brief.businessName} (${brief.angle}): ${qaResult.failReasons.join(' | ')}`);
-        return null;
-      }
-    }
-
-    return imageUrl;
+    // Tombstone must return imageUrl — frontend does not upload to S3
+    console.error(`[generate-ad] Tombstone did not return imageUrl (${elapsed}s)`);
+    return null;
   } catch (err: any) {
     console.error('[generate-ad] Error:', err?.message);
-    return null;
-  }
-}
-
-/**
- * Upload a base64 PNG image to S3 and return a public URL.
- */
-async function uploadAdImageToS3(
-  base64Data: string,
-  businessName: string,
-  angle: string,
-): Promise<string | null> {
-  try {
-    const s3 = createS3Client();
-    const { bucketName, folderPrefix } = getBucketConfig();
-
-    const safeName = businessName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 30);
-    const timestamp = Date.now();
-    const key = `${folderPrefix}public/ads/${safeName}/${angle}-${timestamp}.png`;
-
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    await s3.send(new PutObjectCommand({
-      Bucket: bucketName,
-      Key: key,
-      Body: buffer,
-      ContentType: 'image/png',
-      ContentDisposition: 'inline',
-    }));
-
-    const region = process.env.AWS_REGION ?? 'us-west-2';
-    const publicUrl = `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
-    return publicUrl;
-  } catch (err: any) {
-    console.error('[s3-upload] Error:', err?.message);
     return null;
   }
 }
