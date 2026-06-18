@@ -35,7 +35,13 @@ export default function RegistrationModal({ isOpen, onClose, analysisId }: Regis
       const res = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, analysisId }),
+        body: JSON.stringify({
+          email,
+          password,
+          analysisId,
+          // Pass anonymous claim token so backend can link existing Business/Analysis
+          anonymousToken: (() => { try { return localStorage.getItem('anonToken'); } catch { return null; } })(),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -44,6 +50,8 @@ export default function RegistrationModal({ isOpen, onClose, analysisId }: Regis
         return;
       }
       setSuccess(true);
+      // Clear anonymous claim tokens now that registration is complete
+      try { localStorage.removeItem('anonToken'); localStorage.removeItem('anonAnalysisId'); } catch {}
       // Auto-sign in
       await signIn('credentials', { email, password, redirect: false });
     } catch (err: any) {

@@ -53,6 +53,13 @@ export default function UrlInputForm() {
           sessionStorage.setItem(`places_${data.analysisId}`, JSON.stringify(data.places));
         } catch {}
       }
+      // Persist anonymous claim token so registration can link this business/analysis
+      if (data?.anonymousToken) {
+        try {
+          localStorage.setItem('anonToken', data.anonymousToken);
+          localStorage.setItem('anonAnalysisId', data.analysisId);
+        } catch {}
+      }
       router.push(`/analyze/${data?.analysisId ?? ''}`);
     } catch (err: any) {
       console.error('Submit error:', err);

@@ -33,7 +33,7 @@ model User {
 
 model Business {
   id                String                   @id @default(cuid())
-  userId            String
+  userId            String?
   websiteUrl        String
   businessName      String?
   businessAddr      String?
@@ -47,8 +47,10 @@ model Business {
   // Canonical Tombstone OS business identity, persisted for reuse across analyses.
   tombstoneBusinessId   Int?
   tombstoneBusinessUuid String?
+  // Token linking anonymous sessions to their Business record before registration.
+  anonymousToken    String?                  @unique
   analyses          Analysis[]
-  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User?                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   feedPreferences   BusinessFeedPreference[]
   socialPosts       SocialPost[]
   scoutEmailSettings ScoutEmailSettings?
@@ -178,6 +180,8 @@ model Analysis {
   // customer-facing content; tombstoneBusinessUuid is the public token held until signup.
   tombstoneBusinessId   Int?
   tombstoneBusinessUuid String?
+  // Token linking anonymous sessions to their Analysis record before registration.
+  anonymousToken    String?                  @unique
   ads             Ad[]
   business        Business?    @relation(fields: [businessId], references: [id])
   user            User?        @relation(fields: [userId], references: [id])

@@ -11,7 +11,7 @@ import crypto from 'crypto';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { email, password, analysisId } = body ?? {};
+    const { email, password, analysisId, anonymousToken } = body ?? {};
     if (!email || !password) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
     }
@@ -37,59 +37,125 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Link analysis to user and upsert Business record
-    if (analysisId) {
+    // ── Claim anonymous Business + Analysis records ──────────────────────
+    // When an anonymous user registers, we find the Business (and its linked
+    // Analysis) created during the anonymous session via the anonymousToken.
+    // We assign userId, carry over tombstone IDs, and clear the token.
+    // This avoids creating duplicate Business records and preserves the
+    // Tombstone business_id that was already used for content generation.
+    if (analysisId || anonymousToken) {
       try {
-        const analysis = await prisma.analysis.update({
-          where: { id: analysisId },
-          data: { userId: user.id },
-        });
+        // 1. Try to find the anonymous Business by token
+        let existingBiz = anonymousToken
+          ? await prisma.business.findUnique({ where: { anonymousToken } })
+          : null;
 
-        // Create a Business record from the Analysis data so the dashboard shows it
-        if (analysis?.websiteUrl) {
-          const biz = await prisma.business.upsert({
-            where: { userId_websiteUrl: { userId: user.id, websiteUrl: analysis.websiteUrl } },
-            create: {
-              userId: user.id,
-              websiteUrl: analysis.websiteUrl,
-              businessName: analysis.businessName || null,
-              businessAddr: analysis.businessAddr || null,
-              businessCity: analysis.businessCity || null,
-              businessState: analysis.businessState || null,
-              businessZip: analysis.businessZip || null,
-              businessPhone: analysis.businessPhone || null,
-            },
-            update: {
-              ...(analysis.businessName ? { businessName: analysis.businessName } : {}),
-              ...(analysis.businessAddr ? { businessAddr: analysis.businessAddr } : {}),
-              ...(analysis.businessCity ? { businessCity: analysis.businessCity } : {}),
-              ...(analysis.businessState ? { businessState: analysis.businessState } : {}),
-              ...(analysis.businessZip ? { businessZip: analysis.businessZip } : {}),
-              ...(analysis.businessPhone ? { businessPhone: analysis.businessPhone } : {}),
-            },
+        if (existingBiz) {
+          // Claim the anonymous Business: assign userId, clear token
+          console.log(`[register] Claiming anonymous Business ${existingBiz.id} (token=${anonymousToken?.slice(0, 8)}…) for user ${user.id}`);
+
+          // Check if user already has a Business for this URL (edge case: user had an account,
+          // used anonymous flow, then registered with same email + same URL)
+          const duplicateBiz = await prisma.business.findUnique({
+            where: { userId_websiteUrl: { userId: user.id, websiteUrl: existingBiz.websiteUrl } },
           });
 
-          // Link the analysis to the business too
-          await prisma.analysis.update({
-            where: { id: analysisId },
-            data: { businessId: biz.id },
+          if (duplicateBiz) {
+            // Merge: keep the existing user's Business, copy over tombstone IDs if missing
+            console.log(`[register] User already has Business ${duplicateBiz.id} for ${existingBiz.websiteUrl}, merging tombstone IDs`);
+            await prisma.business.update({
+              where: { id: duplicateBiz.id },
+              data: {
+                ...(existingBiz.tombstoneBusinessId && !duplicateBiz.tombstoneBusinessId
+                  ? { tombstoneBusinessId: existingBiz.tombstoneBusinessId, tombstoneBusinessUuid: existingBiz.tombstoneBusinessUuid }
+                  : {}),
+              },
+            });
+            // Re-point any analyses from the anonymous Business to the user's Business
+            await prisma.analysis.updateMany({
+              where: { businessId: existingBiz.id },
+              data: { businessId: duplicateBiz.id, userId: user.id, anonymousToken: null },
+            });
+            // Delete the orphaned anonymous Business
+            await prisma.business.delete({ where: { id: existingBiz.id } }).catch(() => {});
+            existingBiz = duplicateBiz;
+          } else {
+            // Claim: set userId, clear anonymousToken
+            existingBiz = await prisma.business.update({
+              where: { id: existingBiz.id },
+              data: { userId: user.id, anonymousToken: null },
+            });
+          }
+
+          // Claim all analyses that share this anonymousToken
+          await prisma.analysis.updateMany({
+            where: { anonymousToken },
+            data: { userId: user.id, anonymousToken: null },
           });
 
-          console.log(`[register] Business upserted: ${biz.id} for user ${user.id} (${analysis.websiteUrl})`);
+          console.log(`[register] Business claimed: ${existingBiz.id} (tombstoneId=${existingBiz.tombstoneBusinessId})`);
 
-          // Auto-grant starter credits (idempotent — safe on every upsert)
+          // Auto-grant starter credits
           try {
             const { grantStarterCredits } = await import('@/lib/credits');
-            const starterResult = await grantStarterCredits(biz.id, { userId: user.id });
+            const starterResult = await grantStarterCredits(existingBiz.id, { userId: user.id });
             if (starterResult.success && !starterResult.alreadyCharged) {
-              console.log(`[register] Starter credits granted to business ${biz.id}`);
+              console.log(`[register] Starter credits granted to business ${existingBiz.id}`);
             }
           } catch (creditErr: any) {
             console.error('[register] Starter credit grant error (non-fatal):', creditErr?.message);
           }
+        } else if (analysisId) {
+          // Fallback: no anonymousToken or token didn't match — use legacy analysisId flow
+          const analysis = await prisma.analysis.update({
+            where: { id: analysisId },
+            data: { userId: user.id, anonymousToken: null },
+          });
+
+          if (analysis?.websiteUrl) {
+            // Check if analysis already has a linked Business (it should now)
+            if (analysis.businessId) {
+              // Claim the linked Business
+              const linkedBiz = await prisma.business.findUnique({ where: { id: analysis.businessId } });
+              if (linkedBiz && !linkedBiz.userId) {
+                await prisma.business.update({
+                  where: { id: linkedBiz.id },
+                  data: { userId: user.id, anonymousToken: null },
+                });
+                console.log(`[register] Claimed linked Business ${linkedBiz.id} via analysisId`);
+              }
+            } else {
+              // Legacy: no linked Business — upsert one
+              const biz = await prisma.business.upsert({
+                where: { userId_websiteUrl: { userId: user.id, websiteUrl: analysis.websiteUrl } },
+                create: {
+                  userId: user.id,
+                  websiteUrl: analysis.websiteUrl,
+                  businessName: analysis.businessName || null,
+                  businessAddr: analysis.businessAddr || null,
+                  businessCity: analysis.businessCity || null,
+                  businessState: analysis.businessState || null,
+                  businessZip: analysis.businessZip || null,
+                  businessPhone: analysis.businessPhone || null,
+                  tombstoneBusinessId: analysis.tombstoneBusinessId ?? null,
+                  tombstoneBusinessUuid: analysis.tombstoneBusinessUuid ?? null,
+                },
+                update: {
+                  ...(analysis.businessName ? { businessName: analysis.businessName } : {}),
+                  ...(analysis.tombstoneBusinessId ? { tombstoneBusinessId: analysis.tombstoneBusinessId } : {}),
+                  ...(analysis.tombstoneBusinessUuid ? { tombstoneBusinessUuid: analysis.tombstoneBusinessUuid } : {}),
+                },
+              });
+              await prisma.analysis.update({
+                where: { id: analysisId },
+                data: { businessId: biz.id },
+              });
+              console.log(`[register] Business upserted (legacy): ${biz.id} for user ${user.id}`);
+            }
+          }
         }
       } catch (linkErr: any) {
-        console.error('[register] Analysis/Business link error (non-fatal):', linkErr?.message);
+        console.error('[register] Analysis/Business claim error (non-fatal):', linkErr?.message);
       }
     }
 

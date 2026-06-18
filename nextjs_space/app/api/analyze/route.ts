@@ -7,6 +7,7 @@ import { prisma } from '@/lib/db';
 import { isValidUrl } from '@/lib/email-validation';
 import { extractBusinessAddress } from '@/lib/address-extractor';
 import { lookupBusinessByUrl, searchPlaces, PlaceResult } from '@/lib/google-places';
+import { randomUUID } from 'crypto';
 
 /**
  * POST /api/analyze
@@ -243,11 +244,15 @@ export async function POST(request: NextRequest) {
       geoSource: scraped.source,
     } : {};
 
-    // Upsert a Business record for this user + URL (if authenticated)
+    // ALWAYS create a Business record — for authenticated users, upsert by userId+url;
+    // for anonymous users, create with a unique anonymousToken for later claim at registration.
     let businessId: string | undefined;
-    if (userId) {
-      try {
-        const business = await prisma.business.upsert({
+    let anonymousToken: string | null = null;
+    try {
+      let business;
+      if (userId) {
+        // Authenticated: upsert by composite unique key
+        business = await prisma.business.upsert({
           where: { userId_websiteUrl: { userId, websiteUrl: normalizedUrl } },
           create: {
             userId,
@@ -260,7 +265,6 @@ export async function POST(request: NextRequest) {
             businessPhone: bizFields.businessPhone || null,
           },
           update: {
-            // Update fields if they were previously empty
             ...(bizFields.businessName ? { businessName: bizFields.businessName } : {}),
             ...(bizFields.businessCity ? { businessCity: bizFields.businessCity } : {}),
             ...(bizFields.businessState ? { businessState: bizFields.businessState } : {}),
@@ -269,10 +273,28 @@ export async function POST(request: NextRequest) {
             ...(bizFields.businessAddr ? { businessAddr: bizFields.businessAddr } : {}),
           },
         });
-        businessId = business.id;
-        console.log(`[analyze] Business upserted: ${business.id} (${bizFields.businessName || normalizedUrl})`);
+        console.log(`[analyze] Business upserted (auth): ${business.id}`);
+      } else {
+        // Anonymous: create with anonymousToken; userId left null
+        anonymousToken = randomUUID();
+        business = await prisma.business.create({
+          data: {
+            websiteUrl: normalizedUrl,
+            businessName: bizFields.businessName || null,
+            businessAddr: bizFields.businessAddr || null,
+            businessCity: bizFields.businessCity || null,
+            businessState: bizFields.businessState || null,
+            businessZip: bizFields.businessZip || null,
+            businessPhone: bizFields.businessPhone || null,
+            anonymousToken,
+          },
+        });
+        console.log(`[analyze] Business created (anon token=${anonymousToken.slice(0, 8)}…): ${business.id}`);
+      }
+      businessId = business.id;
 
-        // Auto-grant starter credits (idempotent — safe on every upsert)
+      // Auto-grant starter credits (idempotent — safe on every upsert)
+      if (userId) {
         try {
           const { grantStarterCredits } = await import('@/lib/credits');
           const starterResult = await grantStarterCredits(business.id, { userId });
@@ -282,9 +304,9 @@ export async function POST(request: NextRequest) {
         } catch (creditErr: any) {
           console.error('[analyze] Starter credit grant error (non-fatal):', creditErr?.message);
         }
-      } catch (bizErr: any) {
-        console.error('[analyze] Business upsert error (non-fatal):', bizErr?.message);
       }
+    } catch (bizErr: any) {
+      console.error('[analyze] Business create/upsert error (non-fatal):', bizErr?.message);
     }
 
     console.log(`[analyze] ── Step 5: prisma.analysis.create (userId=${userId}, businessId=${businessId}, url=${normalizedUrl})`);
@@ -294,6 +316,7 @@ export async function POST(request: NextRequest) {
         status: 'pending_location',
         userId: userId ?? null,
         businessId: businessId ?? null,
+        anonymousToken: anonymousToken ?? null,
         ...bizFields,
       },
     });
@@ -302,10 +325,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       analysisId: analysis.id,
       status: 'pending_location',
-      // Return scraped address and/or Google Places results to the frontend
-      // When cross-validated, scraped is still sent for reference but places has the canonical data
       scrapedAddress: hasScrapedAddress ? scraped : null,
       places: places.slice(0, 5),
+      // Return anonymousToken so frontend can store it for later claim at registration
+      ...(anonymousToken ? { anonymousToken } : {}),
     });
   } catch (err: any) {
     const errMsg = err?.message || String(err);

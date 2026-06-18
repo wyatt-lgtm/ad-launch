@@ -67,6 +67,11 @@ export async function POST(req: NextRequest) {
         results.push({ businessId: config.businessId, businessName: '(unknown)', sent: false, storiesSent: 0, error: 'Business not found' });
         continue;
       }
+      // Skip anonymous businesses (no user to attribute the report to)
+      if (!biz.userId) {
+        results.push({ businessId: biz.id, businessName: biz.businessName || '', sent: false, storiesSent: 0, error: 'Business has no user' });
+        continue;
+      }
 
       try {
         // Gather stories
@@ -103,7 +108,7 @@ export async function POST(req: NextRequest) {
         const scoutReport = await prisma.scoutReport.create({
           data: {
             businessId: biz.id,
-            userId: biz.userId,
+            userId: biz.userId!,
             status: 'sent',
             storiesCount: finalStories.length,
             expiresAt: reportExpiresAt,
@@ -121,15 +126,15 @@ export async function POST(req: NextRequest) {
             },
           },
           include: { stories: true },
-        });
-        console.log(`[DailyScout] Created ScoutReport ${scoutReport.id} with ${scoutReport.stories.length} stories`);
+        }) as any;
+        console.log(`[DailyScout] Created ScoutReport ${scoutReport.id} with ${scoutReport.stories?.length ?? 0} stories`);
 
         // Generate magic tokens for each story
         const appUrl = process.env.NEXTAUTH_URL || 'https://connect.launchmarketing.com';
         const storyTokens: { storyId: string; token: string }[] = [];
-        for (const story of scoutReport.stories) {
+        for (const story of (scoutReport.stories ?? [])) {
           const token = await generateMagicToken({
-            userId: biz.userId,
+            userId: biz.userId!,
             businessId: biz.id,
             scoutReportId: scoutReport.id,
             storyId: story.id,
@@ -141,7 +146,7 @@ export async function POST(req: NextRequest) {
 
         // Generate review-all token
         const reviewToken = await generateMagicToken({
-          userId: biz.userId,
+          userId: biz.userId!,
           businessId: biz.id,
           scoutReportId: scoutReport.id,
           action: 'review_stories',
@@ -153,7 +158,7 @@ export async function POST(req: NextRequest) {
           biz.businessName || 'Your Business',
           finalStories,
           appUrl,
-          scoutReport.stories,
+          scoutReport.stories ?? [],
           storyTokens,
           reviewToken,
           scoutReport.id,
