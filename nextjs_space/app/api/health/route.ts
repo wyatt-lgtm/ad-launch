@@ -11,16 +11,22 @@ import { prisma } from '@/lib/db';
 export async function GET() {
   const checks: Record<string, any> = {};
 
-  // 1. Environment variables
+  // 1. Environment variables (only vars the frontend is allowed to hold)
   checks.env = {
     DATABASE_URL: process.env.DATABASE_URL ? 'set (' + process.env.DATABASE_URL.substring(0, 20) + '...)' : 'MISSING',
     NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET ? 'set' : 'MISSING',
     NEXTAUTH_URL: process.env.NEXTAUTH_URL || 'MISSING',
     GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY ? 'set' : 'MISSING',
     TOMBSTONE_API_URL: process.env.TOMBSTONE_API_URL || 'MISSING',
-    ABACUSAI_API_KEY: process.env.ABACUSAI_API_KEY ? 'set' : 'MISSING',
     NODE_ENV: process.env.NODE_ENV || 'not set',
   };
+
+  // Flag vars that should NOT be on the frontend (architecture violation)
+  const disallowed = ['OPENAI_API_KEY', 'ABACUSAI_API_KEY'];
+  const leaked = disallowed.filter(k => !!process.env[k]);
+  if (leaked.length > 0) {
+    checks.architecture_warning = `Disallowed model-provider keys present on frontend: ${leaked.join(', ')}. All AI/model calls must route through Tombstone.`;
+  }
 
   // 2. Database connectivity
   try {

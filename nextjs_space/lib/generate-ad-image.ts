@@ -9,7 +9,7 @@ import { createS3Client, getBucketConfig } from './aws-config';
 import { reviewMediaConceptBeforeGeneration } from './media-war-room';
 import { reviewRenderedMediaBeforeReady } from './media-qa';
 
-const IMAGE_API = 'https://apps.abacus.ai/v1/chat/completions';
+const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
 export interface AdBrief {
   businessName: string;
@@ -89,54 +89,6 @@ export function buildAdBrief(
  * Returns a public S3 URL.
  */
 export async function generateAdImage(brief: AdBrief): Promise<string | null> {
-  const apiKey = process.env.ABACUSAI_API_KEY;
-  if (!apiKey) {
-    console.error('[generate-ad] No ABACUSAI_API_KEY');
-    return null;
-  }
-
-  // Angle-specific creative direction
-  let angleDirective = '';
-  switch (brief.angle?.toLowerCase()) {
-    case 'awareness':
-      angleDirective = '\n- MOOD: Warm, inviting, aspirational. Show the lifestyle benefit of the product/service.\n- Focus on emotional connection and brand discovery.';
-      break;
-    case 'conversion':
-      angleDirective = '\n- MOOD: Urgent, action-oriented. Emphasize the offer and CTA prominently.\n- Make the CTA button large and impossible to miss. Use contrasting colors for the button.';
-      break;
-    case 'trust':
-      angleDirective = '\n- MOOD: Reliable, professional, authoritative. Showcase credibility and social proof.\n- Emphasize the social proof section. Use a trustworthy color palette.';
-      break;
-  }
-
-  const prompt = [
-    `You are a senior graphic designer at a top advertising agency. Create a Facebook ad creative.`,
-    '',
-    `CLIENT: ${brief.businessName}`,
-    `INDUSTRY: ${brief.industry}`,
-    `WEBSITE: ${brief.websiteUrl}`,
-    '',
-    'CREATIVE BRIEF:',
-    `- Primary message: "${brief.headline}"`,
-    `- Supporting copy: "${brief.subheadline}"`,
-    `- Call to action: "${brief.cta}"`,
-    `- Social proof: ${brief.socialProof}`,
-    `- Brand palette: ${brief.brandColors}`,
-    `- Brand identity: ${brief.logoDescription}`,
-    `- Marketing angle: ${brief.angle ?? 'general'}`,
-    '',
-    'DESIGN DIRECTION:',
-    '- Create a polished, multi-layered ad composition (NOT just a photo with text)',
-    '- Use distinct visual zones: branded header area, copy area, lifestyle imagery, CTA bar',
-    '- Typography should be bold, modern, and highly legible',
-    '- Include subtle graphic elements (icons, patterns, gradients) that enhance the brand feel',
-    '- The final output should look like it was made in Figma/Photoshop by a professional',
-    '- This should look like a real ad you would see scrolling Facebook on your phone',
-    '- The lifestyle/product photo should be realistic and warm',
-    '- Text must be PERFECTLY readable with high contrast',
-    angleDirective,
-  ].join('\n');
-
   try {
     // ── War Room: review concept before expensive generation ──
     const warRoomInput = {
@@ -146,7 +98,7 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
       headline: brief.headline,
       cta: brief.cta,
       visualDirection: `${brief.angle ?? 'general'} angle ad for ${brief.industry}. Brand colors: ${brief.brandColors}. ${brief.logoDescription}.`,
-      generationPrompt: prompt,
+      generationPrompt: `Ad creative for ${brief.businessName}`,
       mediaType: 'image' as const,
     };
 
@@ -157,27 +109,15 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
       return null;
     }
 
-    // Use revised prompt if War Room improved it
-    let finalPrompt = prompt;
-    if (warRoom.decision === 'revise' && warRoom.revisedGenerationPrompt) {
-      console.log(`[generate-ad] War Room REVISED prompt for ${brief.businessName} (${brief.angle})`);
-      finalPrompt = warRoom.revisedGenerationPrompt;
-    }
-
-    console.log(`[generate-ad] Starting GPT-5.1 generation for ${brief.businessName} (${brief.angle ?? 'general'})...`);
+    console.log(`[generate-ad] Requesting image from Tombstone for ${brief.businessName} (${brief.angle ?? 'general'})...`);
     const startTime = Date.now();
 
-    const res = await fetch(IMAGE_API, {
+    const res = await fetch(`${TOMBSTONE_URL}/generate-ad-image`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-5.1',
-        messages: [{ role: 'user', content: finalPrompt }],
-        modalities: ['image'],
-        image_config: { image_size: '1024x1536', quality: 'high' },
+        brief,
+        revisedPrompt: warRoom.decision === 'revise' ? warRoom.revisedGenerationPrompt : undefined,
       }),
     });
 
@@ -185,36 +125,48 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => 'Unknown error');
-      console.error(`[generate-ad] API error (${elapsed}s):`, res.status, errText.slice(0, 300));
+      console.error(`[generate-ad] Tombstone error (${elapsed}s):`, res.status, errText.slice(0, 300));
       return null;
     }
 
     const data = await res.json();
-    const images = data?.choices?.[0]?.message?.images ?? [];
 
-    let base64Data: string | null = null;
-    if (images.length > 0) {
-      const img = images[0];
-      const url = img?.image_url?.url ?? img?.url ?? '';
-      if (url.startsWith('data:image')) {
-        base64Data = url.split(',')[1];
-      } else if (img?.b64_json) {
-        base64Data = img.b64_json;
+    // Tombstone may return { base64, imageUrl } — prefer imageUrl if Tombstone uploaded to S3
+    if (data.imageUrl) {
+      console.log(`[generate-ad] Tombstone returned image URL in ${elapsed}s`);
+
+      // ── Post-generation QA ──
+      const qaResult = await reviewRenderedMediaBeforeReady({
+        imageUrl: data.imageUrl,
+        postCopy: brief.subheadline,
+        headline: brief.headline,
+        cta: brief.cta,
+        businessName: brief.businessName,
+        storyTitle: `${brief.angle ?? 'general'} ad for ${brief.businessName}`,
+        mediaType: 'image',
+        platform: 'facebook',
+      });
+
+      if (!qaResult.passed && qaResult.score >= 0) {
+        console.warn(`[generate-ad] Post-gen QA REJECTED image for ${brief.businessName} (${brief.angle}): ${qaResult.failReasons.join(' | ')}`);
+        return null;
       }
+
+      return data.imageUrl;
     }
 
+    // Fallback: Tombstone returned base64, upload to S3 from frontend
+    const base64Data = data.base64;
     if (!base64Data) {
-      console.error(`[generate-ad] No image data in response (${elapsed}s)`);
+      console.error(`[generate-ad] No image data from Tombstone (${elapsed}s)`);
       return null;
     }
 
-    console.log(`[generate-ad] Image generated in ${elapsed}s, uploading to S3...`);
-
-    // Upload to S3
+    console.log(`[generate-ad] Image generated via Tombstone in ${elapsed}s, uploading to S3...`);
     const imageUrl = await uploadAdImageToS3(base64Data, brief.businessName, brief.angle ?? 'ad');
     console.log(`[generate-ad] Upload complete: ${imageUrl ? 'success' : 'failed'}`);
 
-    // ── Post-generation QA: review rendered image ──
+    // ── Post-generation QA ──
     if (imageUrl) {
       const qaResult = await reviewRenderedMediaBeforeReady({
         imageUrl,

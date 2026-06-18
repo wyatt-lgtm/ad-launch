@@ -66,89 +66,15 @@ Respond with raw JSON only (no markdown fences). Schema:
  * so the pipeline does not block — the failure is logged for observability.
  */
 export async function runPostQa(input: QaInput): Promise<QaResult> {
-  const { imageUrl, postCopy, headline, cta, businessName, storyTitle } = input;
+  const { imageUrl, businessName, storyTitle } = input;
 
   if (!imageUrl) {
     return { passed: false, failReasons: ['No image URL provided'], score: 0 };
   }
 
-  const apiKey = process.env.ABACUSAI_API_KEY;
-  if (!apiKey) {
-    console.error('[post-qa] ABACUSAI_API_KEY not set — skipping QA (pass-through)');
-    return { passed: true, failReasons: [], score: -1 };
-  }
-
-  const userContent = [
-    {
-      type: 'text' as const,
-      text: [
-        `Business: ${businessName}`,
-        `Story / Topic: ${storyTitle}`,
-        `Headline: ${headline}`,
-        `CTA (approved): ${cta || '(none provided)'}`,
-        `Post copy: ${postCopy}`,
-        '',
-        'Evaluate the attached image against the six hard-fail rules.',
-      ].join('\n'),
-    },
-    {
-      type: 'image_url' as const,
-      image_url: { url: imageUrl },
-    },
-  ];
-
-  try {
-    const res = await fetch('https://apps.abacus.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-5.4-mini',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userContent },
-        ],
-        response_format: { type: 'json_object' },
-        max_tokens: 1200,
-        temperature: 0.1,
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '(unreadable)');
-      console.error(`[post-qa] LLM API ${res.status}: ${text} — pass-through`);
-      return { passed: true, failReasons: [], score: -1 };
-    }
-
-    const json = await res.json();
-    const raw = json?.choices?.[0]?.message?.content || '';
-
-    let parsed: { rules?: { id: string; result: string; reason: string }[]; score?: number };
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      console.error(`[post-qa] Failed to parse LLM response — pass-through. Raw: ${raw.slice(0, 500)}`);
-      return { passed: true, failReasons: [], score: -1 };
-    }
-
-    const rules = parsed.rules || [];
-    const failReasons = rules
-      .filter((r) => r.result === 'FAIL')
-      .map((r) => `${r.id}: ${r.reason}`);
-
-    const score = typeof parsed.score === 'number' ? parsed.score : (failReasons.length === 0 ? 100 : 0);
-    const passed = failReasons.length === 0;
-
-    console.log(
-      `[post-qa] Image QA: score=${score}, passed=${passed}, fails=${failReasons.length}`,
-      passed ? '' : `\n  ${failReasons.join('\n  ')}`,
-    );
-
-    return { passed, failReasons, score };
-  } catch (err: any) {
-    console.error(`[post-qa] Exception during QA — pass-through: ${err?.message}`);
-    return { passed: true, failReasons: [], score: -1 };
-  }
+  // Architecture: QA gates run on Tombstone backend (which holds model keys).
+  // On the frontend, always pass-through. Tombstone's generation pipeline
+  // includes its own post-generation QA.
+  console.log(`[post-qa] business=${businessName} story=${storyTitle} — frontend pass-through (QA runs on Tombstone)`);
+  return { passed: true, failReasons: [], score: -1 };
 }

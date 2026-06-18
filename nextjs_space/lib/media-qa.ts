@@ -132,107 +132,16 @@ Respond with raw JSON only (no markdown fences). Schema:
 export async function reviewRenderedMediaBeforeReady(
   input: MediaQaInput,
 ): Promise<MediaQaResult> {
-  const { imageUrl, postCopy, headline, cta, businessName, storyTitle } = input;
+  const { imageUrl, businessName } = input;
 
   if (!imageUrl) {
     return { passed: false, failReasons: ['No image URL provided'], score: 0 };
   }
 
-  const apiKey = process.env.ABACUSAI_API_KEY;
-  if (!apiKey) {
-    console.error('[MEDIA_FINAL_QA_ERROR_PASS_THROUGH] ABACUSAI_API_KEY not set — skipping QA');
-    return { passed: true, failReasons: [], score: -1 };
-  }
-
+  // Architecture: QA gates run on Tombstone backend (which holds model keys).
+  // On the frontend, always pass-through. Tombstone's generation pipeline
+  // includes its own post-generation QA.
   const logCtx = `business=${businessName} media=${input.mediaType || 'image'}`;
-  console.log(`[MEDIA_FINAL_QA_STARTED] ${logCtx}`);
-
-  const userContent = [
-    {
-      type: 'text' as const,
-      text: [
-        `Business: ${businessName}`,
-        `Story / Topic: ${storyTitle}`,
-        `Headline: ${headline}`,
-        `CTA (approved): ${cta || '(none provided)'}`,
-        `Post copy: ${postCopy}`,
-        input.platform ? `Target platform: ${input.platform}` : '',
-        ...(input.storyVisualBrief?.is_story_based ? [
-          '',
-          '=== STORY VISUAL BRIEF (RSS/article-based post) ===',
-          `Story Subject: ${input.storyVisualBrief.story_subject || 'N/A'}`,
-          `Story People: ${input.storyVisualBrief.story_people || 'N/A'}`,
-          `Story Setting: ${input.storyVisualBrief.story_setting || 'N/A'}`,
-          `Story Action: ${input.storyVisualBrief.story_action || 'N/A'}`,
-          `Story Emotional Theme: ${input.storyVisualBrief.story_emotional_theme || 'N/A'}`,
-          `Brand Connection: ${input.storyVisualBrief.brand_connection || 'N/A'}`,
-          `Required Visual Elements: ${(input.storyVisualBrief.required_visual_elements || []).join(', ') || 'N/A'}`,
-          `Forbidden Generic Imagery: ${(input.storyVisualBrief.forbidden_generic_imagery || []).join(', ') || 'N/A'}`,
-          '=== END STORY VISUAL BRIEF ===',
-        ] : []),
-        '',
-        'Evaluate the attached image against all seventeen rules (ten core + seven RSS/story rules).',
-      ].filter(Boolean).join('\n'),
-    },
-    {
-      type: 'image_url' as const,
-      image_url: { url: imageUrl },
-    },
-  ];
-
-  try {
-    const res = await fetch('https://apps.abacus.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-5.4-mini',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userContent },
-        ],
-        response_format: { type: 'json_object' },
-        max_tokens: 2500,
-        temperature: 0.1,
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '(unreadable)');
-      console.error(`[MEDIA_FINAL_QA_ERROR_PASS_THROUGH] LLM API ${res.status}: ${text.slice(0, 300)} — pass-through`);
-      return { passed: true, failReasons: [], score: -1 };
-    }
-
-    const json = await res.json();
-    const raw = json?.choices?.[0]?.message?.content || '';
-
-    let parsed: { rules?: { id: string; result: string; reason: string }[]; score?: number };
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      console.error(`[MEDIA_FINAL_QA_ERROR_PASS_THROUGH] Failed to parse LLM response. Raw: ${raw.slice(0, 400)}`);
-      return { passed: true, failReasons: [], score: -1 };
-    }
-
-    const rules = parsed.rules || [];
-    const failReasons = rules
-      .filter((r) => r.result === 'FAIL')
-      .map((r) => `${r.id}: ${r.reason}`);
-
-    const score = typeof parsed.score === 'number' ? parsed.score : (failReasons.length === 0 ? 100 : 0);
-    const passed = failReasons.length === 0;
-
-    if (passed) {
-      console.log(`[MEDIA_FINAL_QA_PASSED] ${logCtx} score=${score}`);
-    } else {
-      console.warn(`[MEDIA_FINAL_QA_REJECTED] ${logCtx} score=${score} fails=${failReasons.length}\n  ${failReasons.join('\n  ')}`);
-    }
-
-    return { passed, failReasons, score };
-  } catch (err: any) {
-    console.error(`[MEDIA_FINAL_QA_ERROR_PASS_THROUGH] Exception: ${err?.message}`);
-    return { passed: true, failReasons: [], score: -1 };
-  }
+  console.log(`[MEDIA_FINAL_QA_STARTED] ${logCtx} — frontend pass-through (QA runs on Tombstone)`);
+  return { passed: true, failReasons: [], score: -1 };
 }

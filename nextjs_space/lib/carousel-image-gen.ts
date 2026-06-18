@@ -10,7 +10,7 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { createS3Client, getBucketConfig } from './aws-config';
 import type { CarouselSlide } from './article-carousel';
 
-const IMAGE_API = 'https://apps.abacus.ai/v1/chat/completions';
+const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
 export interface SlideImageResult {
   slideNumber: number;
@@ -58,94 +58,39 @@ async function generateSlideImage(
     articleTitle: string;
   },
 ): Promise<string | null> {
-  const apiKey = process.env.ABACUSAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('ABACUSAI_API_KEY not configured');
-  }
-
-  const bulletsText = slide.overlay_text.bullets
-    .map((b, i) => `  ${i + 1}. "${b}"`)
-    .join('\n');
-
-  const colorDirective = context.brandColors
-    ? `Use these brand colors as accent: ${context.brandColors}. `
-    : 'Use a clean, modern color palette with bold accent colors. ';
-
-  const prompt = [
-    `Create a square social media carousel slide image (1080×1080px style).`,
-    '',
-    'DESIGN REQUIREMENTS:',
-    '- This is an INFORMATIONAL carousel slide, not an ad. Think educational/value content.',
-    '- Clean, modern layout with clear visual hierarchy.',
-    '- Large, bold headline text at the top that is PERFECTLY readable.',
-    '- Numbered bullet points below, each concise and legible.',
-    '- Optional small footer text at bottom.',
-    '- Use subtle abstract background (gradient, geometric shapes, or soft photography).',
-    '- Do NOT use busy or distracting backgrounds.',
-    '- All text must have HIGH contrast against the background.',
-    '- Professional typography — think LinkedIn carousel or Instagram infographic style.',
-    `- ${colorDirective}`,
-    '',
-    `SLIDE ${slide.slide_number} CONTENT:`,
-    `Headline: "${slide.overlay_text.headline}"`,
-    `Bullets:`,
-    bulletsText,
-    `Footer: "Source: ${context.sourcePublisher}"`,
-    '',
-    `VISUAL THEME (for background/decoration only — the TEXT above is what matters):`,
-    slide.image_prompt,
-    '',
-    'CRITICAL: The headline and bullet text MUST be rendered exactly as provided above.',
-    'The text is the primary content — make it the visual focal point.',
-    'Keep bullets to a single line each. Use icons or numbers as bullet markers.',
-  ].join('\n');
-
-  console.log(`[carousel-img] Generating slide ${slide.slide_number}: "${slide.headline.slice(0, 50)}"`);
+  console.log(`[carousel-img] Requesting slide ${slide.slide_number} from Tombstone: "${slide.headline.slice(0, 50)}"`);
   const startTime = Date.now();
 
-  const res = await fetch(IMAGE_API, {
+  const res = await fetch(`${TOMBSTONE_URL}/carousel/generate-slide-image`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-5.1',
-      messages: [{ role: 'user', content: prompt }],
-      modalities: ['image'],
-      image_config: { image_size: '1024x1024', quality: 'high' },
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slide, context }),
   });
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    throw new Error(`Image API error ${res.status} (${elapsed}s): ${errText.slice(0, 200)}`);
+    throw new Error(`Tombstone slide image API error ${res.status} (${elapsed}s): ${errText.slice(0, 200)}`);
   }
 
   const data = await res.json();
-  const images = data?.choices?.[0]?.message?.images ?? [];
 
-  let base64Data: string | null = null;
-  if (images.length > 0) {
-    const img = images[0];
-    const url = img?.image_url?.url ?? img?.url ?? '';
-    if (url.startsWith('data:image')) {
-      base64Data = url.split(',')[1];
-    } else if (img?.b64_json) {
-      base64Data = img.b64_json;
-    }
+  // Tombstone may return { imageUrl } directly (if it uploads to S3) or { base64 }
+  if (data.imageUrl) {
+    console.log(`[carousel-img] Slide ${slide.slide_number} received URL from Tombstone in ${elapsed}s`);
+    return data.imageUrl;
   }
 
+  const base64Data = data.base64;
   if (!base64Data) {
-    console.error(`[carousel-img] No image data for slide ${slide.slide_number} (${elapsed}s)`);
+    console.error(`[carousel-img] No image data for slide ${slide.slide_number} from Tombstone (${elapsed}s)`);
     return null;
   }
 
-  console.log(`[carousel-img] Slide ${slide.slide_number} generated in ${elapsed}s, uploading...`);
+  console.log(`[carousel-img] Slide ${slide.slide_number} generated via Tombstone in ${elapsed}s, uploading to S3...`);
 
-  // Upload to S3
+  // Upload to S3 from frontend
   const imageUrl = await uploadSlideToS3(
     base64Data,
     context.businessName,

@@ -9,8 +9,7 @@
 
 import * as cheerio from 'cheerio';
 
-const LLM_URL = 'https://apps.abacus.ai/v1/chat/completions';
-const LLM_MODEL = 'gpt-5.4-mini';
+const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -212,56 +211,23 @@ export async function buildCarouselPackage(
     websiteUrl?: string;
   },
 ): Promise<CarouselPackage> {
-  const apiKey = process.env.ABACUSAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('ABACUSAI_API_KEY not configured');
-  }
+  console.log(`[carousel] Analyzing article via Tombstone: "${article.title.slice(0, 80)}" from ${article.publisher}`);
 
-  const prompt = buildCarouselPrompt(article, businessContext);
-
-  console.log(`[carousel] Analyzing article: "${article.title.slice(0, 80)}" from ${article.publisher}`);
-
-  const res = await fetch(LLM_URL, {
+  const res = await fetch(`${TOMBSTONE_URL}/carousel/build`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: LLM_MODEL,
-      messages: [
-        {
-          role: 'system',
-          content: CAROUSEL_SYSTEM_PROMPT,
-        },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.4,
-      max_tokens: 4000,
-      response_format: { type: 'json_object' },
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ article, businessContext }),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    throw new Error(`LLM API error ${res.status}: ${errText.slice(0, 200)}`);
+    throw new Error(`Tombstone carousel API error ${res.status}: ${errText.slice(0, 200)}`);
   }
 
   const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('Empty response from LLM');
-  }
 
-  let parsed: any;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    throw new Error('Failed to parse LLM response as JSON');
-  }
-
-  // Validate and normalize the response
-  return normalizeCarouselPackage(parsed, article);
+  // Tombstone returns the full carousel package — normalize for safety
+  return normalizeCarouselPackage(data, article);
 }
 
 // ─── Prompts ──────────────────────────────────────────────────────────
@@ -392,105 +358,20 @@ export async function buildCarouselFromDraft(
     websiteUrl?: string;
   },
 ): Promise<CarouselPackage> {
-  const apiKey = process.env.ABACUSAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('ABACUSAI_API_KEY not configured');
-  }
+  console.log(`[carousel-draft] Analyzing user draft via Tombstone (${draftText.length} chars)`);
 
-  const prompt = `Analyze this user-written social media draft and determine if it should be a carousel post.
-
-USER DRAFT TEXT:
-${draftText.slice(0, 8000)}
-
----
-
-BUSINESS CONTEXT:
-Name: ${businessContext.businessName}
-Industry: ${businessContext.industry || 'general'}
-${businessContext.brandColors ? `Brand colors: ${businessContext.brandColors}` : ''}
-${businessContext.websiteUrl ? `Website: ${businessContext.websiteUrl}` : ''}
-
----
-
-INSTRUCTIONS:
-1. Detect if the text contains: event listings with dates, numbered tips/steps, rankings, lists of items, features, or other structured list-like content.
-2. If YES → post_type: "carousel". Extract each item/event as a key point.
-3. Apply slide distribution:
-   - 3 or fewer items → 1 slide per item
-   - 4-9 items → 3 slides, group evenly (chronologically for events)
-   - 10+ items → select best 6-9, create 3 slides
-4. For each slide:
-   - Short headline (5-8 words) summarizing the group
-   - 2-3 concise bullets (dates/times for events, key details for tips)
-   - image_prompt describing a visual theme
-5. Write a caption that:
-   - Hooks with the main value proposition
-   - Summarizes what the carousel covers
-   - Ends with a CTA for engagement
-6. If the text is NOT list-based → post_type: "standard", explain in fallback_reason.
-
-Return this exact JSON structure:
-{
-  "post_type": "carousel" or "standard",
-  "detected_article_type": "listicle" | "tips" | "ranking" | "how-to" | "events" | "standard_article",
-  "key_points": [
-    { "title": "...", "summary": "...", "importance_score": 1-10 }
-  ],
-  "slides": [
-    {
-      "slide_number": 1,
-      "headline": "...",
-      "bullets": ["...", "..."],
-      "image_prompt": "...",
-      "overlay_text": { "headline": "...", "bullets": ["...", "..."] }
-    }
-  ],
-  "caption": "...",
-  "platform_notes": {
-    "facebook": "...",
-    "instagram": "...",
-    "linkedin": "..."
-  },
-  "fallback_reason": null or "reason this isn't a carousel"
-}`;
-
-  console.log(`[carousel-draft] Analyzing user draft (${draftText.length} chars) for carousel potential`);
-
-  const res = await fetch(LLM_URL, {
+  const res = await fetch(`${TOMBSTONE_URL}/carousel/build-from-draft`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: LLM_MODEL,
-      messages: [
-        { role: 'system', content: DRAFT_CAROUSEL_SYSTEM_PROMPT },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.4,
-      max_tokens: 4000,
-      response_format: { type: 'json_object' },
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ draftText: draftText.slice(0, 8000), businessContext }),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    throw new Error(`LLM API error ${res.status}: ${errText.slice(0, 200)}`);
+    throw new Error(`Tombstone carousel-draft API error ${res.status}: ${errText.slice(0, 200)}`);
   }
 
   const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('Empty response from LLM');
-  }
-
-  let parsed: any;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    throw new Error('Failed to parse LLM response as JSON');
-  }
 
   // Normalize using a synthetic ArticleContent
   const syntheticArticle: ArticleContent = {
@@ -502,7 +383,7 @@ Return this exact JSON structure:
     url: businessContext.websiteUrl || '',
   };
 
-  const pkg = normalizeCarouselPackage(parsed, syntheticArticle);
+  const pkg = normalizeCarouselPackage(data, syntheticArticle);
   // Override source fields since this is user-written, not an article
   pkg.source_url = businessContext.websiteUrl || '';
   pkg.source_publisher = businessContext.businessName;
