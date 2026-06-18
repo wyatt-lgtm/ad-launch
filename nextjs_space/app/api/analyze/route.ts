@@ -15,8 +15,16 @@ import { lookupBusinessByUrl, searchPlaces, PlaceResult } from '@/lib/google-pla
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    console.log('[analyze] ── Step 0: Parsing request body');
+    let body: any;
+    try {
+      body = await request.json();
+    } catch (parseErr: any) {
+      console.error('[analyze] Body parse error:', parseErr?.message);
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
     const { websiteUrl } = body ?? {};
+    console.log(`[analyze] websiteUrl=${websiteUrl}`);
 
     // Resolve userId from session (server-side) — never trust client-supplied userId
     let userId: string | null = null;
@@ -131,11 +139,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 2: Try to extract address from the website HTML first
+    console.log('[analyze] ── Step 2: Extracting address from HTML');
     const scraped = extractBusinessAddress(htmlBody);
     const hasScrapedAddress = scraped.source !== 'none' && (scraped.city || scraped.zip);
     console.log(`[analyze] Website address extraction: source=${scraped.source}, confidence=${scraped.confidence}, city=${scraped.city}, state=${scraped.state}, zip=${scraped.zip}`);
 
     // Step 3: Google Places lookup — either as cross-validation or primary source
+    console.log('[analyze] ── Step 3: Google Places lookup');
     let places: PlaceResult[] = [];
     if (hasScrapedAddress) {
       // Cross-validate scraped address against Google Places for canonical formatting
@@ -209,6 +219,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 4: Create analysis record (no Tombstone yet — user must confirm location first)
+    console.log('[analyze] ── Step 4: Creating analysis record');
     const topPlace = places[0];
 
     // Resolve business fields: prefer Google Places (canonical) over raw scrape
@@ -276,6 +287,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    console.log(`[analyze] ── Step 5: prisma.analysis.create (userId=${userId}, businessId=${businessId}, url=${normalizedUrl})`);
     const analysis = await prisma.analysis.create({
       data: {
         websiteUrl: normalizedUrl,
@@ -286,6 +298,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    console.log(`[analyze] ── Step 6: Success — analysisId=${analysis.id}`);
     return NextResponse.json({
       analysisId: analysis.id,
       status: 'pending_location',
@@ -295,7 +308,15 @@ export async function POST(request: NextRequest) {
       places: places.slice(0, 5),
     });
   } catch (err: any) {
-    console.error('Analyze error:', err);
-    return NextResponse.json({ error: 'Failed to start analysis' }, { status: 500 });
+    const errMsg = err?.message || String(err);
+    const errStack = err?.stack || '';
+    console.error(`[analyze] FATAL — unhandled error: ${errMsg}`);
+    console.error(`[analyze] Stack: ${errStack}`);
+    // Surface the real error for diagnostics (safe for staging deploys)
+    return NextResponse.json({
+      error: 'Failed to start analysis',
+      debug: errMsg,
+      stage: 'See server logs for [analyze] step markers',
+    }, { status: 500 });
   }
 }

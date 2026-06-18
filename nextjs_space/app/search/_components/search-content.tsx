@@ -64,7 +64,8 @@ export default function SearchContent() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setUrlError(data?.error ?? 'Failed to start analysis');
+        const debugInfo = data?.debug ? ` (${data.debug})` : '';
+        setUrlError((data?.error ?? 'Failed to start analysis') + debugInfo);
         setUrlLoading(false);
         return;
       }

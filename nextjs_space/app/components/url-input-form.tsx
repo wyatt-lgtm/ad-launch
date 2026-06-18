@@ -37,7 +37,8 @@ export default function UrlInputForm() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error ?? 'Failed to start analysis');
+        const debugInfo = data?.debug ? ` (${data.debug})` : '';
+        setError((data?.error ?? 'Failed to start analysis') + debugInfo);
         setLoading(false);
         return;
       }
