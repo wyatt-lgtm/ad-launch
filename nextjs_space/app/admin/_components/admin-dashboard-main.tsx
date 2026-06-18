@@ -555,6 +555,8 @@ function AccountsTab() {
 
 interface BusinessRow {
   id: string;
+  source: 'frontend' | 'tombstone';
+  tombstoneBusinessId: number | null;
   websiteUrl: string;
   businessName: string | null;
   businessCity: string | null;
@@ -563,6 +565,8 @@ interface BusinessRow {
   analysisCount: number;
   adCount: number;
   socialPostCount: number;
+  taskCount: number;
+  workflowCount: number;
   latestAnalysisId: string | null;
   latestAnalysisStatus: string | null;
   createdAt: string;
@@ -593,7 +597,8 @@ function BusinessesTab() {
     if (!s) return 'bg-gray-100 text-gray-500';
     if (s === 'completed') return 'bg-green-100 text-green-700';
     if (s === 'processing') return 'bg-blue-100 text-blue-700';
-    if (s === 'error') return 'bg-red-100 text-red-700';
+    if (s === 'provisional') return 'bg-amber-100 text-amber-700';
+    if (s === 'error' || s === 'Failed') return 'bg-red-100 text-red-700';
     return 'bg-gray-100 text-gray-600';
   };
 
@@ -631,10 +636,10 @@ function BusinessesTab() {
                 <th className="px-4 py-3 font-medium text-gray-500">URL</th>
                 <th className="px-4 py-3 font-medium text-gray-500">Location</th>
                 <th className="px-4 py-3 font-medium text-gray-500">Owner</th>
-                <th className="px-4 py-3 font-medium text-gray-500 text-center">Analyses</th>
-                <th className="px-4 py-3 font-medium text-gray-500 text-center">Ads</th>
+                <th className="px-4 py-3 font-medium text-gray-500 text-center">Workflows</th>
+                <th className="px-4 py-3 font-medium text-gray-500 text-center">Tasks</th>
                 <th className="px-4 py-3 font-medium text-gray-500 text-center">Posts</th>
-                <th className="px-4 py-3 font-medium text-gray-500">Latest</th>
+                <th className="px-4 py-3 font-medium text-gray-500">Status</th>
                 <th className="px-4 py-3 font-medium text-gray-500">Created</th>
               </tr>
             </thead>
@@ -653,20 +658,23 @@ function BusinessesTab() {
                       <span className="font-medium text-gray-900 truncate max-w-[180px]">
                         {b.businessName || '—'}
                       </span>
+                      {b.source === 'tombstone' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium whitespace-nowrap">Pipeline</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 text-gray-500 truncate max-w-[180px]">
                       <Globe className="w-3.5 h-3.5 shrink-0" />
-                      <span className="truncate">{b.websiteUrl?.replace(/^https?:\/\//, '')}</span>
+                      <span className="truncate">{b.websiteUrl?.replace(/^https?:\/\//, '') || '—'}</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
                     {[b.businessCity, b.businessState].filter(Boolean).join(', ') || '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-500 truncate max-w-[150px] text-xs">{b.ownerEmail || '—'}</td>
-                  <td className="px-4 py-3 text-center text-gray-600">{b.analysisCount}</td>
-                  <td className="px-4 py-3 text-center text-gray-600">{b.adCount}</td>
+                  <td className="px-4 py-3 text-center text-gray-600">{b.workflowCount || b.analysisCount || 0}</td>
+                  <td className="px-4 py-3 text-center text-gray-600">{b.taskCount || b.adCount || 0}</td>
                   <td className="px-4 py-3 text-center text-gray-600">{b.socialPostCount}</td>
                   <td className="px-4 py-3">
                     {b.latestAnalysisStatus ? (
@@ -678,7 +686,7 @@ function BusinessesTab() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {new Date(b.createdAt).toLocaleDateString()}
+                    {b.createdAt ? new Date(b.createdAt).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '—'}
                   </td>
                 </tr>
               ))}
