@@ -8,6 +8,7 @@ import {
   CheckCircle2, XCircle, Clock, AlertTriangle, Rss, RefreshCw,
   ChevronRight, ChevronDown, ChevronUp, Shield, Zap, FileText, Image as ImageIcon,
   MessageSquare, ArrowRight, ArrowLeft, Calendar, Eye, X, Copy, ExternalLink,
+  Building2, Globe,
 } from 'lucide-react';
 import NextImage from 'next/image';
 import DefensibilityTab from './defensibility-tab';
@@ -16,7 +17,7 @@ import DefensibilityTab from './defensibility-tab';
 // Types
 // ═══════════════════════════════════════════════════════════════
 
-type Tab = 'accounts' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit' | 'credits' | 'defensibility';
+type Tab = 'accounts' | 'businesses' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit' | 'credits' | 'defensibility';
 
 interface Overview {
   users: { total: number; confirmed: number; unconfirmed: number; recentSignups: number };
@@ -93,6 +94,7 @@ export default function AdminDashboardMain() {
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: 'accounts', label: 'Accounts', icon: Users },
+    { id: 'businesses', label: 'Businesses', icon: Building2 },
     { id: 'ads',      label: 'Ads',      icon: ImageIcon },
     { id: 'usage',    label: 'Usage',    icon: BarChart3 },
     { id: 'resets',   label: 'Resets',   icon: Key },
@@ -156,7 +158,7 @@ export default function AdminDashboardMain() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
             <StatCard label="Users" value={overview.users.total} sub={`${overview.users.confirmed} confirmed`} icon={Users} onClick={() => setTab('accounts')} />
-            <StatCard label="Businesses" value={overview.businesses} icon={Zap} onClick={() => setTab('accounts')} />
+            <StatCard label="Businesses" value={overview.businesses} icon={Building2} onClick={() => setTab('businesses')} />
             <StatCard label="Analyses" value={overview.analyses.total} icon={FileText} onClick={() => setTab('usage')} />
             <StatCard label="Ads" value={overview.ads} icon={ImageIcon} onClick={() => setTab('ads')} />
             <StatCard label="Social Posts" value={overview.socialPosts.total} icon={MessageSquare} onClick={() => setTab('usage')} />
@@ -168,6 +170,7 @@ export default function AdminDashboardMain() {
       {/* Tab content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-12">
         {tab === 'accounts' && <AccountsTab />}
+        {tab === 'businesses' && <BusinessesTab />}
         {tab === 'ads' && <AdsTab />}
         {tab === 'usage' && <UsageTab />}
         {tab === 'resets' && <ResetsTab />}
@@ -527,6 +530,160 @@ function AccountsTab() {
               ))}
               {accounts.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No accounts found</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 mt-4">
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+            className="px-3 py-1.5 text-sm border rounded-lg disabled:opacity-40 hover:bg-gray-50">Prev</button>
+          <span className="text-sm text-gray-500">Page {page} of {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+            className="px-3 py-1.5 text-sm border rounded-lg disabled:opacity-40 hover:bg-gray-50">Next</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tab: Businesses
+// ═══════════════════════════════════════════════════════════════
+
+interface BusinessRow {
+  id: string;
+  websiteUrl: string;
+  businessName: string | null;
+  businessCity: string | null;
+  businessState: string | null;
+  ownerEmail: string | null;
+  analysisCount: number;
+  adCount: number;
+  socialPostCount: number;
+  latestAnalysisId: string | null;
+  latestAnalysisStatus: string | null;
+  createdAt: string;
+}
+
+function BusinessesTab() {
+  const router = useRouter();
+  const [businesses, setBusinesses] = useState<BusinessRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const params = new URLSearchParams({ page: String(page), limit: '30' });
+    if (search) params.set('search', search);
+    const res = await fetch(`/api/admin/businesses?${params}`);
+    const data = await res.json();
+    setBusinesses(data.businesses || []);
+    setTotalPages(data.pagination?.totalPages || 1);
+    setLoading(false);
+  }, [page, search]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const statusColor = (s: string | null) => {
+    if (!s) return 'bg-gray-100 text-gray-500';
+    if (s === 'completed') return 'bg-green-100 text-green-700';
+    if (s === 'processing') return 'bg-blue-100 text-blue-700';
+    if (s === 'error') return 'bg-red-100 text-red-700';
+    return 'bg-gray-100 text-gray-600';
+  };
+
+  const handleBusinessClick = (b: BusinessRow) => {
+    if (b.latestAnalysisId) {
+      router.push(`/results/${b.latestAnalysisId}`);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <input
+            value={search}
+            onChange={e => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Search by name, URL, or owner email..."
+            className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+        <button onClick={load} className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+          <RefreshCw className="w-4 h-4" />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-blue-600 animate-spin" /></div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-left">
+                <th className="px-4 py-3 font-medium text-gray-500">Business</th>
+                <th className="px-4 py-3 font-medium text-gray-500">URL</th>
+                <th className="px-4 py-3 font-medium text-gray-500">Location</th>
+                <th className="px-4 py-3 font-medium text-gray-500">Owner</th>
+                <th className="px-4 py-3 font-medium text-gray-500 text-center">Analyses</th>
+                <th className="px-4 py-3 font-medium text-gray-500 text-center">Ads</th>
+                <th className="px-4 py-3 font-medium text-gray-500 text-center">Posts</th>
+                <th className="px-4 py-3 font-medium text-gray-500">Latest</th>
+                <th className="px-4 py-3 font-medium text-gray-500">Created</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {businesses.map(b => (
+                <tr
+                  key={b.id}
+                  onClick={() => handleBusinessClick(b)}
+                  className={`hover:bg-blue-50/50 transition-colors ${
+                    b.latestAnalysisId ? 'cursor-pointer' : ''
+                  }`}
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="w-4 h-4 text-gray-400 shrink-0" />
+                      <span className="font-medium text-gray-900 truncate max-w-[180px]">
+                        {b.businessName || '—'}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5 text-gray-500 truncate max-w-[180px]">
+                      <Globe className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{b.websiteUrl?.replace(/^https?:\/\//, '')}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
+                    {[b.businessCity, b.businessState].filter(Boolean).join(', ') || '—'}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 truncate max-w-[150px] text-xs">{b.ownerEmail || '—'}</td>
+                  <td className="px-4 py-3 text-center text-gray-600">{b.analysisCount}</td>
+                  <td className="px-4 py-3 text-center text-gray-600">{b.adCount}</td>
+                  <td className="px-4 py-3 text-center text-gray-600">{b.socialPostCount}</td>
+                  <td className="px-4 py-3">
+                    {b.latestAnalysisStatus ? (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor(b.latestAnalysisStatus)}`}>
+                        {b.latestAnalysisStatus}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-300">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                    {new Date(b.createdAt).toLocaleDateString()}
+                  </td>
+                </tr>
+              ))}
+              {businesses.length === 0 && (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">No businesses found</td></tr>
               )}
             </tbody>
           </table>
