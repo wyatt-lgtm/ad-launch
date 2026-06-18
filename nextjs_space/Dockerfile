@@ -72,12 +72,16 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Copy Prisma schema + generated client for runtime
+# Copy Prisma schema + generated client + CLI for runtime migrations
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/prisma ./prisma
+
+# Entrypoint: push schema then start server
+RUN printf '#!/bin/sh\nset -e\necho "[entrypoint] Running prisma db push..."\nnode node_modules/prisma/build/index.js db push --skip-generate --accept-data-loss 2>&1 || echo "[entrypoint] prisma db push failed (non-fatal)"\necho "[entrypoint] Starting server..."\nexec node server.js\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 USER nextjs
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["/app/entrypoint.sh"]
