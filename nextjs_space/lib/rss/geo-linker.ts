@@ -13,6 +13,9 @@ import { prisma } from '@/lib/db';
 import { getZipsByCity, getZipsByCounty, getZipsByState, getZipDetails } from './geo-lookup';
 import type { DiscoveredFeed } from './discovery';
 import { canonicalizeFeedUrl } from './discovery';
+import { fetchAndParseFeed } from './feed-parser';
+import { itemContentHash, isNearDuplicate } from './dedup';
+import { classifyContent } from './content-policy';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -1109,8 +1112,13 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
     take: 50,
   });
 
-  // Stale RssItem stats
-  const RETENTION_DAYS = parseInt(process.env.SCOUT_RSS_ITEM_RETENTION_DAYS || '10', 10);
+  // Stale RssItem stats — enforce retention >= lookback
+  const LOOKBACK_DAYS = parseInt(process.env.SCOUT_LOCAL_NEWS_LOOKBACK_DAYS || '14', 10);
+  const rawRetention = parseInt(process.env.SCOUT_RSS_ITEM_RETENTION_DAYS || '30', 10);
+  const RETENTION_DAYS = Math.max(rawRetention, LOOKBACK_DAYS);
+  if (rawRetention < LOOKBACK_DAYS) {
+    console.warn(`[geo-linker] ⚠ SCOUT_RSS_ITEM_RETENTION_DAYS (${rawRetention}) < SCOUT_LOCAL_NEWS_LOOKBACK_DAYS (${LOOKBACK_DAYS}). Using ${RETENTION_DAYS} to prevent premature purge.`);
+  }
   const cutoffDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
   const [totalRssItems, staleRssItems] = await Promise.all([
     prisma.rssItem.count(),
@@ -1158,7 +1166,12 @@ export async function purgeStaleRssItems(options: {
   cutoffDate: string;
   dryRun: boolean;
 }> {
-  const retentionDays = options.retentionDays ?? parseInt(process.env.SCOUT_RSS_ITEM_RETENTION_DAYS || '10', 10);
+  const lookbackDays = parseInt(process.env.SCOUT_LOCAL_NEWS_LOOKBACK_DAYS || '14', 10);
+  const rawRetention = options.retentionDays ?? parseInt(process.env.SCOUT_RSS_ITEM_RETENTION_DAYS || '30', 10);
+  const retentionDays = Math.max(rawRetention, lookbackDays);
+  if (rawRetention < lookbackDays) {
+    console.warn(`[geo-linker] ⚠ Retention (${rawRetention}d) < lookback (${lookbackDays}d). Using ${retentionDays}d to avoid purging items Scout still needs.`);
+  }
   const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
   const dryRun = options.dryRun ?? false;
 
@@ -1202,6 +1215,215 @@ export async function purgeStaleRssItems(options: {
 
   console.log(`[geo-linker] Purged ${totalDeleted} stale RssItems older than ${retentionDays} days (cutoff: ${cutoffDate.toISOString()})`);
   return { itemsPurged: totalDeleted, itemsRetained: eligibleCount - totalDeleted, cutoffDate: cutoffDate.toISOString(), dryRun: false };
+}
+
+// ── Ingest Feed Items ──────────────────────────────────────────────────
+
+const DEDUP_THRESHOLD = 3;
+const MAX_ITEMS_PER_FEED = 50;
+
+/**
+ * Fetch and ingest RssItems for active feeds, optionally filtered by state/city/county.
+ * Reuses the same parse → dedup → content-policy → upsert pipeline as validate-feeds.
+ */
+export async function ingestFeeds(options: {
+  state?: string;
+  city?: string;
+  county?: string;
+  feedIds?: string[];
+  limit?: number;
+  concurrency?: number;
+}): Promise<{
+  feedsProcessed: number;
+  feedsSucceeded: number;
+  feedsFailed: number;
+  itemsInserted: number;
+  itemsUpdated: number;
+  itemsDeduplicated: number;
+  itemsFiltered: number;
+  details: { feedId: string; url: string; title: string; itemsInserted: number; itemsUpdated: number; error?: string }[];
+}> {
+  const { state, city, county, feedIds, limit = 500, concurrency = 8 } = options;
+
+  // Build feed query: active feeds with FeedGeo links in the target area
+  let targetFeedIds: string[] | undefined = feedIds;
+
+  if (!targetFeedIds && (state || city || county)) {
+    // Find feeds linked to ZIPs in the target geography
+    const whereClause: any = {};
+    if (state) {
+      whereClause.zip = {
+        cityZips: {
+          some: {
+            city: {
+              county: {
+                state: { code: state.toUpperCase() },
+                ...(county ? { name: county.toUpperCase() } : {}),
+              },
+              ...(city ? { name: city.toUpperCase() } : {}),
+            },
+          },
+        },
+      };
+    }
+
+    const feedGeos = await prisma.feedGeo.findMany({
+      where: whereClause,
+      select: { feedId: true },
+      distinct: ['feedId'],
+    });
+    targetFeedIds = feedGeos.map(fg => fg.feedId);
+  }
+
+  const feeds = await prisma.rssFeed.findMany({
+    where: {
+      status: 'active',
+      ...(targetFeedIds ? { id: { in: targetFeedIds } } : {}),
+    },
+    take: limit,
+    orderBy: { lastFetchedAt: 'asc' },
+  });
+
+  console.log(`[geo-linker] Ingesting items for ${feeds.length} active feeds` +
+    (state ? ` in state=${state}` : '') +
+    (county ? ` county=${county}` : '') +
+    (city ? ` city=${city}` : ''));
+
+  // Load existing content hashes for cross-feed dedup
+  const existingHashes = new Map<string, string>();
+  const hashRows = await prisma.rssItem.findMany({
+    where: { contentHash: { not: null } },
+    select: { contentHash: true, feedId: true },
+  });
+  for (const row of hashRows) {
+    if (row.contentHash) existingHashes.set(row.contentHash, row.feedId);
+  }
+
+  const results: {
+    feedsProcessed: number; feedsSucceeded: number; feedsFailed: number;
+    itemsInserted: number; itemsUpdated: number; itemsDeduplicated: number; itemsFiltered: number;
+    details: { feedId: string; url: string; title: string; itemsInserted: number; itemsUpdated: number; error?: string }[];
+  } = {
+    feedsProcessed: 0, feedsSucceeded: 0, feedsFailed: 0,
+    itemsInserted: 0, itemsUpdated: 0, itemsDeduplicated: 0, itemsFiltered: 0,
+    details: [],
+  };
+
+  // Process in batches
+  for (let i = 0; i < feeds.length; i += concurrency) {
+    const batch = feeds.slice(i, i + concurrency);
+    await Promise.allSettled(batch.map(async (feed) => {
+      try {
+        const { feed: parsed, error } = await fetchAndParseFeed(feed.url);
+        if (!parsed || error) {
+          const newErrors = (feed.consecutiveErrors ?? 0) + 1;
+          await prisma.rssFeed.update({
+            where: { id: feed.id },
+            data: { consecutiveErrors: newErrors, lastFetchedAt: new Date() },
+          });
+          results.feedsFailed++;
+          results.details.push({ feedId: feed.id, url: feed.url, title: feed.title || '', itemsInserted: 0, itemsUpdated: 0, error: error || 'Parse failed' });
+          return;
+        }
+
+        // Update feed metadata
+        await prisma.rssFeed.update({
+          where: { id: feed.id },
+          data: {
+            title: parsed.meta.title ?? feed.title,
+            lastFetchedAt: new Date(),
+            consecutiveErrors: 0,
+          },
+        });
+
+        const latestItems = parsed.items.slice(0, MAX_ITEMS_PER_FEED);
+        let inserted = 0;
+        let updated = 0;
+        let deduped = 0;
+        let filtered = 0;
+
+        for (const item of latestItems) {
+          if (!item.guid) continue;
+
+          const hash = itemContentHash(item.title, item.description);
+
+          // Cross-feed dedup
+          let isDuplicate = false;
+          if (hash !== '0000000000000000') {
+            for (const [existingHash, existingFeedId] of existingHashes) {
+              if (existingFeedId !== feed.id && isNearDuplicate(hash, existingHash, DEDUP_THRESHOLD)) {
+                isDuplicate = true;
+                break;
+              }
+            }
+          }
+          if (isDuplicate) { deduped++; continue; }
+
+          const filterDecision = classifyContent(item.title ?? '', item.description ?? '');
+
+          try {
+            const existing = await prisma.rssItem.findUnique({
+              where: { feedId_guid: { feedId: feed.id, guid: item.guid } },
+              select: { id: true },
+            });
+
+            await prisma.rssItem.upsert({
+              where: { feedId_guid: { feedId: feed.id, guid: item.guid } },
+              create: {
+                feedId: feed.id,
+                guid: item.guid,
+                title: item.title,
+                description: item.description,
+                link: item.link,
+                pubDate: item.pubDate,
+                author: item.author,
+                imageUrl: item.imageUrl,
+                categories: item.categories,
+                contentHash: hash,
+                filterStatus: filterDecision.status,
+                filterReason: filterDecision.reason,
+                blockedCategory: filterDecision.category,
+              },
+              update: {
+                title: item.title,
+                description: item.description,
+                link: item.link,
+                pubDate: item.pubDate,
+                author: item.author,
+                imageUrl: item.imageUrl,
+                categories: item.categories,
+                contentHash: hash,
+              },
+            });
+
+            if (existing) { updated++; } else { inserted++; }
+            if (hash !== '0000000000000000') existingHashes.set(hash, feed.id);
+            if (filterDecision.status === 'blocked') filtered++;
+          } catch (err: any) {
+            if (!err?.message?.includes('Unique constraint')) {
+              console.error(`[geo-linker] Item insert error for ${item.guid}:`, err?.message);
+            }
+          }
+        }
+
+        results.feedsSucceeded++;
+        results.itemsInserted += inserted;
+        results.itemsUpdated += updated;
+        results.itemsDeduplicated += deduped;
+        results.itemsFiltered += filtered;
+        results.details.push({ feedId: feed.id, url: feed.url, title: feed.title || parsed.meta.title || '', itemsInserted: inserted, itemsUpdated: updated });
+
+        console.log(`[geo-linker] Ingested ${feed.url}: +${inserted} new, ${updated} updated, ${deduped} deduped, ${filtered} filtered`);
+      } catch (err: any) {
+        results.feedsFailed++;
+        results.details.push({ feedId: feed.id, url: feed.url, title: feed.title || '', itemsInserted: 0, itemsUpdated: 0, error: err?.message });
+      }
+    }));
+    results.feedsProcessed += batch.length;
+  }
+
+  console.log(`[geo-linker] Ingestion complete: ${results.feedsSucceeded}/${results.feedsProcessed} feeds, +${results.itemsInserted} items, ${results.itemsDeduplicated} deduped`);
+  return results;
 }
 
 // ── Disable Failed Feeds ───────────────────────────────────────────────

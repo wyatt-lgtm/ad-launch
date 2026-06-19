@@ -2,7 +2,7 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getGeoCoverageReport, discoverValidateAndLink, backfillFeedGeo, backfillHierarchicalGeoLinks, purgeStaleRssItems, disableFailedFeeds } from '@/lib/rss/geo-linker';
+import { getGeoCoverageReport, discoverValidateAndLink, backfillFeedGeo, backfillHierarchicalGeoLinks, purgeStaleRssItems, disableFailedFeeds, ingestFeeds } from '@/lib/rss/geo-linker';
 
 /**
  * GET /api/rss/admin/geo-coverage?zip=14203&city=BUFFALO&state=NY
@@ -97,6 +97,12 @@ export async function POST(req: NextRequest) {
       const { dryRun = false, threshold } = body;
       const result = await disableFailedFeeds({ dryRun, threshold });
       return NextResponse.json({ action: 'disable-failed-feeds', result });
+    }
+
+    if (action === 'ingest-feeds') {
+      const { state, city, county, feedIds, limit, concurrency } = body;
+      const result = await ingestFeeds({ state, city, county, feedIds, limit, concurrency });
+      return NextResponse.json({ action: 'ingest-feeds', result });
     }
 
     return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
