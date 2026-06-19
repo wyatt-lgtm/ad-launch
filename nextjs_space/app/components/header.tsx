@@ -138,8 +138,8 @@ export default function Header() {
       )}
     </header>
 
-    {/* Global Business Context Banner */}
-    {status === 'authenticated' && pathname !== '/' && pathname !== '/login' && pathname !== '/register' && (
+    {/* Global Business Context Banner — hidden on analysis/results pages which show their own context */}
+    {status === 'authenticated' && pathname !== '/' && pathname !== '/login' && pathname !== '/register' && !pathname?.startsWith('/analyze/') && !pathname?.startsWith('/results/') && (
       <div className="bg-slate-50 border-b border-slate-200">
         <div className="max-w-[1200px] mx-auto px-4 sm:px-6 flex items-center gap-2 h-9 text-xs">
           <Building2 className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
