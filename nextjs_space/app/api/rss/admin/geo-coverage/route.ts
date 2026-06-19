@@ -2,7 +2,7 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getGeoCoverageReport, discoverValidateAndLink, backfillFeedGeo } from '@/lib/rss/geo-linker';
+import { getGeoCoverageReport, discoverValidateAndLink, backfillFeedGeo, backfillHierarchicalGeoLinks } from '@/lib/rss/geo-linker';
 
 /**
  * GET /api/rss/admin/geo-coverage?zip=14203&city=BUFFALO&state=NY
@@ -72,6 +72,16 @@ export async function POST(req: NextRequest) {
       const result = await backfillFeedGeo({ dryRun, limit, state });
       return NextResponse.json({
         action: 'backfill',
+        dryRun,
+        result,
+      });
+    }
+
+    if (action === 'backfill-hierarchy') {
+      const { dryRun = false, limit = 200, state } = body;
+      const result = await backfillHierarchicalGeoLinks({ dryRun, limit, state });
+      return NextResponse.json({
+        action: 'backfill-hierarchy',
         dryRun,
         result,
       });

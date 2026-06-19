@@ -26,6 +26,17 @@ export interface GeoLinkResult {
   reason: string;
 }
 
+export interface HierarchicalLinkResult {
+  totalLinksCreated: number;
+  byLevel: {
+    zip: number;
+    city: number;
+    county: number;
+    state: number;
+  };
+  zipCodes: string[];
+}
+
 export interface FeedValidation {
   valid: boolean;
   url: string;
@@ -563,45 +574,107 @@ export async function discoverValidateAndLink(
 }
 
 /**
- * Create FeedGeo links for a feed based on the best available location scope.
- * Returns total links created.
+ * Create FeedGeo links for a feed at ALL levels of the hierarchy.
+ * A city-level feed gets: city ZIPs + county ZIPs + state sample ZIPs.
+ * A county-level feed gets: county ZIPs + state sample ZIPs.
+ * A zip-level feed gets: zip + city + county + state.
+ * Returns total links created with per-level breakdown.
  */
 async function linkFeedToLocation(
   feedId: string,
   location: { zip?: string | null; city?: string | null; county?: string | null; state?: string | null },
 ): Promise<number> {
-  let totalLinks = 0;
+  const result = await createHierarchicalLinks(feedId, location);
+  return result.totalLinksCreated;
+}
 
-  // Link to city ZIPs (most specific useful scope)
-  if (location.city && location.state) {
-    const { linksCreated } = await createFeedGeoLinks(feedId, {
-      type: 'city',
-      city: location.city.toUpperCase(),
-      state: location.state.toUpperCase(),
-    }, { confidence: 0.6, source: 'auto_discovery_city' });
-    totalLinks += linksCreated;
+/**
+ * Hierarchical link creation: creates FeedGeo rows at every geo level
+ * from the most specific scope upward to state.
+ */
+export async function createHierarchicalLinks(
+  feedId: string,
+  location: { zip?: string | null; city?: string | null; county?: string | null; state?: string | null },
+  options: { confidence?: number; source?: string } = {},
+): Promise<HierarchicalLinkResult> {
+  const { confidence = 0.6, source = 'auto_discovery' } = options;
+  const result: HierarchicalLinkResult = {
+    totalLinksCreated: 0,
+    byLevel: { zip: 0, city: 0, county: 0, state: 0 },
+    zipCodes: [],
+  };
+
+  const city = location.city?.toUpperCase() || null;
+  const state = location.state?.toUpperCase() || null;
+  const zip = location.zip || null;
+
+  // Resolve county from city if not provided
+  let county = location.county?.toUpperCase() || null;
+  if (!county && city && state) {
+    try {
+      // Look up county from city's geo data
+      const cityZips = await getZipsByCity(city, state);
+      if (cityZips.zips.length > 0) {
+        const zipDetails = await getZipDetails(cityZips.zips[0].code);
+        if (zipDetails?.county) county = zipDetails.county.toUpperCase();
+      }
+    } catch { /* ignore */ }
+  }
+  if (!county && zip) {
+    try {
+      const zipDetails = await getZipDetails(zip);
+      if (zipDetails?.county) county = zipDetails.county.toUpperCase();
+    } catch { /* ignore */ }
   }
 
-  // If no city links, try county
-  if (totalLinks === 0 && location.county && location.state) {
-    const { linksCreated } = await createFeedGeoLinks(feedId, {
-      type: 'county',
-      county: location.county.toUpperCase(),
-      state: location.state.toUpperCase(),
-    }, { confidence: 0.4, source: 'auto_discovery_county', maxLinksPerScope: 100 });
-    totalLinks += linksCreated;
+  // ── Level 1: ZIP-level link ───────────────────────────────────────
+  if (zip) {
+    const { linksCreated, zipCodes } = await createFeedGeoLinks(feedId, {
+      type: 'zip', zip,
+    }, { confidence, source: `${source}_zip` });
+    result.byLevel.zip += linksCreated;
+    result.totalLinksCreated += linksCreated;
+    result.zipCodes.push(...zipCodes);
   }
 
-  // If still no links, create a single representative ZIP link
-  if (totalLinks === 0 && location.zip) {
-    const { linksCreated } = await createFeedGeoLinks(feedId, {
-      type: 'zip',
-      zip: location.zip,
-    }, { confidence: 0.3, source: 'auto_discovery_fallback' });
-    totalLinks += linksCreated;
+  // ── Level 2: City-level links ──────────────────────────────────────
+  if (city && state) {
+    const { linksCreated, zipCodes } = await createFeedGeoLinks(feedId, {
+      type: 'city', city, state,
+    }, { confidence, source: `${source}_city`, maxLinksPerScope: 200 });
+    result.byLevel.city += linksCreated;
+    result.totalLinksCreated += linksCreated;
+    result.zipCodes.push(...zipCodes);
   }
 
-  return totalLinks;
+  // ── Level 3: County-level links ────────────────────────────────────
+  if (county && state) {
+    const { linksCreated, zipCodes } = await createFeedGeoLinks(feedId, {
+      type: 'county', county, state,
+    }, { confidence: Math.max(confidence - 0.1, 0.3), source: `${source}_county`, maxLinksPerScope: 100 });
+    result.byLevel.county += linksCreated;
+    result.totalLinksCreated += linksCreated;
+    result.zipCodes.push(...zipCodes);
+  }
+
+  // ── Level 4: State-level links (small sample) ──────────────────────
+  if (state) {
+    const { linksCreated, zipCodes } = await createFeedGeoLinks(feedId, {
+      type: 'state', state,
+    }, { confidence: Math.max(confidence - 0.2, 0.2), source: `${source}_state`, maxLinksPerScope: 30 });
+    result.byLevel.state += linksCreated;
+    result.totalLinksCreated += linksCreated;
+    result.zipCodes.push(...zipCodes);
+  }
+
+  console.log(
+    `[geo-linker] Hierarchical links for feed ${feedId}: ` +
+    `zip=${result.byLevel.zip} city=${result.byLevel.city} ` +
+    `county=${result.byLevel.county} state=${result.byLevel.state} ` +
+    `total=${result.totalLinksCreated}`
+  );
+
+  return result;
 }
 
 // ── Backfill Existing Feeds ───────────────────────────────────────────────
@@ -687,19 +760,17 @@ export async function backfillFeedGeo(options: {
       continue;
     }
 
-    // Create FeedGeo links based on inferred scope
-    let linksCreated = 0;
-    const linkScope: any = { type: inferred.scope };
-    if (inferred.city) linkScope.city = inferred.city;
-    if (inferred.county) linkScope.county = inferred.county;
-    if (inferred.state) linkScope.state = inferred.state;
+    // Create hierarchical FeedGeo links (all levels from inferred scope upward)
+    const location: any = {};
+    if (inferred.city) location.city = inferred.city;
+    if (inferred.county) location.county = inferred.county;
+    if (inferred.state) location.state = inferred.state;
 
-    const linkResult = await createFeedGeoLinks(feed.id, linkScope, {
+    const hierarchyResult = await createHierarchicalLinks(feed.id, location, {
       confidence: inferred.confidence,
       source: 'backfill',
-      maxLinksPerScope: inferred.scope === 'state' ? 50 : 200,
     });
-    linksCreated = linkResult.linksCreated;
+    const linksCreated = hierarchyResult.totalLinksCreated;
 
     // Update feed pilotState if not set
     if (inferred.state && !feed.pilotState) {
@@ -711,13 +782,124 @@ export async function backfillFeedGeo(options: {
     report.details.push({
       feedId: feed.id, url: feed.url, title: feed.title || '',
       action: 'linked', geoLinksCreated: linksCreated,
-      reason: `${inferred.scope}: ${inferred.city || inferred.county || inferred.state} (${inferred.reason})`,
+      reason: `${inferred.scope}: ${inferred.city || inferred.county || inferred.state} (${inferred.reason}) [hierarchy: city=${hierarchyResult.byLevel.city} county=${hierarchyResult.byLevel.county} state=${hierarchyResult.byLevel.state}]`,
     });
   }
 
   console.log(
     `[geo-linker] Backfill: ${report.feedsLinked} linked (${report.totalGeoLinksCreated} FeedGeo rows), ` +
     `${report.feedsUncertain} uncertain, ${report.feedsSkipped} skipped`
+  );
+
+  return report;
+}
+
+// ── Backfill Hierarchical FeedGeo Links ───────────────────────────────────
+
+/**
+ * Backfill missing hierarchical FeedGeo links for feeds that already have
+ * some FeedGeo rows but are missing parent-level (county/state) links.
+ * E.g. a feed linked to Buffalo city ZIPs but not to Erie County or NY State ZIPs.
+ */
+export async function backfillHierarchicalGeoLinks(options: {
+  dryRun?: boolean;
+  limit?: number;
+  state?: string;
+}): Promise<{
+  feedsChecked: number;
+  feedsUpdated: number;
+  newLinksCreated: { zip: number; city: number; county: number; state: number; total: number };
+  details: { feedId: string; url: string; title: string; existingLinks: number; newLinks: HierarchicalLinkResult }[];
+}> {
+  const { dryRun = false, limit = 200, state: filterState } = options;
+
+  // Find feeds that HAVE FeedGeo links (backfill adds missing hierarchy levels)
+  const where: any = { status: { not: 'blocked' }, feedGeos: { some: {} } };
+  if (filterState) where.pilotState = filterState.toUpperCase();
+
+  const feeds = await prisma.rssFeed.findMany({
+    where,
+    select: {
+      id: true, url: true, title: true, siteUrl: true, pilotState: true,
+      notes: true, geoScope: true,
+      feedGeos: { select: { zipId: true }, take: 1 },
+    },
+    take: limit,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const report = {
+    feedsChecked: feeds.length,
+    feedsUpdated: 0,
+    newLinksCreated: { zip: 0, city: 0, county: 0, state: 0, total: 0 },
+    details: [] as any[],
+  };
+
+  for (const feed of feeds) {
+    // Get existing link count
+    const existingCount = await prisma.feedGeo.count({ where: { feedId: feed.id } });
+
+    // Infer the feed's geo location
+    const inferred = inferGeoFromFeed(feed);
+    if (inferred.scope === 'unknown' || inferred.scope === 'national') continue;
+
+    // Build location from inferred data
+    const location: { zip?: string | null; city?: string | null; county?: string | null; state?: string | null } = {
+      city: inferred.city || null,
+      county: inferred.county || null,
+      state: inferred.state || feed.pilotState || null,
+    };
+
+    // If we only have state but no city, try to resolve from an existing FeedGeo ZIP
+    if (!location.city && feed.feedGeos.length > 0) {
+      const existingZip = await prisma.geoZip.findUnique({
+        where: { id: feed.feedGeos[0].zipId },
+        select: { code: true },
+      });
+      if (existingZip) {
+        const details = await getZipDetails(existingZip.code);
+        if (details) {
+          if (!location.city) location.city = details.primaryCity;
+          if (!location.county) location.county = details.county;
+          if (!location.state) location.state = details.state;
+        }
+      }
+    }
+
+    if (!location.state) continue; // Can't do hierarchy without state
+
+    if (dryRun) {
+      report.details.push({
+        feedId: feed.id, url: feed.url, title: feed.title || '',
+        existingLinks: existingCount, newLinks: { totalLinksCreated: 0, byLevel: { zip: 0, city: 0, county: 0, state: 0 }, zipCodes: [] },
+      });
+      continue;
+    }
+
+    // Create hierarchical links (createFeedGeoLinks handles duplicates via P2002)
+    const hierarchyResult = await createHierarchicalLinks(feed.id, location, {
+      confidence: inferred.confidence,
+      source: 'backfill_hierarchy',
+    });
+
+    if (hierarchyResult.totalLinksCreated > 0) {
+      report.feedsUpdated++;
+      report.newLinksCreated.zip += hierarchyResult.byLevel.zip;
+      report.newLinksCreated.city += hierarchyResult.byLevel.city;
+      report.newLinksCreated.county += hierarchyResult.byLevel.county;
+      report.newLinksCreated.state += hierarchyResult.byLevel.state;
+      report.newLinksCreated.total += hierarchyResult.totalLinksCreated;
+
+      report.details.push({
+        feedId: feed.id, url: feed.url, title: feed.title || '',
+        existingLinks: existingCount, newLinks: hierarchyResult,
+      });
+    }
+  }
+
+  console.log(
+    `[geo-linker] Hierarchy backfill: ${report.feedsUpdated}/${report.feedsChecked} feeds updated, ` +
+    `${report.newLinksCreated.total} new links (city=${report.newLinksCreated.city} county=${report.newLinksCreated.county} state=${report.newLinksCreated.state})`
   );
 
   return report;
@@ -793,6 +975,61 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
       where: { geoScope: 'national', status: 'active' },
     });
 
+    // Count unique feeds at each level (not just FeedGeo row count)
+    let zipUniqueFeedCount = 0;
+    if (zipCode) {
+      const zip = await prisma.geoZip.findUnique({ where: { code: zipCode.padStart(5, '0') }, select: { id: true } });
+      if (zip) {
+        const zipFeeds = await prisma.feedGeo.findMany({
+          where: { zipId: zip.id },
+          select: { feedId: true },
+          distinct: ['feedId'],
+        });
+        zipUniqueFeedCount = zipFeeds.length;
+      }
+    }
+
+    let cityUniqueFeedCount = 0;
+    if (city && state) {
+      const cityZipsResult = await getZipsByCity(city, state);
+      if (cityZipsResult.zips.length > 0) {
+        const cityFeeds = await prisma.feedGeo.findMany({
+          where: { zipId: { in: cityZipsResult.zips.map(z => z.id) } },
+          select: { feedId: true },
+          distinct: ['feedId'],
+        });
+        cityUniqueFeedCount = cityFeeds.length;
+      }
+    }
+
+    let countyUniqueFeedCount = 0;
+    if (county && state) {
+      const countyZipsResult = await getZipsByCounty(county, state);
+      if (countyZipsResult.zips.length > 0) {
+        const countyFeeds = await prisma.feedGeo.findMany({
+          where: { zipId: { in: countyZipsResult.zips.map(z => z.id) } },
+          select: { feedId: true },
+          distinct: ['feedId'],
+        });
+        countyUniqueFeedCount = countyFeeds.length;
+      }
+    }
+
+    let stateUniqueFeedCount = 0;
+    if (state) {
+      const stateZipsResult = await getZipsByState(state);
+      if (stateZipsResult.zips.length > 0) {
+        // Sample first 500 ZIPs to avoid huge query
+        const sampleIds = stateZipsResult.zips.slice(0, 500).map(z => z.id);
+        const stateFeeds = await prisma.feedGeo.findMany({
+          where: { zipId: { in: sampleIds } },
+          select: { feedId: true },
+          distinct: ['feedId'],
+        });
+        stateUniqueFeedCount = stateFeeds.length;
+      }
+    }
+
     locationCoverage = {
       zip: zipCode || null,
       city,
@@ -802,6 +1039,15 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
       cityFeedGeoLinks: cityFeedCount,
       stateFeedsViaPilotState: stateFeedCount,
       nationalFeeds: nationalFeedCount,
+      hierarchy: {
+        zipFeeds: zipUniqueFeedCount,
+        cityFeeds: cityUniqueFeedCount,
+        countyFeeds: countyUniqueFeedCount,
+        stateFeeds: stateUniqueFeedCount,
+        nationalFeeds: nationalFeedCount,
+        totalUsable: Math.max(zipUniqueFeedCount, cityUniqueFeedCount, countyUniqueFeedCount, stateUniqueFeedCount) + nationalFeedCount,
+        cascadeHealthy: stateUniqueFeedCount >= countyUniqueFeedCount && countyUniqueFeedCount >= cityUniqueFeedCount,
+      },
       hasCoverage: zipFeedCount > 0 || cityFeedCount > 0 || stateFeedCount > 0 || nationalFeedCount > 0,
       recommendation: zipFeedCount > 0 ? 'Good coverage' :
         cityFeedCount > 0 ? 'City-level coverage only' :
