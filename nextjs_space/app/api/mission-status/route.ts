@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getMultiWorkflowStatus, getWorkflowResults, getSocialWorkflowResults } from '@/lib/tombstone';
+import { getMultiWorkflowStatus, getWorkflowResults, getSocialWorkflowResults, pollRunStatus } from '@/lib/tombstone';
 
 const TOMBSTONE_API = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
@@ -93,13 +93,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Analysis not found' }, { status: 404 });
     }
 
-    // Parse lane workflows from missionId (used in all response paths)
+    // Parse missionId: detect async format vs legacy lane-workflow map
     let laneWorkflows: Record<string, string | string[]> = {};
+    let asyncCommandId: string | null = null;
     if (analysis.missionId) {
       try {
         const parsed = JSON.parse(analysis.missionId);
         if (typeof parsed === 'object' && !Array.isArray(parsed)) {
-          laneWorkflows = parsed;
+          if (parsed.command_id && parsed.async) {
+            // New async format: { command_id, async: true }
+            asyncCommandId = parsed.command_id;
+          } else {
+            // Legacy format: { website: 'wf-1', news: 'wf-2', holiday: 'wf-3' }
+            laneWorkflows = parsed;
+          }
         }
       } catch { /* legacy comma-separated — no lane info */ }
     }
@@ -193,6 +200,245 @@ export async function GET(request: NextRequest) {
     // If pending location confirmation, return current status
     if (analysis.status === 'pending_location') {
       return NextResponse.json({ status: analysis.status, tasks: [] });
+    }
+
+    // ── NEW ASYNC FLOW: poll the async command run for lane progress ──
+    if (asyncCommandId) {
+      const runStatus = await pollRunStatus(asyncCommandId);
+      if (!runStatus) {
+        // Command not found or Tombstone down — keep polling
+        return NextResponse.json({ status: 'processing', tasks: [], message: 'Waiting for analysis pipeline...' });
+      }
+
+      // Map async lane types to ad lane names
+      const LANE_MAP: Record<string, string> = {
+        website_post: 'website',
+        evergreen_post: 'holiday',
+        news_post: 'news',
+      };
+
+      // Build laneWorkflows from completed lanes (for downstream ad creation)
+      const asyncLaneWorkflows: Record<string, string> = {};
+      for (const lane of runStatus.lanes) {
+        const adLane = LANE_MAP[lane.lane_type];
+        if (adLane && lane.workflow_id) {
+          asyncLaneWorkflows[adLane] = lane.workflow_id;
+        }
+      }
+
+      // Update missionId with workflow IDs once we have them (so legacy path can pick up)
+      if (Object.keys(asyncLaneWorkflows).length > 0) {
+        const enrichedMissionId = JSON.stringify({
+          command_id: asyncCommandId,
+          async: true,
+          ...asyncLaneWorkflows,
+        });
+        // Only write if we actually gained new workflow IDs
+        const currentMission = analysis.missionId ?? '';
+        if (enrichedMissionId.length > currentMission.length) {
+          await prisma.analysis.update({
+            where: { id: analysisId },
+            data: { missionId: enrichedMissionId },
+          }).catch(() => {});
+        }
+        // Set laneWorkflows for downstream ad extraction
+        laneWorkflows = asyncLaneWorkflows;
+      }
+
+      // Determine overall status
+      const allLaneStatuses = runStatus.lanes.map(l => l.status);
+      const allCompleted = allLaneStatuses.every(s => s === 'completed' || s === 'completed_with_warning');
+      const anyFailed = allLaneStatuses.some(s => s === 'failed');
+      const allDone = allLaneStatuses.every(s => s === 'completed' || s === 'completed_with_warning' || s === 'failed');
+
+      // Build task items for the UI from lane statuses
+      const asyncTasks = runStatus.lanes
+        .filter(l => LANE_MAP[l.lane_type]) // skip scout_news_retrieval
+        .map((l, i) => ({
+          id: i,
+          workflowId: l.workflow_id || '',
+          department: LANE_MAP[l.lane_type] || l.lane_type,
+          label: l.lane_type === 'website_post' ? 'Website / Brand Post'
+               : l.lane_type === 'evergreen_post' ? 'Holiday / Seasonal Post'
+               : l.lane_type === 'news_post' ? 'Local News Post'
+               : l.lane_type,
+          description: l.status === 'processing' ? 'Generating...' : l.status === 'queued' ? 'Waiting...' : '',
+          status: l.status === 'completed' || l.status === 'completed_with_warning' ? 'complete' as const
+                : l.status === 'processing' ? 'active' as const
+                : l.status === 'failed' ? 'error' as const
+                : 'waiting' as const,
+          rawStatus: l.status,
+        }));
+
+      // If all lanes are done, extract workflow IDs and feed into existing completion path
+      if (allDone) {
+        const completedWfIds = runStatus.lanes
+          .filter(l => (l.status === 'completed' || l.status === 'completed_with_warning') && l.workflow_id && LANE_MAP[l.lane_type])
+          .map(l => l.workflow_id!);
+
+        const failedLaneNames = runStatus.lanes
+          .filter(l => l.status === 'failed' && LANE_MAP[l.lane_type])
+          .map(l => LANE_MAP[l.lane_type]);
+
+        if (completedWfIds.length === 0) {
+          // All lanes failed
+          await prisma.analysis.update({ where: { id: analysisId }, data: { status: 'error' } }).catch(() => {});
+          const firstErr = runStatus.lanes.find(l => l.error_message);
+          return NextResponse.json({
+            status: 'error',
+            tasks: asyncTasks,
+            laneWorkflows: asyncLaneWorkflows,
+            errorReason: firstErr?.error_message ?? 'All post generation lanes failed. Please try again.',
+          });
+        }
+
+        // Feed completed workflow IDs into the existing full-completion logic
+        // Simulate the same statusResult shape the legacy path expects
+        const syntheticStatusResult = {
+          status: allCompleted ? 'completed' : 'error',
+          tasks: asyncTasks,
+          completedWorkflows: completedWfIds,
+        };
+
+        // Use the same completion path as the legacy flow (lock + ad creation)
+        // We set workflowIds and laneWorkflows, then fall through to the existing code
+        // To avoid duplicating 200 lines, we redirect via a self-call with the legacy format
+        // Actually, let's just inline the completion call here using the helper functions
+
+        const lockResult = await prisma.analysis.updateMany({
+          where: { id: analysisId, status: { notIn: ['completed', 'completing'] } },
+          data: { status: 'completing' },
+        });
+
+        if (lockResult.count === 0) {
+          // Already completing/completed
+          const refetched = await prisma.analysis.findUnique({ where: { id: analysisId }, include: { ads: true } });
+          if (refetched?.status === 'completed' && (refetched.ads?.length ?? 0) > 0) {
+            const freshAds = await resolveAdImages(refetched.ads ?? []);
+            const cachedResults = (refetched.results ?? {}) as any;
+            return NextResponse.json({
+              status: 'completed', ads: freshAds, seoData: refetched.seoData ?? null,
+              postingPlan: refetched.postingPlan ?? null, googleAdsData: cachedResults.googleAds ?? null,
+              websiteConceptData: cachedResults.websiteConcept ?? null, budgetData: cachedResults.budget ?? null,
+              tasks: asyncTasks, laneWorkflows: asyncLaneWorkflows,
+              ...(failedLaneNames.length > 0 ? { failedLanes: failedLaneNames } : {}),
+            });
+          }
+          return NextResponse.json({ status: 'processing', tasks: asyncTasks, laneWorkflows: asyncLaneWorkflows });
+        }
+
+        try {
+          const results = await getWorkflowResults(completedWfIds);
+          const seoData = await buildSeoData(results.research, results.creative, results.marketing, analysis.websiteUrl, analysisId);
+          const postingPlan = buildPostingPlan(results.research, results.creative, results.marketing, analysis.websiteUrl);
+          const googleAdsData = buildGoogleAds(results.research, results.creative, analysis.websiteUrl, {
+            businessName: (analysis as any).businessName ?? '', city: analysis.businessCity ?? '', state: analysis.businessState ?? '',
+          });
+          const websiteConceptData = buildWebsiteConcept(results.research, results.creative, analysis.websiteUrl, {
+            businessId: analysis.businessId ?? '', location: [analysis.businessCity, analysis.businessState].filter(Boolean).join(', '),
+            industry: results.research?.business_summary?.category ?? '',
+          });
+          const budgetData = buildBudgetRecommendations(results.research, analysis.websiteUrl);
+
+          const wfToLane: Record<string, string> = {};
+          for (const [lane, wfId] of Object.entries(asyncLaneWorkflows)) {
+            wfToLane[wfId] = lane;
+          }
+
+          let createdCount = 0;
+          for (const ad of results.ads) {
+            let imageKey = ad?.imageUrl ?? null;
+            if (imageKey && imageKey.startsWith('http') && !imageKey.includes('.s3.')) {
+              try { const p = new URL(imageKey); let path = p.pathname.replace(/^\/+/, ''); if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length); imageKey = path; } catch {}
+            }
+            const { created } = await createAdIdempotent({
+              analysisId: analysis.id, imageUrl: imageKey, caption: ad?.caption ?? '',
+              headline: ad?.headline ?? 'Ad', watermarked: true, lane: wfToLane[ad?.workflowId] ?? null,
+            });
+            if (created) createdCount++;
+          }
+          console.log(`[mission-status] Async completion: created ${createdCount} ads`);
+
+          await prisma.analysis.update({
+            where: { id: analysisId },
+            data: {
+              status: 'completed',
+              results: { ...results as any, googleAds: googleAdsData, websiteConcept: websiteConceptData, budget: budgetData } as any,
+              seoData: seoData as any, postingPlan: postingPlan as any,
+            },
+          });
+
+          const updatedAnalysis = await prisma.analysis.findUnique({ where: { id: analysisId }, include: { ads: true } });
+          const freshAds = await resolveAdImages(updatedAnalysis?.ads ?? []);
+
+          // Fire-and-forget image upgrade
+          const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+          fetch(`${baseUrl}/api/upgrade-ad-images`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysisId }) }).catch(() => {});
+
+          return NextResponse.json({
+            status: 'completed', ads: freshAds, seoData, postingPlan, googleAdsData, websiteConceptData, budgetData,
+            tasks: asyncTasks, laneWorkflows: asyncLaneWorkflows,
+            ...(failedLaneNames.length > 0 ? { failedLanes: failedLaneNames } : {}),
+          });
+        } catch (err: any) {
+          console.error('[mission-status] Async completion failed, resetting:', err?.message);
+          await prisma.analysis.update({ where: { id: analysisId }, data: { status: 'processing' } });
+          return NextResponse.json({ error: 'Failed to process results', tasks: asyncTasks }, { status: 500 });
+        }
+      }
+
+      // ── Still processing: extract any completed lane ads progressively ──
+      let partialAds: any[] = [];
+      const completedLaneWfs = runStatus.lanes
+        .filter(l => (l.status === 'completed' || l.status === 'completed_with_warning') && l.workflow_id && LANE_MAP[l.lane_type])
+        .map(l => ({ wfId: l.workflow_id!, lane: LANE_MAP[l.lane_type] }));
+
+      if (completedLaneWfs.length > 0) {
+        const existingAds = await prisma.ad.findMany({ where: { analysisId: analysis.id }, select: { lane: true } });
+        const existingLanes = new Set(existingAds.map(a => a.lane).filter(Boolean));
+
+        const newLaneWfs = completedLaneWfs.filter(l => !existingLanes.has(l.lane));
+        if (newLaneWfs.length > 0) {
+          console.log(`[mission-status] Async progressive: ${newLaneWfs.length} lanes newly completed`);
+          try {
+            const partialResults = await getWorkflowResults(newLaneWfs.map(l => l.wfId));
+            const wfToLane: Record<string, string> = {};
+            for (const l of newLaneWfs) wfToLane[l.wfId] = l.lane;
+
+            for (const ad of partialResults.ads) {
+              let imageKey = ad?.imageUrl ?? null;
+              if (imageKey && imageKey.startsWith('http') && !imageKey.includes('.s3.')) {
+                try { const p = new URL(imageKey); let path = p.pathname.replace(/^\/+/, ''); if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length); imageKey = path; } catch {}
+              }
+              const { created, ad: createdAd } = await createAdIdempotent({
+                analysisId: analysis.id, imageUrl: imageKey, caption: ad?.caption ?? '',
+                headline: ad?.headline ?? 'Ad', watermarked: true, lane: wfToLane[ad?.workflowId] ?? null,
+              });
+              if (created) partialAds.push(createdAd);
+            }
+            if (partialAds.length > 0) {
+              console.log(`[mission-status] Async progressive: stored ${partialAds.length} early ads`);
+              const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
+              fetch(`${baseUrl}/api/upgrade-ad-images`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysisId }) }).catch(() => {});
+            }
+          } catch (err: any) {
+            console.error('[mission-status] Async progressive ad extraction error:', err?.message);
+          }
+        }
+
+        // Return all stored ads
+        if (existingAds.length > 0 || partialAds.length > 0) {
+          const allAds = await prisma.ad.findMany({ where: { analysisId: analysis.id } });
+          partialAds = await resolveAdImages(allAds);
+        }
+      }
+
+      return NextResponse.json({
+        status: 'processing',
+        tasks: asyncTasks,
+        laneWorkflows: asyncLaneWorkflows,
+        ...(partialAds.length > 0 ? { ads: partialAds } : {}),
+      });
     }
 
     // No missionId yet — missions are being created or creation failed

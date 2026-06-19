@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { createLaneMission, createProvisionalBusiness, TombstoneError } from '@/lib/tombstone';
+import { createProvisionalBusiness, TombstoneError, buildLaneCommands, createAsyncRun } from '@/lib/tombstone';
 import { getUpcomingEvents } from '@/lib/social/upcoming-events';
 import { generateContentBrief } from '@/lib/rss/trade-area-feed';
 
@@ -199,133 +199,72 @@ export async function POST(
 
     console.log(`[confirm-and-launch] Context gathered in ${Date.now() - contextStart}ms`);
 
-    // ── Launch 3 lane missions sequentially and save missionId to DB ──
-    // IMPORTANT: We MUST await this and save missionId before responding.
-    // Fire-and-forget causes lost workflow IDs when the serverless function
-    // tears down before the background promise completes.
-    console.log(`[confirm-and-launch] Launching 3 lane missions for: ${analysis.websiteUrl}`);
+    // ── Launch async multi-lane run on Tombstone ──────────────────
+    // This returns immediately with a command_id. Tombstone processes
+    // the lanes in background threads (website + evergreen in parallel,
+    // scout/news sequentially after scout completes).
+    console.log(`[confirm-and-launch] Launching async run for: ${analysis.websiteUrl}`);
 
     const websiteUrl = analysis.websiteUrl;
-    const launchStart = Date.now();
-    const laneWorkflows: Record<string, string> = {};
-    const usedWorkflowIds: string[] = [];
-    const laneTimes: Record<string, number> = {};
-
-    // Helper: save missionId after each lane so even partial creation is captured
-    const saveMissionId = async () => {
-      if (Object.keys(laneWorkflows).length > 0) {
-        const missionId = JSON.stringify(laneWorkflows);
-        await prisma.analysis.update({
-          where: { id: analysisId },
-          data: { missionId },
-        });
-      }
-    };
-
-    // Helper: launch a single lane with one automatic retry on failure
-    const launchLaneWithRetry = async (
-      lane: 'website' | 'news' | 'holiday',
-      context: string,
-    ) => {
-      let t0 = Date.now();
-      let result = await createLaneMission(websiteUrl, lane, context, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
-      let elapsed = Date.now() - t0;
-      console.log(`[confirm-and-launch] Lane ${lane}: ${elapsed}ms (success=${result.success})`);
-
-      // Auto-retry once if the lane failed (e.g. timeout, 5xx, no workflowId)
-      if (!result.success || !result.workflowId) {
-        console.warn(`[confirm-and-launch] Lane ${lane} failed (backendStatus=${(result as any).backendStatus ?? 'timeout'}), retrying once...`);
-        t0 = Date.now();
-        result = await createLaneMission(websiteUrl, lane, context, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
-        const retryElapsed = Date.now() - t0;
-        elapsed += retryElapsed;
-        console.log(`[confirm-and-launch] Lane ${lane} retry: ${retryElapsed}ms (success=${result.success})`);
-      }
-
-      laneTimes[lane] = elapsed;
-      if (result.workflowId) {
-        usedWorkflowIds.push(result.workflowId);
-        laneWorkflows[lane] = result.workflowId;
-        await saveMissionId();
-      }
-      return result;
-    };
 
     try {
-      // Sequential + exclude-list to avoid Tombstone race condition with duplicate workflow IDs
-      const websiteResult = await launchLaneWithRetry('website', `Business: ${businessName} in ${businessCity}, ${businessState}`);
-      const newsResult = await launchLaneWithRetry('news', newsContext);
-      const holidayResult = await launchLaneWithRetry('holiday', holidayContext);
+      const lanes = await buildLaneCommands(
+        websiteUrl,
+        businessName,
+        businessCity,
+        businessState,
+        analysis.businessId || undefined,
+        newsContext,
+        holidayContext,
+      );
 
-      const totalLaunchMs = Date.now() - launchStart;
-      console.log(`[confirm-and-launch] All missions launched in ${totalLaunchMs}ms | per-lane: ${JSON.stringify(laneTimes)}`);
-      if (totalLaunchMs > 15000) {
-        console.warn(`[confirm-and-launch] SLOW LAUNCH: ${totalLaunchMs}ms total — check Tombstone worker readiness`);
-      }
-      console.log(`[confirm-and-launch] Lane missions created:`, {
-        website: { success: websiteResult.success, workflowId: websiteResult.workflowId },
-        news: { success: newsResult.success, workflowId: newsResult.workflowId },
-        holiday: { success: holidayResult.success, workflowId: holidayResult.workflowId },
+      const asyncResult = await createAsyncRun(
+        tombstoneBusinessId,
+        businessName,
+        websiteUrl,
+        lanes,
+        analysisId, // idempotency key — prevents duplicate runs for same analysis
+      );
+
+      // Store the command_id so mission-status can poll the async endpoint
+      const missionId = JSON.stringify({
+        command_id: asyncResult.command_id,
+        async: true,
+        duplicate: asyncResult.duplicate,
       });
 
-      // Safety check: warn if duplicate workflow IDs were returned
-      const wfIds = Object.values(laneWorkflows);
-      const uniqueWfIds = new Set(wfIds);
-      if (uniqueWfIds.size < wfIds.length) {
-        console.warn(`[confirm-and-launch] DUPLICATE workflow IDs detected! Lanes may collide:`, laneWorkflows);
-      }
+      await prisma.analysis.update({
+        where: { id: analysisId },
+        data: { missionId },
+      });
 
-      if (Object.keys(laneWorkflows).length === 0) {
-        console.error('[confirm-and-launch] All lane missions failed');
-        // Surface the real backend status/error from the first lane that
-        // failed instead of masking it behind a generic HTTP 200 message.
-        const failed = [websiteResult, newsResult, holidayResult].find(
-          (r: any) => r && (r.backendStatus || r.backendError),
-        ) as any;
-        await prisma.analysis.update({
-          where: { id: analysisId },
-          data: { status: 'error' },
-        });
-        return NextResponse.json({
-          success: false,
-          analysisId,
-          status: 'error',
-          stage: 'lane_missions',
-          backend_status: failed?.backendStatus ?? null,
-          backend_error: failed?.backendError ?? null,
-          error: 'Analysis pipeline could not be created. Please try again.',
-        }, { status: 502 });
-      }
+      console.log(`[confirm-and-launch] Async run created: command_id=${asyncResult.command_id} duplicate=${asyncResult.duplicate} lanes=${asyncResult.lanes?.length}`);
 
-      console.log(`[confirm-and-launch] Workflow IDs saved for ${analysisId}: ${JSON.stringify(laneWorkflows)}`);
+      return NextResponse.json({
+        success: true,
+        analysisId,
+        commandId: asyncResult.command_id,
+        status: 'processing',
+      });
     } catch (err: any) {
-      console.error('[confirm-and-launch] Mission launch error:', err);
-      // If we saved at least one lane, keep processing; otherwise mark error
-      if (Object.keys(laneWorkflows).length === 0) {
-        await prisma.analysis.update({
-          where: { id: analysisId },
-          data: { status: 'error' },
-        }).catch(() => {});
-        return NextResponse.json({
-          success: false,
-          analysisId,
-          status: 'error',
-          stage: 'lane_missions',
-          backend_status: err instanceof TombstoneError ? err.backendStatus : null,
-          backend_error: err instanceof TombstoneError ? err.backendError : String(err?.message || err),
-          error: 'Analysis pipeline could not be created. Please try again.',
-        }, { status: 502 });
-      }
-      // Partial creation — some lanes saved, others failed
-      console.log(`[confirm-and-launch] Partial launch: ${Object.keys(laneWorkflows).length} lanes saved despite error`);
+      const isTomb = err instanceof TombstoneError;
+      const backendStatus = isTomb ? err.backendStatus : null;
+      const backendError = isTomb ? err.backendError : String(err?.message || err);
+      console.error('[confirm-and-launch] Async run creation failed:', backendStatus, backendError);
+      await prisma.analysis.update({
+        where: { id: analysisId },
+        data: { status: 'error' },
+      }).catch(() => {});
+      return NextResponse.json({
+        success: false,
+        analysisId,
+        status: 'error',
+        stage: 'lane_missions',
+        backend_status: backendStatus,
+        backend_error: backendError,
+        error: 'Analysis pipeline could not be created. Please try again.',
+      }, { status: 502 });
     }
-
-    return NextResponse.json({
-      success: true,
-      analysisId,
-      missionId: JSON.stringify(laneWorkflows),
-      status: 'processing',
-    });
   } catch (err: any) {
     console.error('[confirm-and-launch] Error:', err);
     return NextResponse.json({ error: 'Failed to launch analysis' }, { status: 500 });

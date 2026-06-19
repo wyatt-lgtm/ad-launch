@@ -94,12 +94,199 @@ export async function createProvisionalBusiness(input: {
   return { businessId: Number(businessId), businessUuid: String(businessUuid) };
 }
 
+// ── Async command run (parallel lanes) ──────────────────────────────────
+
+export interface AsyncLaneConfig {
+  lane_type: 'website_post' | 'evergreen_post' | 'scout_news_retrieval' | 'news_post';
+  command: string;
+  context?: string; // For scout lane — raw RSS context
+}
+
+export interface AsyncRunResult {
+  command_id: string;
+  status: string;
+  duplicate: boolean;
+  lanes: Array<{
+    lane_id: string;
+    lane_type: string;
+    status: string;
+    workflow_id?: string | null;
+    task_ids?: number[];
+  }>;
+}
+
+export interface AsyncRunStatus {
+  command_id: string;
+  status: string;
+  business_id?: number | null;
+  business_name?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  duration_ms?: number | null;
+  lanes: Array<{
+    lane_id: string;
+    lane_type: string;
+    status: string;
+    queued_at?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+    duration_ms?: number | null;
+    workflow_id?: string | null;
+    task_ids?: number[];
+    error_message?: string | null;
+    warning_message?: string | null;
+  }>;
+}
+
+/**
+ * Create an async multi-lane command run on Tombstone.
+ * Returns immediately with a command_id. Lanes are processed in background.
+ *
+ * This replaces the sequential sendCommand() calls for the 3-lane flow.
+ * Website + evergreen lanes run in parallel, scout/news lane runs
+ * concurrently (scout first, then news).
+ */
+export async function createAsyncRun(
+  businessId: number | null,
+  businessName: string,
+  websiteUrl: string,
+  lanes: AsyncLaneConfig[],
+  idempotencyKey?: string,
+): Promise<AsyncRunResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000); // 15s — should be fast since async
+  try {
+    const res = await fetch(`${TOMBSTONE_URL}/commands/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        business_id: businessId,
+        business_name: businessName,
+        website_url: websiteUrl,
+        lanes,
+        idempotency_key: idempotencyKey,
+      }),
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({} as any));
+    if (!res.ok) {
+      const detail = data?.detail || `HTTP ${res.status}`;
+      throw new TombstoneError('async_run', `Failed to create async run: ${detail}`, res.status, detail);
+    }
+    console.log(`[tombstone] Async run created: command_id=${data.command_id} duplicate=${data.duplicate} lanes=${data.lanes?.length}`);
+    return data as AsyncRunResult;
+  } catch (err: any) {
+    if (err instanceof TombstoneError) throw err;
+    throw new TombstoneError('async_run', `Failed to reach Tombstone /commands/run: ${err?.message}`, null, err?.message);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Poll the status of an async command run.
+ * Returns per-lane progress with timing, workflow IDs, and errors.
+ */
+export async function pollRunStatus(commandId: string): Promise<AsyncRunStatus | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(`${TOMBSTONE_URL}/commands/${commandId}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      console.error(`[tombstone] Poll /commands/${commandId} failed: ${res.status}`);
+      return null;
+    }
+    return await res.json() as AsyncRunStatus;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Build lane commands for the 3-lane async run.
+ * This constructs the command text for each lane type.
+ */
+export async function buildLaneCommands(
+  websiteUrl: string,
+  businessName: string,
+  businessCity: string,
+  businessState: string,
+  businessId: string | undefined,
+  newsContext: string,
+  holidayContext: string,
+): Promise<AsyncLaneConfig[]> {
+  const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+  const profileBlock = await getBusinessProfileBlock(businessId);
+  const identityLock = buildIdentityLockBlock(businessName, normalizedUrl, normalizedUrl);
+
+  const ctaRules = [
+    `CTA RULES:`,
+    `- The CTA button MUST relate to the business's actual service/product found on the website.`,
+    `- Good examples: "Get a Free Quote", "Book Now", "Schedule Service", "Shop Now", "Learn More", "Call Today"`,
+    `- NEVER use generic CTAs like "Check Availability" unless the business is actually a booking/reservation service.`,
+    `- Read the website to understand what action a customer would take, then make the CTA match that action.`,
+  ].join('\n');
+
+  const websiteCommand = [
+    identityLock,
+    `review ${normalizedUrl} and create 1 social media post promoting the business.`,
+    `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
+    `Use colors, logo, and brand voice from the website. Make it feel authentic — like the business owner wrote it.`,
+    profileBlock,
+    `Additional context:\nBusiness: ${businessName} in ${businessCity}, ${businessState}`,
+  ].filter(Boolean).join('\n');
+
+  const evergreenCommand = [
+    identityLock,
+    `review ${normalizedUrl} and create 1 social media post tied to an upcoming holiday or seasonal event.`,
+    `The post should connect the business to the holiday/event in a creative, engaging way.`,
+    `Use the business brand colors and voice from the website.`,
+    profileBlock,
+    ctaRules,
+    ``,
+    `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
+    holidayContext,
+    `--- END RSS STORY METADATA ---`,
+  ].filter(Boolean).join('\n');
+
+  const newsCommand = [
+    identityLock,
+    `review ${normalizedUrl} and create 1 social media post that connects the business to local news.`,
+    `The post should tie the business to local community news in a way that feels natural and relevant.`,
+    `Use the business brand colors and voice from the website.`,
+    profileBlock,
+    ctaRules,
+    ``,
+    `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
+    newsContext,
+    `--- END RSS STORY METADATA ---`,
+  ].filter(Boolean).join('\n');
+
+  return [
+    { lane_type: 'website_post', command: websiteCommand },
+    { lane_type: 'evergreen_post', command: evergreenCommand },
+    { lane_type: 'scout_news_retrieval', command: '', context: newsContext },
+    { lane_type: 'news_post', command: newsCommand },
+  ];
+}
+
 /**
  * Submit a command to Tombstone OS. Returns created task IDs and workflow info.
  *
  * `businessId` (the Tombstone integer business_id from /businesses/provisional)
  * is REQUIRED by the backend isolation gate for customer-facing content — it is
  * sent in the payload so every generated task is scoped to the correct business.
+ *
+ * @deprecated Use createAsyncRun() for new flows. This is kept for backward
+ * compatibility with social mission creation and other single-command flows.
  */
 async function sendCommand(command: string, excludeWorkflowIds?: string[], businessId?: number | string | null) {
   try {
