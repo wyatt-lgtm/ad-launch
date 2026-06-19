@@ -282,7 +282,7 @@ function buildScoutSummary(
       }
     } else {
       lines.push('');
-      lines.push('LOCAL NEWS: No RSS items found in trade area.');
+      lines.push('LOCAL NEWS: No local, regional, or national RSS items found after searching all geographic levels (ZIP, city, county, state, national). Feed discovery has been triggered for this location.');
     }
   }
 

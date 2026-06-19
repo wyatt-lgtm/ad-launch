@@ -14,6 +14,7 @@
 import { prisma } from '@/lib/db';
 import { getZipsByRadius, getZipsByCounty, getZipsByCity, getZipDetails } from './geo-lookup';
 import type { TradeAreaRequest, TradeAreaItem, TradeAreaResponse } from './types';
+import { discoverValidateAndLink, type DiscoveryResult } from './geo-linker';
 
 // Source quality scoring
 const QUALITY_SCORES: Record<string, number> = {
@@ -355,10 +356,19 @@ export interface BriefDiagnostics {
   levelsAttempted: { level: string; feedsFound: number; itemsFound: number; lookbackDays: number }[];
   discoveryTriggered: boolean;
   discoveryReason?: string;
+  discoveryResult?: {
+    feedsDiscovered: number;
+    feedsSaved: number;
+    feedGeoLinksCreated: number;
+    feedsSkippedInvalid: number;
+  };
   totalFeedsChecked: number;
   totalItemsFetched: number;
   finalItemCount: number;
   queryTimeMs: number;
+  requestedLocation: { zip: string | null; city: string | null; county: string | null; state: string | null };
+  deduplicatedItems: number;
+  rejectedItems: { reason: string; count: number }[];
 }
 
 // ── Configurable thresholds ─────────────────────────────────────────────────
@@ -403,9 +413,13 @@ export async function generateContentBriefWithFallback(
     totalItemsFetched: 0,
     finalItemCount: 0,
     queryTimeMs: 0,
+    requestedLocation: { zip: centerZip, city: geo.city || null, county: geo.county || null, state: geo.state || null },
+    deduplicatedItems: 0,
+    rejectedItems: [],
   };
 
   const seenItemIds = new Set<string>();
+  const seenTitleKeys = new Set<string>();
   const allItems: (TradeAreaItem & { localityLevel: string })[] = [];
 
   // Resolve the full geo hierarchy from the ZIP if not provided
@@ -428,6 +442,27 @@ export async function generateContentBriefWithFallback(
 
   console.log(`[trade-area-feed] Geo cascade: ZIP=${centerZip} City=${resolvedCity} County=${resolvedCounty} State=${resolvedState}`);
 
+  // Helper: normalize title for de-dup (lowercase, strip punctuation, collapse whitespace)
+  const normTitle = (t: string) => (t || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80);
+
+  // Helper: add items with ID + title de-dup
+  const addItems = (items: TradeAreaItem[], level: string) => {
+    let added = 0;
+    let duped = 0;
+    for (const item of items) {
+      if (seenItemIds.has(item.id)) { duped++; continue; }
+      const tk = normTitle(item.title);
+      if (tk.length > 15 && seenTitleKeys.has(tk)) { duped++; continue; }
+      // Also de-dup by link URL
+      seenItemIds.add(item.id);
+      if (tk.length > 15) seenTitleKeys.add(tk);
+      allItems.push({ ...item, localityLevel: level });
+      added++;
+    }
+    diagnostics.deduplicatedItems += duped;
+    return added;
+  };
+
   // ── Level 1: ZIP radius ─────────────────────────────────────────────────
   if (centerZip) {
     const zipResult = await getItemsByRadius(centerZip, radiusMiles, {
@@ -437,12 +472,7 @@ export async function generateContentBriefWithFallback(
       level: 'zip_radius', feedsFound: zipResult.meta.feedsMatched,
       itemsFound: zipResult.items.length, lookbackDays: initialDays,
     });
-    for (const item of zipResult.items) {
-      if (!seenItemIds.has(item.id)) {
-        seenItemIds.add(item.id);
-        allItems.push({ ...item, localityLevel: 'zip' });
-      }
-    }
+    addItems(zipResult.items, 'zip');
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS) diagnostics.fallbackLevel = 'zip_radius';
   }
 
@@ -457,12 +487,7 @@ export async function generateContentBriefWithFallback(
       level: 'city', feedsFound: cityResult.meta.feedsMatched,
       itemsFound: cityResult.items.length, lookbackDays: cityDays,
     });
-    for (const item of cityResult.items) {
-      if (!seenItemIds.has(item.id)) {
-        seenItemIds.add(item.id);
-        allItems.push({ ...item, localityLevel: 'city' });
-      }
-    }
+    addItems(cityResult.items, 'city');
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
       diagnostics.fallbackLevel = 'city';
     }
@@ -478,12 +503,7 @@ export async function generateContentBriefWithFallback(
       level: 'county', feedsFound: countyResult.meta.feedsMatched,
       itemsFound: countyResult.items.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
     });
-    for (const item of countyResult.items) {
-      if (!seenItemIds.has(item.id)) {
-        seenItemIds.add(item.id);
-        allItems.push({ ...item, localityLevel: 'county' });
-      }
-    }
+    addItems(countyResult.items, 'county');
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
       diagnostics.fallbackLevel = 'county';
     }
@@ -499,12 +519,7 @@ export async function generateContentBriefWithFallback(
       level: 'state', feedsFound: stateResult.meta.feedsMatched,
       itemsFound: stateResult.items.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
     });
-    for (const item of stateResult.items) {
-      if (!seenItemIds.has(item.id)) {
-        seenItemIds.add(item.id);
-        allItems.push({ ...item, localityLevel: 'state' });
-      }
-    }
+    addItems(stateResult.items, 'state');
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
       diagnostics.fallbackLevel = 'state';
     }
@@ -539,21 +554,17 @@ export async function generateContentBriefWithFallback(
         level: 'national', feedsFound: nationalFeeds.length,
         itemsFound: nationalItems.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
       });
-      for (const raw of nationalItems) {
-        if (!seenItemIds.has(raw.id)) {
-          seenItemIds.add(raw.id);
-          allItems.push({
-            id: raw.id, title: raw.title ?? '', description: raw.description ?? '',
-            link: raw.link ?? '', pubDate: raw.pubDate?.toISOString() ?? '',
-            imageUrl: raw.imageUrl ?? null, author: raw.author ?? null,
-            categories: raw.categories, feedId: raw.feedId,
-            feedTitle: raw.feed.title ?? '', feedSourceType: raw.feed.sourceType,
-            feedSourceQuality: raw.feed.sourceQuality,
-            geoConfidence: 0.3, coverageType: 'inferred' as const,
-            relevanceScore: raw.relevanceScore, localityLevel: 'national',
-          });
-        }
-      }
+      const mappedNational = nationalItems.map(raw => ({
+        id: raw.id, title: raw.title ?? '', description: raw.description ?? '',
+        link: raw.link ?? '', pubDate: raw.pubDate?.toISOString() ?? '',
+        imageUrl: raw.imageUrl ?? null, author: raw.author ?? null,
+        categories: raw.categories, feedId: raw.feedId,
+        feedTitle: raw.feed.title ?? '', feedSourceType: raw.feed.sourceType,
+        feedSourceQuality: raw.feed.sourceQuality,
+        geoConfidence: 0.3, coverageType: 'inferred' as const,
+        relevanceScore: raw.relevanceScore,
+      }));
+      addItems(mappedNational, 'national');
     }
     if (diagnostics.fallbackLevel === 'none' && allItems.length > 0) {
       diagnostics.fallbackLevel = 'national';
@@ -561,13 +572,24 @@ export async function generateContentBriefWithFallback(
   }
 
   // Trigger async discovery if still thin
-  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS) {
+  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && process.env.SCOUT_FEED_DISCOVERY_ENABLED !== 'false') {
     diagnostics.discoveryTriggered = true;
     diagnostics.discoveryReason =
       `Only ${allItems.length} items after all geo levels (min=${SCOUT_MIN_LOCAL_ITEMS}). ` +
       `ZIP=${centerZip} City=${resolvedCity} County=${resolvedCounty} State=${resolvedState}`;
     console.warn(`[trade-area-feed] DISCOVERY_NEEDED: ${diagnostics.discoveryReason}`);
-    triggerAsyncDiscovery(centerZip, resolvedCity, resolvedCounty, resolvedState).catch(err => {
+    // Fire-and-forget: discover, validate, save feeds WITH FeedGeo links
+    discoverValidateAndLink({
+      zip: centerZip, city: resolvedCity, county: resolvedCounty, state: resolvedState,
+    }).then(dr => {
+      diagnostics.discoveryResult = {
+        feedsDiscovered: dr.feedsDiscovered,
+        feedsSaved: dr.feedsSaved,
+        feedGeoLinksCreated: dr.feedGeoLinksCreated,
+        feedsSkippedInvalid: dr.feedsSkippedInvalid,
+      };
+      console.log(`[trade-area-feed] Discovery complete: ${dr.feedsSaved} saved, ${dr.feedGeoLinksCreated} geo links`);
+    }).catch(err => {
       console.error('[trade-area-feed] Async discovery error:', err);
     });
   }
@@ -651,6 +673,14 @@ export async function generateContentBriefWithFallback(
   diagnostics.totalItemsFetched = diagnostics.levelsAttempted.reduce((sum, l) => sum + l.itemsFound, 0);
   diagnostics.finalItemCount = finalItems.length;
   diagnostics.queryTimeMs = Date.now() - start;
+  diagnostics.requestedLocation = { zip: centerZip, city: resolvedCity, county: resolvedCounty, state: resolvedState };
+
+  // Rejection reasons summary
+  const rejections: Record<string, number> = {};
+  if (diagnostics.deduplicatedItems > 0) rejections['duplicate_title_or_id'] = diagnostics.deduplicatedItems;
+  const overCap = diverse.length < scored.length ? scored.length - diverse.length : 0;
+  if (overCap > 0) rejections['diversity_cap_or_title_dedup'] = overCap;
+  diagnostics.rejectedItems = Object.entries(rejections).map(([reason, count]) => ({ reason, count }));
 
   const uniqueFeeds = new Set(finalItems.map(i => i.feedId));
 
@@ -676,85 +706,4 @@ export async function generateContentBriefWithFallback(
   };
 }
 
-// ── Async feed discovery (fire-and-forget) ──────────────────────────────────
-
-async function triggerAsyncDiscovery(
-  zip: string | null,
-  city: string | null,
-  county: string | null,
-  state: string | null,
-) {
-  if (process.env.SCOUT_FEED_DISCOVERY_ENABLED === 'false') return;
-
-  const location = [city, state].filter(Boolean).join(', ') || zip || 'unknown';
-  console.log(`[feed-discovery] Starting async discovery for: ${location}`);
-
-  try {
-    const { discoverFeedsFromSites, canonicalizeFeedUrl } = await import('./discovery');
-
-    const citySlug = city ? city.toLowerCase().replace(/\s+/g, '') : '';
-    const stateSlug = state?.toLowerCase() || '';
-    const candidateSites: string[] = [];
-
-    if (citySlug && stateSlug) {
-      candidateSites.push(
-        `https://www.${citySlug}news.com`,
-        `https://${citySlug}.patch.com`,
-        `https://www.${citySlug}${stateSlug}.com`,
-        `https://www.${citySlug}press.com`,
-        `https://www.${citySlug}times.com`,
-        `https://www.${citySlug}herald.com`,
-        `https://www.${citySlug}gazette.com`,
-        `https://www.${citySlug}tribune.com`,
-        `https://www.${citySlug}post.com`,
-        `https://www.${citySlug}daily.com`,
-      );
-    }
-
-    if (candidateSites.length === 0) return;
-
-    const discovered = await discoverFeedsFromSites(candidateSites.slice(0, 10), 2);
-    if (discovered.length === 0) {
-      console.log(`[feed-discovery] No feeds found for ${location}`);
-      return;
-    }
-
-    console.log(`[feed-discovery] Found ${discovered.length} candidate feeds for ${location}`);
-
-    let saved = 0;
-    for (const feed of discovered) {
-      const canonical = canonicalizeFeedUrl(feed.url);
-      try {
-        const existing = await prisma.rssFeed.findUnique({ where: { url: canonical } });
-        if (existing) continue;
-
-        await prisma.rssFeed.create({
-          data: {
-            url: canonical,
-            title: feed.title || `Discovered: ${feed.siteUrl}`,
-            siteUrl: feed.siteUrl,
-            description: feed.description,
-            language: feed.language,
-            feedFormat: feed.feedFormat,
-            sourceType: 'local_news',
-            sourceQuality: 'unverified',
-            status: 'pending',
-            geoScope: 'local',
-            discoveredBy: 'auto_scout',
-            discoveryMethod: feed.discoveryMethod,
-            discoveredAt: new Date(),
-            pilotState: state || null,
-            notes: `Auto-discovered for ${location}`,
-          },
-        });
-        saved++;
-      } catch (err) {
-        console.warn(`[feed-discovery] Could not save feed ${canonical}:`, (err as Error).message);
-      }
-    }
-
-    console.log(`[feed-discovery] Saved ${saved} new feeds for ${location}`);
-  } catch (err) {
-    console.error(`[feed-discovery] Discovery failed for ${location}:`, err);
-  }
-}
+// Old triggerAsyncDiscovery removed — replaced by discoverValidateAndLink in geo-linker.ts
