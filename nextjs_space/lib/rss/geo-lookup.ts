@@ -270,3 +270,164 @@ export async function isValidDeliveryZip(zipCode: string): Promise<boolean> {
   const count = await prisma.geoZip.count({ where: { code: zipCode.padStart(5, '0') } });
   return count > 0;
 }
+
+// ── 9. Normalize helpers ──────────────────────────────────────────────────
+/** Pad/trim a ZIP to a 5-digit zero-padded string. */
+export function normalizeZip(zip: string | number): string {
+  return String(zip).trim().padStart(5, '0').slice(0, 5);
+}
+
+/** Uppercase + trim a city name to match DB storage convention. */
+export function normalizeCity(city: string): string {
+  return city.trim().toUpperCase();
+}
+
+/** Uppercase + trim a county name to match DB storage convention. */
+export function normalizeCounty(county: string): string {
+  return county.trim().toUpperCase();
+}
+
+// ── 10. FIPS lookups ──────────────────────────────────────────────────────
+/**
+ * Get the 2-digit state FIPS code for a state abbreviation.
+ * Returns null if the state is not found.
+ */
+export async function getStateFips(stateCode: string): Promise<string | null> {
+  const state = await prisma.geoState.findUnique({
+    where: { code: stateCode.toUpperCase() },
+    select: { fipsCode: true },
+  });
+  return state?.fipsCode ?? null;
+}
+
+/**
+ * Get the full 5-digit county FIPS code for a county + state.
+ * Returns null if the county or state is not found.
+ */
+export async function getCountyFips(
+  countyName: string,
+  stateCode: string
+): Promise<string | null> {
+  const state = await prisma.geoState.findUnique({
+    where: { code: stateCode.toUpperCase() },
+    select: { id: true },
+  });
+  if (!state) return null;
+
+  const county = await prisma.geoCounty.findFirst({
+    where: { name: countyName.toUpperCase(), stateId: state.id },
+    select: { fipsCode: true },
+  });
+  return county?.fipsCode ?? null;
+}
+
+// ── 11. Lookup wrappers ───────────────────────────────────────────────────
+/** Alias for getZipDetails — returns full hierarchy for a single ZIP. */
+export const lookupZip = getZipDetails;
+
+/**
+ * Look up all ZIPs for a city + state, with county and FIPS info.
+ */
+export async function lookupCityState(
+  cityName: string,
+  stateCode: string
+): Promise<{
+  city: string;
+  state: string;
+  county: string | null;
+  countyFips: string | null;
+  stateFips: string | null;
+  zips: string[];
+} | null> {
+  const st = await prisma.geoState.findUnique({
+    where: { code: stateCode.toUpperCase() },
+    select: { id: true, fipsCode: true },
+  });
+  if (!st) return null;
+
+  const counties = await prisma.geoCounty.findMany({
+    where: { stateId: st.id },
+    select: { id: true, name: true, fipsCode: true },
+  });
+  const countyIds = counties.map(c => c.id);
+  if (countyIds.length === 0) return null;
+
+  const cities = await prisma.geoCity.findMany({
+    where: { name: cityName.toUpperCase(), countyId: { in: countyIds } },
+    include: { cityZips: { include: { zip: true } }, county: true },
+  });
+  if (cities.length === 0) return null;
+
+  // A city can span multiple counties; pick the first county for the summary
+  const primaryCity = cities[0];
+  const seen = new Set<string>();
+  const zips: string[] = [];
+  for (const city of cities) {
+    for (const cz of city.cityZips) {
+      if (!seen.has(cz.zip.code)) {
+        seen.add(cz.zip.code);
+        zips.push(cz.zip.code);
+      }
+    }
+  }
+  zips.sort();
+
+  return {
+    city: primaryCity.name,
+    state: stateCode.toUpperCase(),
+    county: primaryCity.county.name,
+    countyFips: primaryCity.county.fipsCode,
+    stateFips: st.fipsCode,
+    zips,
+  };
+}
+
+/**
+ * Look up all ZIPs and cities for a county + state, with FIPS info.
+ */
+export async function lookupCountyState(
+  countyName: string,
+  stateCode: string
+): Promise<{
+  county: string;
+  state: string;
+  countyFips: string | null;
+  stateFips: string | null;
+  cities: string[];
+  zips: string[];
+} | null> {
+  const st = await prisma.geoState.findUnique({
+    where: { code: stateCode.toUpperCase() },
+    select: { id: true, fipsCode: true },
+  });
+  if (!st) return null;
+
+  const county = await prisma.geoCounty.findFirst({
+    where: { name: countyName.toUpperCase(), stateId: st.id },
+    select: { id: true, name: true, fipsCode: true },
+  });
+  if (!county) return null;
+
+  const cities = await prisma.geoCity.findMany({
+    where: { countyId: county.id },
+    include: { cityZips: { include: { zip: true } } },
+  });
+
+  const cityNames = new Set<string>();
+  const zipCodes = new Set<string>();
+  for (const city of cities) {
+    cityNames.add(city.name);
+    for (const cz of city.cityZips) {
+      zipCodes.add(cz.zip.code);
+    }
+  }
+
+  return {
+    county: county.name,
+    state: stateCode.toUpperCase(),
+    countyFips: county.fipsCode,
+    stateFips: st.fipsCode,
+    cities: [...cityNames].sort(),
+    zips: [...zipCodes].sort(),
+  };
+}
