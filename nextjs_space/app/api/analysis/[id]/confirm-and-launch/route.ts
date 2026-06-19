@@ -222,37 +222,40 @@ export async function POST(
       }
     };
 
+    // Helper: launch a single lane with one automatic retry on failure
+    const launchLaneWithRetry = async (
+      lane: 'website' | 'news' | 'holiday',
+      context: string,
+    ) => {
+      let t0 = Date.now();
+      let result = await createLaneMission(websiteUrl, lane, context, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
+      let elapsed = Date.now() - t0;
+      console.log(`[confirm-and-launch] Lane ${lane}: ${elapsed}ms (success=${result.success})`);
+
+      // Auto-retry once if the lane failed (e.g. timeout, 5xx, no workflowId)
+      if (!result.success || !result.workflowId) {
+        console.warn(`[confirm-and-launch] Lane ${lane} failed (backendStatus=${(result as any).backendStatus ?? 'timeout'}), retrying once...`);
+        t0 = Date.now();
+        result = await createLaneMission(websiteUrl, lane, context, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
+        const retryElapsed = Date.now() - t0;
+        elapsed += retryElapsed;
+        console.log(`[confirm-and-launch] Lane ${lane} retry: ${retryElapsed}ms (success=${result.success})`);
+      }
+
+      laneTimes[lane] = elapsed;
+      if (result.workflowId) {
+        usedWorkflowIds.push(result.workflowId);
+        laneWorkflows[lane] = result.workflowId;
+        await saveMissionId();
+      }
+      return result;
+    };
+
     try {
       // Sequential + exclude-list to avoid Tombstone race condition with duplicate workflow IDs
-      let laneT0 = Date.now();
-      const websiteResult = await createLaneMission(websiteUrl, 'website', `Business: ${businessName} in ${businessCity}, ${businessState}`, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
-      laneTimes.website = Date.now() - laneT0;
-      console.log(`[confirm-and-launch] Lane website: ${laneTimes.website}ms (success=${websiteResult.success})`);
-      if (websiteResult.workflowId) {
-        usedWorkflowIds.push(websiteResult.workflowId);
-        laneWorkflows.website = websiteResult.workflowId;
-        await saveMissionId();
-      }
-
-      laneT0 = Date.now();
-      const newsResult = await createLaneMission(websiteUrl, 'news', newsContext, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
-      laneTimes.news = Date.now() - laneT0;
-      console.log(`[confirm-and-launch] Lane news: ${laneTimes.news}ms (success=${newsResult.success})`);
-      if (newsResult.workflowId) {
-        usedWorkflowIds.push(newsResult.workflowId);
-        laneWorkflows.news = newsResult.workflowId;
-        await saveMissionId();
-      }
-
-      laneT0 = Date.now();
-      const holidayResult = await createLaneMission(websiteUrl, 'holiday', holidayContext, 1, usedWorkflowIds, analysis.businessId || undefined, businessName, tombstoneBusinessId);
-      laneTimes.holiday = Date.now() - laneT0;
-      console.log(`[confirm-and-launch] Lane holiday: ${laneTimes.holiday}ms (success=${holidayResult.success})`);
-      if (holidayResult.workflowId) {
-        usedWorkflowIds.push(holidayResult.workflowId);
-        laneWorkflows.holiday = holidayResult.workflowId;
-        await saveMissionId();
-      }
+      const websiteResult = await launchLaneWithRetry('website', `Business: ${businessName} in ${businessCity}, ${businessState}`);
+      const newsResult = await launchLaneWithRetry('news', newsContext);
+      const holidayResult = await launchLaneWithRetry('holiday', holidayContext);
 
       const totalLaunchMs = Date.now() - launchStart;
       console.log(`[confirm-and-launch] All missions launched in ${totalLaunchMs}ms | per-lane: ${JSON.stringify(laneTimes)}`);
