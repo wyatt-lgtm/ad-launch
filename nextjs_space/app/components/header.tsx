@@ -3,7 +3,7 @@
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send, Coins, Building2 } from 'lucide-react';
+import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send, Coins, Building2, FolderOpen } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
@@ -31,6 +31,7 @@ export default function Header() {
     { href: '/dashboard/social/publishing', label: 'Publish Queue', icon: Send, matchPaths: ['/dashboard/social/publishing'] },
     { href: '/dashboard/feeds', label: 'Content Feeds', icon: Rss, matchPaths: ['/dashboard/feeds'] },
     { href: '/dashboard/credits', label: 'Credits', icon: Coins, matchPaths: ['/dashboard/credits'] },
+    { href: '/dashboard/assets', label: 'Assets', icon: FolderOpen, matchPaths: ['/dashboard/assets'] },
   ];
 
   // Determine if a nav item is active. More specific paths checked first via sort.

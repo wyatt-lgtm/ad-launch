@@ -29,6 +29,7 @@ model User {
   scoutReports      ScoutReport[]
   postPackages      PostPackage[]
   generationRuns    GenerationRun[]
+  uploadedAssets    BusinessAsset[]
 }
 
 model Business {
@@ -61,6 +62,7 @@ model Business {
   contentProfile     BusinessContentProfile?
   savedAnalysis       Json?
   analysisRefreshedAt DateTime?
+  assets              BusinessAsset[]
 
   @@unique([userId, websiteUrl])
   @@index([userId])
@@ -606,6 +608,55 @@ model CreditLot {
   @@index([expiresAt])
   @@index([closureExpiresAt])
   @@index([remainingAmount])
+}
+
+model BusinessAsset {
+  id                    String    @id @default(cuid())
+  businessId            String
+  tombstoneBusinessId   Int?
+  tombstoneBusinessUuid String?
+  uploadedByUserId      String
+  assetType             String    // logo, brand_guidelines, product_photo, service_photo, menu_list, price_sheet, offer_sheet, owner_photo, staff_photo, certification, license, award, press_mention, storefront_photo, facility_photo, fleet_photo, service_area_map, landmark_photo, before_after_photo, testimonial_screenshot, review_screenshot, case_study, existing_ad, social_post, flyer_brochure, website_screenshot, negative_example, approved_claim, forbidden_claim, disclaimer, usage_rights_doc, font_notes, color_palette
+  category              String    // brand, products_services, people_trust, location_service_area, proof_social_proof, compliance, creative_examples
+  title                 String
+  description           String    @default("")
+  tags                  String[]  @default([])
+  originalFilename      String
+  mimeType              String
+  fileSizeBytes         Int
+  width                 Int?
+  height                Int?
+  cloudStoragePath      String    // S3/Cloudflare storage key
+  publicUrl             String?   // direct URL for approved public assets
+  thumbnailPath         String?   // storage key for generated thumbnail
+  thumbnailUrl          String?   // direct URL for thumbnail
+  isPublic              Boolean   @default(false)
+  approvalStatus        String    @default("uploaded") // uploaded, pending_review, approved, rejected, expired, do_not_use, archived
+  usageRights           String?   // owned, licensed, public_domain, customer_permission, unknown
+  allowedChannels       String[]  @default([])
+  disallowedChannels    String[]  @default([])
+  priorityScore         Int       @default(0)
+  expiresAt             DateTime?
+  archivedAt            DateTime?
+  // Text-entry assets (approved claims, forbidden claims, disclaimers)
+  textContent           String?   // for text-based assets that are not file uploads
+  sourcePlatform        String?   // for testimonials/reviews: google, yelp, facebook, etc.
+  customerPermission    String?   // for testimonials: granted, pending, not_requested
+  approvedForAds        Boolean   @default(false)
+  exampleType           String?   // for creative examples: approved_example, past_ad, negative_example, competitor_reference
+  pairTag               String?   // for before/after photos: links related assets
+  pairRole              String?   // before, after
+  expirationDate        DateTime? // for certifications/licenses
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  uploadedBy            User      @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, category])
+  @@index([businessId, approvalStatus])
+  @@index([uploadedByUserId])
+  @@index([approvalStatus])
 }
 
 model InternalCostLedger {
