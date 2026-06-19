@@ -191,80 +191,95 @@ export async function validateFeed(feedUrl: string): Promise<FeedValidation> {
 
 /**
  * Create FeedGeo links for a feed at the specified scope.
- * Returns the number of links created.
+ * NO sampling or caps — every ZIP in the scope is linked.
+ * Uses createMany with skipDuplicates for bulk performance.
  */
 export async function createFeedGeoLinks(
   feedId: string,
   scope: { type: 'zip' | 'city' | 'county' | 'state'; city?: string; county?: string; state?: string; zip?: string },
-  options: { confidence?: number; source?: string; maxLinksPerScope?: number } = {},
-): Promise<{ linksCreated: number; zipCodes: string[] }> {
-  const { confidence = 0.5, source = 'auto_discovery', maxLinksPerScope = 200 } = options;
+  options: { confidence?: number; source?: string } = {},
+): Promise<{ linksCreated: number; zipCodes: string[]; totalZipsInScope: number }> {
+  const { confidence = 0.5, source = 'auto_discovery' } = options;
   let zipIds: { id: string; code: string }[] = [];
 
   try {
     switch (scope.type) {
       case 'zip': {
-        if (!scope.zip) return { linksCreated: 0, zipCodes: [] };
+        if (!scope.zip) return { linksCreated: 0, zipCodes: [], totalZipsInScope: 0 };
         const zip = await prisma.geoZip.findUnique({ where: { code: scope.zip.padStart(5, '0') }, select: { id: true, code: true } });
         if (zip) zipIds = [zip];
         break;
       }
       case 'city': {
-        if (!scope.city || !scope.state) return { linksCreated: 0, zipCodes: [] };
+        if (!scope.city || !scope.state) return { linksCreated: 0, zipCodes: [], totalZipsInScope: 0 };
         const result = await getZipsByCity(scope.city, scope.state);
         zipIds = result.zips.map(z => ({ id: z.id, code: z.code }));
         break;
       }
       case 'county': {
-        if (!scope.county || !scope.state) return { linksCreated: 0, zipCodes: [] };
+        if (!scope.county || !scope.state) return { linksCreated: 0, zipCodes: [], totalZipsInScope: 0 };
         const result = await getZipsByCounty(scope.county, scope.state);
         zipIds = result.zips.map(z => ({ id: z.id, code: z.code }));
         break;
       }
       case 'state': {
-        if (!scope.state) return { linksCreated: 0, zipCodes: [] };
+        if (!scope.state) return { linksCreated: 0, zipCodes: [], totalZipsInScope: 0 };
         const result = await getZipsByState(scope.state);
-        // For state-level, only link to a sample of ZIPs (one per major city) to avoid massive row counts
-        const sampled = result.zips.slice(0, maxLinksPerScope);
-        zipIds = sampled.map(z => ({ id: z.id, code: z.code }));
+        // NO sampling — link to ALL ZIPs in the state
+        zipIds = result.zips.map(z => ({ id: z.id, code: z.code }));
         break;
       }
     }
 
-    if (zipIds.length === 0) return { linksCreated: 0, zipCodes: [] };
+    const totalZipsInScope = zipIds.length;
+    if (zipIds.length === 0) return { linksCreated: 0, zipCodes: [], totalZipsInScope: 0 };
 
-    // Batch create, skip duplicates
-    let created = 0;
+    // Bulk insert using createMany with skipDuplicates
+    let totalCreated = 0;
     const linkedCodes: string[] = [];
-    const BATCH_SIZE = 50;
+    const BATCH_SIZE = 500; // Large batches for createMany
 
     for (let i = 0; i < zipIds.length; i += BATCH_SIZE) {
       const batch = zipIds.slice(i, i + BATCH_SIZE);
-      for (const zip of batch) {
-        try {
-          await prisma.feedGeo.create({
-            data: {
-              feedId,
-              zipId: zip.id,
-              coverageType: scope.type === 'zip' ? 'confirmed' : 'inferred',
-              confidence,
-              source,
-            },
-          });
-          created++;
-          linkedCodes.push(zip.code);
-        } catch (err: any) {
-          // Unique constraint violation — already linked
-          if (err?.code === 'P2002') continue;
-          console.warn(`[geo-linker] Could not link feed ${feedId} to ZIP ${zip.code}:`, err.message);
+      const data = batch.map(zip => ({
+        feedId,
+        zipId: zip.id,
+        coverageType: scope.type === 'zip' ? 'confirmed' : 'inferred',
+        confidence,
+        source,
+      }));
+
+      try {
+        const result = await prisma.feedGeo.createMany({
+          data,
+          skipDuplicates: true,
+        });
+        totalCreated += result.count;
+        // Track codes for the created ones
+        batch.forEach(z => linkedCodes.push(z.code));
+      } catch (err: any) {
+        console.warn(`[geo-linker] createMany batch error for feed ${feedId}, batch ${i}–${i + batch.length}:`, err.message);
+        // Fallback to individual inserts for this batch
+        for (const zip of batch) {
+          try {
+            await prisma.feedGeo.create({
+              data: { feedId, zipId: zip.id, coverageType: scope.type === 'zip' ? 'confirmed' : 'inferred', confidence, source },
+            });
+            totalCreated++;
+            linkedCodes.push(zip.code);
+          } catch (innerErr: any) {
+            if (innerErr?.code === 'P2002') continue;
+            console.warn(`[geo-linker] Could not link feed ${feedId} to ZIP ${zip.code}:`, innerErr.message);
+          }
         }
       }
     }
 
-    return { linksCreated: created, zipCodes: linkedCodes };
+    console.log(`[geo-linker] createFeedGeoLinks: feed=${feedId} scope=${scope.type} totalZips=${totalZipsInScope} created=${totalCreated}`);
+    return { linksCreated: totalCreated, zipCodes: linkedCodes, totalZipsInScope };
   } catch (err: any) {
     console.error(`[geo-linker] createFeedGeoLinks error:`, err.message);
-    return { linksCreated: 0, zipCodes: [] };
+    return { linksCreated: 0, zipCodes: [], totalZipsInScope: 0 };
   }
 }
 
@@ -575,9 +590,8 @@ export async function discoverValidateAndLink(
 
 /**
  * Create FeedGeo links for a feed at ALL levels of the hierarchy.
- * A city-level feed gets: city ZIPs + county ZIPs + state sample ZIPs.
- * A county-level feed gets: county ZIPs + state sample ZIPs.
- * A zip-level feed gets: zip + city + county + state.
+ * NO sampling, NO caps. Complete ZIP coverage at every level.
+ * A city-level feed gets: all city ZIPs + all county ZIPs + all state ZIPs.
  * Returns total links created with per-level breakdown.
  */
 async function linkFeedToLocation(
@@ -591,6 +605,7 @@ async function linkFeedToLocation(
 /**
  * Hierarchical link creation: creates FeedGeo rows at every geo level
  * from the most specific scope upward to state.
+ * NO sampling — every ZIP in every scope is materialized.
  */
 export async function createHierarchicalLinks(
   feedId: string,
@@ -612,7 +627,6 @@ export async function createHierarchicalLinks(
   let county = location.county?.toUpperCase() || null;
   if (!county && city && state) {
     try {
-      // Look up county from city's geo data
       const cityZips = await getZipsByCity(city, state);
       if (cityZips.zips.length > 0) {
         const zipDetails = await getZipDetails(cityZips.zips[0].code);
@@ -629,42 +643,38 @@ export async function createHierarchicalLinks(
 
   // ── Level 1: ZIP-level link ───────────────────────────────────────
   if (zip) {
-    const { linksCreated, zipCodes } = await createFeedGeoLinks(feedId, {
+    const { linksCreated } = await createFeedGeoLinks(feedId, {
       type: 'zip', zip,
     }, { confidence, source: `${source}_zip` });
     result.byLevel.zip += linksCreated;
     result.totalLinksCreated += linksCreated;
-    result.zipCodes.push(...zipCodes);
   }
 
-  // ── Level 2: City-level links ──────────────────────────────────────
+  // ── Level 2: City-level links (ALL city ZIPs, no cap) ─────────────
   if (city && state) {
-    const { linksCreated, zipCodes } = await createFeedGeoLinks(feedId, {
+    const { linksCreated } = await createFeedGeoLinks(feedId, {
       type: 'city', city, state,
-    }, { confidence, source: `${source}_city`, maxLinksPerScope: 200 });
+    }, { confidence, source: `${source}_city` });
     result.byLevel.city += linksCreated;
     result.totalLinksCreated += linksCreated;
-    result.zipCodes.push(...zipCodes);
   }
 
-  // ── Level 3: County-level links ────────────────────────────────────
+  // ── Level 3: County-level links (ALL county ZIPs, no cap) ─────────
   if (county && state) {
-    const { linksCreated, zipCodes } = await createFeedGeoLinks(feedId, {
+    const { linksCreated } = await createFeedGeoLinks(feedId, {
       type: 'county', county, state,
-    }, { confidence: Math.max(confidence - 0.1, 0.3), source: `${source}_county`, maxLinksPerScope: 100 });
+    }, { confidence: Math.max(confidence - 0.1, 0.3), source: `${source}_county` });
     result.byLevel.county += linksCreated;
     result.totalLinksCreated += linksCreated;
-    result.zipCodes.push(...zipCodes);
   }
 
-  // ── Level 4: State-level links (small sample) ──────────────────────
+  // ── Level 4: State-level links (ALL state ZIPs, no cap) ───────────
   if (state) {
-    const { linksCreated, zipCodes } = await createFeedGeoLinks(feedId, {
+    const { linksCreated } = await createFeedGeoLinks(feedId, {
       type: 'state', state,
-    }, { confidence: Math.max(confidence - 0.2, 0.2), source: `${source}_state`, maxLinksPerScope: 30 });
+    }, { confidence: Math.max(confidence - 0.2, 0.2), source: `${source}_state` });
     result.byLevel.state += linksCreated;
     result.totalLinksCreated += linksCreated;
-    result.zipCodes.push(...zipCodes);
   }
 
   console.log(
@@ -976,6 +986,7 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
     });
 
     // Count unique feeds at each level (not just FeedGeo row count)
+    // Also count total ZIPs and covered ZIPs for completeness check
     let zipUniqueFeedCount = 0;
     if (zipCode) {
       const zip = await prisma.geoZip.findUnique({ where: { code: zipCode.padStart(5, '0') }, select: { id: true } });
@@ -990,8 +1001,11 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
     }
 
     let cityUniqueFeedCount = 0;
+    let cityTotalZips = 0;
+    let cityCoveredZips = 0;
     if (city && state) {
       const cityZipsResult = await getZipsByCity(city, state);
+      cityTotalZips = cityZipsResult.zips.length;
       if (cityZipsResult.zips.length > 0) {
         const cityFeeds = await prisma.feedGeo.findMany({
           where: { zipId: { in: cityZipsResult.zips.map(z => z.id) } },
@@ -999,12 +1013,22 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
           distinct: ['feedId'],
         });
         cityUniqueFeedCount = cityFeeds.length;
+        // Count how many of the city's ZIPs have at least one FeedGeo link
+        const coveredZipIds = await prisma.feedGeo.findMany({
+          where: { zipId: { in: cityZipsResult.zips.map(z => z.id) } },
+          select: { zipId: true },
+          distinct: ['zipId'],
+        });
+        cityCoveredZips = coveredZipIds.length;
       }
     }
 
     let countyUniqueFeedCount = 0;
+    let countyTotalZips = 0;
+    let countyCoveredZips = 0;
     if (county && state) {
       const countyZipsResult = await getZipsByCounty(county, state);
+      countyTotalZips = countyZipsResult.zips.length;
       if (countyZipsResult.zips.length > 0) {
         const countyFeeds = await prisma.feedGeo.findMany({
           where: { zipId: { in: countyZipsResult.zips.map(z => z.id) } },
@@ -1012,21 +1036,36 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
           distinct: ['feedId'],
         });
         countyUniqueFeedCount = countyFeeds.length;
+        const coveredZipIds = await prisma.feedGeo.findMany({
+          where: { zipId: { in: countyZipsResult.zips.map(z => z.id) } },
+          select: { zipId: true },
+          distinct: ['zipId'],
+        });
+        countyCoveredZips = coveredZipIds.length;
       }
     }
 
     let stateUniqueFeedCount = 0;
+    let stateTotalZips = 0;
+    let stateCoveredZips = 0;
     if (state) {
       const stateZipsResult = await getZipsByState(state);
+      stateTotalZips = stateZipsResult.zips.length;
       if (stateZipsResult.zips.length > 0) {
-        // Sample first 500 ZIPs to avoid huge query
-        const sampleIds = stateZipsResult.zips.slice(0, 500).map(z => z.id);
+        // Use raw count for unique feeds (more efficient for large states)
+        const stateZipIds = stateZipsResult.zips.map(z => z.id);
         const stateFeeds = await prisma.feedGeo.findMany({
-          where: { zipId: { in: sampleIds } },
+          where: { zipId: { in: stateZipIds } },
           select: { feedId: true },
           distinct: ['feedId'],
         });
         stateUniqueFeedCount = stateFeeds.length;
+        const coveredZipIds = await prisma.feedGeo.findMany({
+          where: { zipId: { in: stateZipIds } },
+          select: { zipId: true },
+          distinct: ['zipId'],
+        });
+        stateCoveredZips = coveredZipIds.length;
       }
     }
 
@@ -1048,6 +1087,11 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
         totalUsable: Math.max(zipUniqueFeedCount, cityUniqueFeedCount, countyUniqueFeedCount, stateUniqueFeedCount) + nationalFeedCount,
         cascadeHealthy: stateUniqueFeedCount >= countyUniqueFeedCount && countyUniqueFeedCount >= cityUniqueFeedCount,
       },
+      zipCoverage: {
+        city: { totalZips: cityTotalZips, coveredZips: cityCoveredZips, complete: cityTotalZips > 0 && cityCoveredZips >= cityTotalZips },
+        county: { totalZips: countyTotalZips, coveredZips: countyCoveredZips, complete: countyTotalZips > 0 && countyCoveredZips >= countyTotalZips },
+        state: { totalZips: stateTotalZips, coveredZips: stateCoveredZips, complete: stateTotalZips > 0 && stateCoveredZips >= stateTotalZips },
+      },
       hasCoverage: zipFeedCount > 0 || cityFeedCount > 0 || stateFeedCount > 0 || nationalFeedCount > 0,
       recommendation: zipFeedCount > 0 ? 'Good coverage' :
         cityFeedCount > 0 ? 'City-level coverage only' :
@@ -1065,16 +1109,140 @@ export async function getGeoCoverageReport(location?: { zip?: string; city?: str
     take: 50,
   });
 
+  // Stale RssItem stats
+  const RETENTION_DAYS = parseInt(process.env.SCOUT_RSS_ITEM_RETENTION_DAYS || '10', 10);
+  const cutoffDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const [totalRssItems, staleRssItems] = await Promise.all([
+    prisma.rssItem.count(),
+    prisma.rssItem.count({ where: { fetchedAt: { lt: cutoffDate }, usedInPost: false } }),
+  ]);
+
+  // Failed feeds stats
+  const FAILURE_THRESHOLD = parseInt(process.env.SCOUT_FEED_FAILURE_DISABLE_THRESHOLD || '5', 10);
+  const failedFeedsCount = await prisma.rssFeed.count({
+    where: { consecutiveErrors: { gte: FAILURE_THRESHOLD }, status: 'active' },
+  });
+
   return {
     overview: {
       totalFeeds,
       activeFeeds: activeFeedsCount,
       totalGeoLinks,
       feedsWithoutGeo,
+      totalRssItems,
+      staleRssItems,
+      retentionDays: RETENTION_DAYS,
+      feedsExceedingFailureThreshold: failedFeedsCount,
+      failureThreshold: FAILURE_THRESHOLD,
     },
     feedsByState: feedsByState.map(r => ({ state: r.pilotState, count: r._count })),
     uncoveredStates: uncoveredStates.map(s => ({ code: s.code, name: s.name })),
     locationCoverage,
     recentDiscoveries,
   };
+}
+
+// ── Purge Stale RssItems ───────────────────────────────────────────────
+
+/**
+ * Purge old RssItem rows older than SCOUT_RSS_ITEM_RETENTION_DAYS.
+ * Does NOT delete items that are pinned (usedInPost=true) or have audit trails.
+ * Does NOT delete RssFeed or FeedGeo rows.
+ */
+export async function purgeStaleRssItems(options: {
+  dryRun?: boolean;
+  retentionDays?: number;
+}): Promise<{
+  itemsPurged: number;
+  itemsRetained: number;
+  cutoffDate: string;
+  dryRun: boolean;
+}> {
+  const retentionDays = options.retentionDays ?? parseInt(process.env.SCOUT_RSS_ITEM_RETENTION_DAYS || '10', 10);
+  const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const dryRun = options.dryRun ?? false;
+
+  // Count items eligible for purge
+  const eligibleCount = await prisma.rssItem.count({
+    where: {
+      fetchedAt: { lt: cutoffDate },
+      usedInPost: false,
+    },
+  });
+
+  if (dryRun) {
+    console.log(`[geo-linker] Purge dry-run: ${eligibleCount} RssItems older than ${retentionDays} days eligible for deletion`);
+    return { itemsPurged: 0, itemsRetained: eligibleCount, cutoffDate: cutoffDate.toISOString(), dryRun: true };
+  }
+
+  // Delete in batches to avoid long-running transactions
+  // ItemAudit has onDelete: Cascade, so audits are auto-deleted with their parent RssItem
+  let totalDeleted = 0;
+  const BATCH_SIZE = 1000;
+  let batchDeleted = 0;
+
+  do {
+    const toDelete = await prisma.rssItem.findMany({
+      where: {
+        fetchedAt: { lt: cutoffDate },
+        usedInPost: false,
+      },
+      select: { id: true },
+      take: BATCH_SIZE,
+    });
+
+    if (toDelete.length === 0) break;
+
+    const result = await prisma.rssItem.deleteMany({
+      where: { id: { in: toDelete.map(i => i.id) } },
+    });
+    batchDeleted = result.count;
+    totalDeleted += batchDeleted;
+  } while (batchDeleted >= BATCH_SIZE);
+
+  console.log(`[geo-linker] Purged ${totalDeleted} stale RssItems older than ${retentionDays} days (cutoff: ${cutoffDate.toISOString()})`);
+  return { itemsPurged: totalDeleted, itemsRetained: eligibleCount - totalDeleted, cutoffDate: cutoffDate.toISOString(), dryRun: false };
+}
+
+// ── Disable Failed Feeds ───────────────────────────────────────────────
+
+/**
+ * Mark feeds as inactive after exceeding SCOUT_FEED_FAILURE_DISABLE_THRESHOLD
+ * consecutive errors. Does NOT delete the feed or its FeedGeo links.
+ */
+export async function disableFailedFeeds(options: {
+  dryRun?: boolean;
+  threshold?: number;
+}): Promise<{
+  feedsDisabled: number;
+  dryRun: boolean;
+  threshold: number;
+  details: { feedId: string; url: string; title: string; consecutiveErrors: number }[];
+}> {
+  const threshold = options.threshold ?? parseInt(process.env.SCOUT_FEED_FAILURE_DISABLE_THRESHOLD || '5', 10);
+  const dryRun = options.dryRun ?? false;
+
+  const failedFeeds = await prisma.rssFeed.findMany({
+    where: {
+      consecutiveErrors: { gte: threshold },
+      status: 'active',
+    },
+    select: { id: true, url: true, title: true, consecutiveErrors: true },
+  });
+
+  const details = failedFeeds.map(f => ({
+    feedId: f.id, url: f.url, title: f.title || '', consecutiveErrors: f.consecutiveErrors,
+  }));
+
+  if (!dryRun && failedFeeds.length > 0) {
+    await prisma.rssFeed.updateMany({
+      where: {
+        id: { in: failedFeeds.map(f => f.id) },
+      },
+      data: { status: 'inactive' },
+    });
+  }
+
+  console.log(`[geo-linker] ${dryRun ? 'Would disable' : 'Disabled'} ${failedFeeds.length} feeds with ≥${threshold} consecutive errors`);
+  return { feedsDisabled: dryRun ? 0 : failedFeeds.length, dryRun, threshold, details };
 }
