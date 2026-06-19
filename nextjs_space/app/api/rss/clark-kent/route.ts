@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
-import { generateContentBrief } from '@/lib/rss/trade-area-feed';
+import { generateContentBriefWithFallback } from '@/lib/rss/trade-area-feed';
 import type { ContentBrief } from '@/lib/rss/trade-area-feed';
 import { getUpcomingEvents, type UpcomingEvent } from '@/lib/social/upcoming-events';
 import {
@@ -154,7 +154,12 @@ export async function POST(req: NextRequest) {
     let rssBrief: ContentBrief | null = null;
     if (includeLocal && businessZip) {
       try {
-        rssBrief = await generateContentBrief(businessZip, radius, { days: 5, limit: 30 });
+        rssBrief = await generateContentBriefWithFallback(
+          businessZip,
+          radius,
+          { city: businessCity, state: businessState },
+          { days: 5, limit: 30 },
+        );
         if (rssBrief.summary.totalItems === 0) rssBrief = null;
       } catch (err) {
         console.error('[Clark Kent] RSS brief error:', err);
@@ -217,6 +222,7 @@ export async function POST(req: NextRequest) {
         radiusMiles: radius,
         queryTimeMs: Date.now() - start,
         rssItemCount: rssBrief?.summary.totalItems ?? 0,
+        rssDiagnostics: rssBrief?.diagnostics ?? null,
         interestItemCount: interestBrief?.summary.totalItems ?? 0,
         interestCategoryCount: interestBrief?.summary.totalCategories ?? 0,
         eventCount: upcomingEvents.length,
@@ -256,9 +262,12 @@ function buildScoutSummary(
   if (mode !== 'interests_only') {
     if (rssBrief && rssBrief.headlines.length > 0) {
       lines.push('');
-      lines.push(`LOCAL NEWS (${rssBrief.summary.totalItems} items from ${rssBrief.summary.feedsMatched} feeds):`);
+      const fallbackNote = rssBrief.diagnostics?.fallbackLevel && rssBrief.diagnostics.fallbackLevel !== 'zip_radius'
+        ? ` [geo fallback: ${rssBrief.diagnostics.fallbackLevel}]` : '';
+      lines.push(`LOCAL NEWS (${rssBrief.summary.totalItems} items from ${rssBrief.summary.feedsMatched} feeds)${fallbackNote}:`);
       for (const h of rssBrief.headlines.slice(0, 12)) {
-        lines.push(`  • [${h.sourceType}] "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})`);
+        const level = h.localityLevel ? ` [${h.localityLevel}]` : '';
+        lines.push(`  • [${h.sourceType}] "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})${level}`);
       }
       if (rssBrief.summary.topCategories.length > 0) {
         lines.push('');

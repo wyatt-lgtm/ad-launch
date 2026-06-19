@@ -12,7 +12,7 @@
  *   4. Return a structured content brief payload
  */
 import { prisma } from '@/lib/db';
-import { getZipsByRadius, getZipsByCounty, getZipsByCity } from './geo-lookup';
+import { getZipsByRadius, getZipsByCounty, getZipsByCity, getZipDetails } from './geo-lookup';
 import type { TradeAreaRequest, TradeAreaItem, TradeAreaResponse } from './types';
 
 // Source quality scoring
@@ -340,100 +340,421 @@ export interface ContentBrief {
     pubDate: string;
     link: string;
     geoConfidence: number;
+    localityLevel?: string;
   }[];
   patterns: {
     type: string;
     description: string;
     itemIds: string[];
   }[];
+  diagnostics?: BriefDiagnostics;
 }
 
+export interface BriefDiagnostics {
+  fallbackLevel: string;
+  levelsAttempted: { level: string; feedsFound: number; itemsFound: number; lookbackDays: number }[];
+  discoveryTriggered: boolean;
+  discoveryReason?: string;
+  totalFeedsChecked: number;
+  totalItemsFetched: number;
+  finalItemCount: number;
+  queryTimeMs: number;
+}
+
+// ── Configurable thresholds ─────────────────────────────────────────────────
+const SCOUT_MIN_LOCAL_ITEMS = parseInt(process.env.SCOUT_MIN_LOCAL_ITEMS || '5', 10);
+const SCOUT_MAX_LOCAL_ITEMS = parseInt(process.env.SCOUT_MAX_LOCAL_ITEMS || '20', 10);
+const SCOUT_LOCAL_NEWS_LOOKBACK_DAYS = parseInt(process.env.SCOUT_LOCAL_NEWS_LOOKBACK_DAYS || '14', 10);
+
+/**
+ * Original entry point — delegates to the fallback-aware version.
+ */
 export async function generateContentBrief(
   centerZip: string,
   radiusMiles: number = 25,
   options: Omit<TradeAreaRequest, 'zips' | 'cities' | 'counties' | 'states'> = {},
 ): Promise<ContentBrief> {
-  const result = await getItemsByRadius(centerZip, radiusMiles, {
-    limit: 50,
-    days: 3,
-    ...options,
+  return generateContentBriefWithFallback(centerZip, radiusMiles, {}, options);
+}
+
+/**
+ * Generate a content brief with geographic fallback cascade.
+ * Widens from ZIP → City → County → State → national-only until
+ * SCOUT_MIN_LOCAL_ITEMS is met or all levels are exhausted.
+ *
+ * Each level progressively widens the lookback window:
+ *   ZIP: initial days → City: days*2 → County: LOOKBACK_DAYS → State: LOOKBACK_DAYS
+ */
+export async function generateContentBriefWithFallback(
+  centerZip: string,
+  radiusMiles: number = 25,
+  geo: { city?: string | null; county?: string | null; state?: string | null },
+  options: Omit<TradeAreaRequest, 'zips' | 'cities' | 'counties' | 'states'> = {},
+): Promise<ContentBrief> {
+  const start = Date.now();
+  const initialDays = options.days ?? 5;
+  const limit = options.limit ?? 50;
+
+  const diagnostics: BriefDiagnostics = {
+    fallbackLevel: 'none',
+    levelsAttempted: [],
+    discoveryTriggered: false,
+    totalFeedsChecked: 0,
+    totalItemsFetched: 0,
+    finalItemCount: 0,
+    queryTimeMs: 0,
+  };
+
+  const seenItemIds = new Set<string>();
+  const allItems: (TradeAreaItem & { localityLevel: string })[] = [];
+
+  // Resolve the full geo hierarchy from the ZIP if not provided
+  let resolvedCity = geo.city?.toUpperCase() || null;
+  let resolvedCounty = geo.county?.toUpperCase() || null;
+  let resolvedState = geo.state?.toUpperCase() || null;
+
+  if (centerZip && (!resolvedCity || !resolvedCounty || !resolvedState)) {
+    try {
+      const details = await getZipDetails(centerZip);
+      if (details) {
+        if (!resolvedCity) resolvedCity = details.primaryCity;
+        if (!resolvedCounty) resolvedCounty = details.county;
+        if (!resolvedState) resolvedState = details.state;
+      }
+    } catch (err) {
+      console.warn('[trade-area-feed] Could not resolve ZIP details:', err);
+    }
+  }
+
+  console.log(`[trade-area-feed] Geo cascade: ZIP=${centerZip} City=${resolvedCity} County=${resolvedCounty} State=${resolvedState}`);
+
+  // ── Level 1: ZIP radius ─────────────────────────────────────────────────
+  if (centerZip) {
+    const zipResult = await getItemsByRadius(centerZip, radiusMiles, {
+      ...options, limit, days: initialDays,
+    });
+    diagnostics.levelsAttempted.push({
+      level: 'zip_radius', feedsFound: zipResult.meta.feedsMatched,
+      itemsFound: zipResult.items.length, lookbackDays: initialDays,
+    });
+    for (const item of zipResult.items) {
+      if (!seenItemIds.has(item.id)) {
+        seenItemIds.add(item.id);
+        allItems.push({ ...item, localityLevel: 'zip' });
+      }
+    }
+    if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS) diagnostics.fallbackLevel = 'zip_radius';
+  }
+
+  // ── Level 2: City (wider lookback) ──────────────────────────────────────
+  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && resolvedCity && resolvedState) {
+    const cityDays = Math.min(initialDays * 2, SCOUT_LOCAL_NEWS_LOOKBACK_DAYS);
+    const cityResult = await getTradeAreaItems({
+      cities: [`${resolvedCity}, ${resolvedState}`],
+      ...options, limit, days: cityDays,
+    });
+    diagnostics.levelsAttempted.push({
+      level: 'city', feedsFound: cityResult.meta.feedsMatched,
+      itemsFound: cityResult.items.length, lookbackDays: cityDays,
+    });
+    for (const item of cityResult.items) {
+      if (!seenItemIds.has(item.id)) {
+        seenItemIds.add(item.id);
+        allItems.push({ ...item, localityLevel: 'city' });
+      }
+    }
+    if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
+      diagnostics.fallbackLevel = 'city';
+    }
+  }
+
+  // ── Level 3: County (full lookback) ─────────────────────────────────────
+  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && resolvedCounty && resolvedState) {
+    const countyResult = await getTradeAreaItems({
+      counties: [`${resolvedCounty}, ${resolvedState}`],
+      ...options, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+    });
+    diagnostics.levelsAttempted.push({
+      level: 'county', feedsFound: countyResult.meta.feedsMatched,
+      itemsFound: countyResult.items.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+    });
+    for (const item of countyResult.items) {
+      if (!seenItemIds.has(item.id)) {
+        seenItemIds.add(item.id);
+        allItems.push({ ...item, localityLevel: 'county' });
+      }
+    }
+    if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
+      diagnostics.fallbackLevel = 'county';
+    }
+  }
+
+  // ── Level 4: State (full lookback) ──────────────────────────────────────
+  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && resolvedState) {
+    const stateResult = await getTradeAreaItems({
+      states: [resolvedState],
+      ...options, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+    });
+    diagnostics.levelsAttempted.push({
+      level: 'state', feedsFound: stateResult.meta.feedsMatched,
+      itemsFound: stateResult.items.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+    });
+    for (const item of stateResult.items) {
+      if (!seenItemIds.has(item.id)) {
+        seenItemIds.add(item.id);
+        allItems.push({ ...item, localityLevel: 'state' });
+      }
+    }
+    if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
+      diagnostics.fallbackLevel = 'state';
+    }
+  }
+
+  // ── Level 5: National-only fallback ─────────────────────────────────────
+  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS) {
+    const nationalFeeds = await prisma.rssFeed.findMany({
+      where: { status: 'active', geoScope: 'national' },
+      select: { id: true },
+    });
+    if (nationalFeeds.length > 0) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - SCOUT_LOCAL_NEWS_LOOKBACK_DAYS);
+      const nationalItems = await prisma.rssItem.findMany({
+        where: {
+          feedId: { in: nationalFeeds.map(f => f.id) },
+          filterStatus: 'approved',
+          pubDate: { gte: cutoff },
+          feed: { status: 'active' },
+        },
+        select: {
+          id: true, title: true, description: true, link: true,
+          pubDate: true, imageUrl: true, author: true, categories: true,
+          feedId: true, relevanceScore: true,
+          feed: { select: { title: true, sourceType: true, sourceQuality: true } },
+        },
+        orderBy: { pubDate: 'desc' },
+        take: limit,
+      });
+      diagnostics.levelsAttempted.push({
+        level: 'national', feedsFound: nationalFeeds.length,
+        itemsFound: nationalItems.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+      });
+      for (const raw of nationalItems) {
+        if (!seenItemIds.has(raw.id)) {
+          seenItemIds.add(raw.id);
+          allItems.push({
+            id: raw.id, title: raw.title ?? '', description: raw.description ?? '',
+            link: raw.link ?? '', pubDate: raw.pubDate?.toISOString() ?? '',
+            imageUrl: raw.imageUrl ?? null, author: raw.author ?? null,
+            categories: raw.categories, feedId: raw.feedId,
+            feedTitle: raw.feed.title ?? '', feedSourceType: raw.feed.sourceType,
+            feedSourceQuality: raw.feed.sourceQuality,
+            geoConfidence: 0.3, coverageType: 'inferred' as const,
+            relevanceScore: raw.relevanceScore, localityLevel: 'national',
+          });
+        }
+      }
+    }
+    if (diagnostics.fallbackLevel === 'none' && allItems.length > 0) {
+      diagnostics.fallbackLevel = 'national';
+    }
+  }
+
+  // Trigger async discovery if still thin
+  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS) {
+    diagnostics.discoveryTriggered = true;
+    diagnostics.discoveryReason =
+      `Only ${allItems.length} items after all geo levels (min=${SCOUT_MIN_LOCAL_ITEMS}). ` +
+      `ZIP=${centerZip} City=${resolvedCity} County=${resolvedCounty} State=${resolvedState}`;
+    console.warn(`[trade-area-feed] DISCOVERY_NEEDED: ${diagnostics.discoveryReason}`);
+    triggerAsyncDiscovery(centerZip, resolvedCity, resolvedCounty, resolvedState).catch(err => {
+      console.error('[trade-area-feed] Async discovery error:', err);
+    });
+  }
+
+  if (diagnostics.fallbackLevel === 'none') {
+    diagnostics.fallbackLevel = allItems.length > 0 ? 'national' : 'none_empty';
+  }
+
+  // ── Rank all collected items ────────────────────────────────────────────
+  const GEO_LEVEL_SCORE: Record<string, number> = { zip: 10, city: 7, county: 4, state: 2, national: 1 };
+
+  const scored = allItems.map(item => {
+    const qualityScore = QUALITY_SCORES[item.feedSourceQuality] ?? 20;
+    const typePriority = SOURCE_TYPE_PRIORITY[item.feedSourceType] ?? 2;
+    const hoursOld = item.pubDate
+      ? (Date.now() - new Date(item.pubDate).getTime()) / (1000 * 60 * 60)
+      : 999;
+    const freshnessScore = Math.max(0, 100 - hoursOld * 0.6);
+    const geoLevelBonus = (GEO_LEVEL_SCORE[item.localityLevel] ?? 1) * 3;
+
+    const compositeScore =
+      freshnessScore * 0.30 +
+      qualityScore * 0.20 +
+      typePriority * 3 +
+      item.geoConfidence * 10 +
+      geoLevelBonus +
+      (item.relevanceScore ?? 50) * 0.05;
+
+    return { item, compositeScore };
   });
 
-  // Tally categories
-  const typeCounts = new Map<string, number>();
-  for (const item of result.items) {
-    const t = item.feedSourceType;
-    typeCounts.set(t, (typeCounts.get(t) ?? 0) + 1);
+  scored.sort((a, b) => b.compositeScore - a.compositeScore);
+
+  // Diversity: max 3 from same feed, title dedup, cap at SCOUT_MAX_LOCAL_ITEMS
+  const feedCounts = new Map<string, number>();
+  const titlesSeen = new Set<string>();
+  const diverse: typeof scored = [];
+  for (const s of scored) {
+    const count = feedCounts.get(s.item.feedId) ?? 0;
+    if (count >= 3) continue;
+    const titleKey = (s.item.title || '').toLowerCase().slice(0, 60);
+    if (titleKey.length > 10 && titlesSeen.has(titleKey)) continue;
+    if (titleKey.length > 10) titlesSeen.add(titleKey);
+    feedCounts.set(s.item.feedId, count + 1);
+    diverse.push(s);
+    if (diverse.length >= SCOUT_MAX_LOCAL_ITEMS) break;
   }
-  const topCategories = Array.from(typeCounts.entries())
+
+  // ── Build brief ────────────────────────────────────────────────────────
+  const finalItems = diverse.map(s => s.item);
+
+  const catCounts = new Map<string, number>();
+  for (const item of finalItems) {
+    catCounts.set(item.feedSourceType, (catCounts.get(item.feedSourceType) ?? 0) + 1);
+  }
+  const topCategories = Array.from(catCounts.entries())
     .map(([type, count]) => ({ type, count }))
     .sort((a, b) => b.count - a.count);
 
-  // Detect simple patterns
   const patterns: ContentBrief['patterns'] = [];
+  const weatherItems = finalItems.filter(i => i.feedSourceType === 'weather');
+  if (weatherItems.length > 0) patterns.push({ type: 'weather', description: `${weatherItems.length} weather update(s)`, itemIds: weatherItems.map(i => i.id) });
+  const govItems = finalItems.filter(i => i.feedSourceType === 'gov_meeting');
+  if (govItems.length > 0) patterns.push({ type: 'gov_meeting', description: `${govItems.length} government meeting/update(s)`, itemIds: govItems.map(i => i.id) });
+  const communityItems = finalItems.filter(i => i.feedSourceType === 'community' || i.feedSourceType === 'event');
+  if (communityItems.length > 0) patterns.push({ type: 'community_events', description: `${communityItems.length} community/event item(s)`, itemIds: communityItems.map(i => i.id) });
+  const trending = finalItems.filter(i => i.feedSourceType === 'local_news' && i.geoConfidence >= 0.7).slice(0, 5);
+  if (trending.length > 0) patterns.push({ type: 'trending_local', description: `${trending.length} trending local news item(s)`, itemIds: trending.map(i => i.id) });
 
-  // Weather pattern
-  const weatherItems = result.items.filter(i => i.feedSourceType === 'weather');
-  if (weatherItems.length > 0) {
-    patterns.push({
-      type: 'weather',
-      description: `${weatherItems.length} weather update(s) in the last 3 days`,
-      itemIds: weatherItems.map(i => i.id),
-    });
+  // Locality level breakdown
+  const levelCounts: Record<string, number> = {};
+  for (const item of finalItems) {
+    levelCounts[item.localityLevel] = (levelCounts[item.localityLevel] ?? 0) + 1;
+  }
+  if (Object.keys(levelCounts).length > 0) {
+    const desc = Object.entries(levelCounts).map(([l, c]) => `${l}:${c}`).join(', ');
+    patterns.push({ type: 'locality_breakdown', description: desc, itemIds: [] });
   }
 
-  // Gov meeting pattern
-  const govItems = result.items.filter(i => i.feedSourceType === 'gov_meeting');
-  if (govItems.length > 0) {
-    patterns.push({
-      type: 'gov_meeting',
-      description: `${govItems.length} government meeting/update(s)`,
-      itemIds: govItems.map(i => i.id),
-    });
-  }
+  diagnostics.totalFeedsChecked = diagnostics.levelsAttempted.reduce((sum, l) => sum + l.feedsFound, 0);
+  diagnostics.totalItemsFetched = diagnostics.levelsAttempted.reduce((sum, l) => sum + l.itemsFound, 0);
+  diagnostics.finalItemCount = finalItems.length;
+  diagnostics.queryTimeMs = Date.now() - start;
 
-  // Community events
-  const communityItems = result.items.filter(i =>
-    i.feedSourceType === 'community' || i.feedSourceType === 'event'
+  const uniqueFeeds = new Set(finalItems.map(i => i.feedId));
+
+  console.log(
+    `[trade-area-feed] Brief: ${finalItems.length} items from ${uniqueFeeds.size} feeds ` +
+    `| fallback=${diagnostics.fallbackLevel} ` +
+    `| levels=${diagnostics.levelsAttempted.map(l => `${l.level}(${l.itemsFound})`).join('→')} ` +
+    `| ${Date.now() - start}ms`
   );
-  if (communityItems.length > 0) {
-    patterns.push({
-      type: 'community_events',
-      description: `${communityItems.length} community/event item(s)`,
-      itemIds: communityItems.map(i => i.id),
-    });
-  }
-
-  // Breaking/trending — recent high-quality items
-  const trending = result.items
-    .filter(i => i.feedSourceType === 'local_news' && i.geoConfidence >= 0.7)
-    .slice(0, 5);
-  if (trending.length > 0) {
-    patterns.push({
-      type: 'trending_local',
-      description: `${trending.length} trending local news item(s)`,
-      itemIds: trending.map(i => i.id),
-    });
-  }
 
   return {
     generatedAt: new Date().toISOString(),
     tradeAreaCenter: centerZip,
     radiusMiles,
-    summary: {
-      totalItems: result.items.length,
-      feedsMatched: result.meta.feedsMatched,
-      topCategories,
-    },
-    headlines: result.items.slice(0, 20).map(i => ({
-      id: i.id,
-      title: i.title,
-      source: i.feedTitle,
-      sourceType: i.feedSourceType,
-      pubDate: i.pubDate,
-      link: i.link,
-      geoConfidence: i.geoConfidence,
+    summary: { totalItems: finalItems.length, feedsMatched: uniqueFeeds.size, topCategories },
+    headlines: finalItems.slice(0, SCOUT_MAX_LOCAL_ITEMS).map(i => ({
+      id: i.id, title: i.title, source: i.feedTitle, sourceType: i.feedSourceType,
+      pubDate: i.pubDate, link: i.link, geoConfidence: i.geoConfidence,
+      localityLevel: i.localityLevel,
     })),
     patterns,
+    diagnostics,
   };
+}
+
+// ── Async feed discovery (fire-and-forget) ──────────────────────────────────
+
+async function triggerAsyncDiscovery(
+  zip: string | null,
+  city: string | null,
+  county: string | null,
+  state: string | null,
+) {
+  if (process.env.SCOUT_FEED_DISCOVERY_ENABLED === 'false') return;
+
+  const location = [city, state].filter(Boolean).join(', ') || zip || 'unknown';
+  console.log(`[feed-discovery] Starting async discovery for: ${location}`);
+
+  try {
+    const { discoverFeedsFromSites, canonicalizeFeedUrl } = await import('./discovery');
+
+    const citySlug = city ? city.toLowerCase().replace(/\s+/g, '') : '';
+    const stateSlug = state?.toLowerCase() || '';
+    const candidateSites: string[] = [];
+
+    if (citySlug && stateSlug) {
+      candidateSites.push(
+        `https://www.${citySlug}news.com`,
+        `https://${citySlug}.patch.com`,
+        `https://www.${citySlug}${stateSlug}.com`,
+        `https://www.${citySlug}press.com`,
+        `https://www.${citySlug}times.com`,
+        `https://www.${citySlug}herald.com`,
+        `https://www.${citySlug}gazette.com`,
+        `https://www.${citySlug}tribune.com`,
+        `https://www.${citySlug}post.com`,
+        `https://www.${citySlug}daily.com`,
+      );
+    }
+
+    if (candidateSites.length === 0) return;
+
+    const discovered = await discoverFeedsFromSites(candidateSites.slice(0, 10), 2);
+    if (discovered.length === 0) {
+      console.log(`[feed-discovery] No feeds found for ${location}`);
+      return;
+    }
+
+    console.log(`[feed-discovery] Found ${discovered.length} candidate feeds for ${location}`);
+
+    let saved = 0;
+    for (const feed of discovered) {
+      const canonical = canonicalizeFeedUrl(feed.url);
+      try {
+        const existing = await prisma.rssFeed.findUnique({ where: { url: canonical } });
+        if (existing) continue;
+
+        await prisma.rssFeed.create({
+          data: {
+            url: canonical,
+            title: feed.title || `Discovered: ${feed.siteUrl}`,
+            siteUrl: feed.siteUrl,
+            description: feed.description,
+            language: feed.language,
+            feedFormat: feed.feedFormat,
+            sourceType: 'local_news',
+            sourceQuality: 'unverified',
+            status: 'pending',
+            geoScope: 'local',
+            discoveredBy: 'auto_scout',
+            discoveryMethod: feed.discoveryMethod,
+            discoveredAt: new Date(),
+            pilotState: state || null,
+            notes: `Auto-discovered for ${location}`,
+          },
+        });
+        saved++;
+      } catch (err) {
+        console.warn(`[feed-discovery] Could not save feed ${canonical}:`, (err as Error).message);
+      }
+    }
+
+    console.log(`[feed-discovery] Saved ${saved} new feeds for ${location}`);
+  } catch (err) {
+    console.error(`[feed-discovery] Discovery failed for ${location}:`, err);
+  }
 }
