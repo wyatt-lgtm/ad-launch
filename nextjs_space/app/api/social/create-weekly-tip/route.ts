@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     // Verify ownership
     const business = await prisma.business.findFirst({
       where: { id: businessId, userId },
-      select: { id: true, websiteUrl: true, businessName: true, businessCity: true, businessState: true },
+      select: { id: true, websiteUrl: true, businessName: true, businessCity: true, businessState: true, tombstoneBusinessId: true },
     });
     if (!business) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
@@ -113,6 +113,7 @@ export async function POST(req: NextRequest) {
         brandVoiceSummary: profile?.brandVoiceSummary || '',
         industry: profile?.industry || '',
         businessId,
+        tombstoneBusinessId: business.tombstoneBusinessId,
       },
     );
 

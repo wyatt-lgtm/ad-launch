@@ -83,15 +83,17 @@ export async function POST(req: NextRequest) {
 
     let businessName: string | null = null;
     let businessDomain: string | null = null;
+    let tombstoneBusinessId: number | null = null;
 
     if (businessId) {
       const biz = await prisma.business.findUnique({
         where: { id: businessId },
-        select: { websiteUrl: true, userId: true, businessName: true },
+        select: { websiteUrl: true, userId: true, businessName: true, tombstoneBusinessId: true },
       });
       if (biz && biz.userId === userId) {
         websiteUrl = biz.websiteUrl;
         businessName = biz.businessName || null;
+        tombstoneBusinessId = biz.tombstoneBusinessId;
         // Extract domain from business websiteUrl for identity anchoring
         try {
           businessDomain = new URL(biz.websiteUrl.startsWith('http') ? biz.websiteUrl : `https://${biz.websiteUrl}`).hostname;
@@ -167,6 +169,7 @@ export async function POST(req: NextRequest) {
         businessId: businessId || undefined,
         businessName: businessName || undefined,
         businessDomain: businessDomain || undefined,
+        tombstoneBusinessId: tombstoneBusinessId ?? undefined,
       });
     } catch (tombstoneErr: any) {
       const failedAt = new Date();

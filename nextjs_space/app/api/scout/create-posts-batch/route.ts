@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     where: { id: scoutReportId },
     include: {
       stories: { where: { id: { in: storyIds } } },
-      business: { select: { id: true, websiteUrl: true, businessName: true } },
+      business: { select: { id: true, websiteUrl: true, businessName: true, tombstoneBusinessId: true } },
     },
   });
 
@@ -112,6 +112,7 @@ export async function POST(req: NextRequest) {
         storyId: story.id,
         postPackageId: postPackage.id,
         businessName: report.business.businessName || undefined,
+        tombstoneBusinessId: report.business.tombstoneBusinessId,
       },
     );
 

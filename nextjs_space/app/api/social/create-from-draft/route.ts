@@ -67,28 +67,31 @@ export async function POST(req: NextRequest) {
     let websiteUrl: string | null = null;
     let resolvedBusinessId = businessId || null;
     let businessName = 'Business';
+    let tombstoneBusinessId: number | null = null;
 
     if (businessId) {
       const biz = await prisma.business.findUnique({
         where: { id: businessId },
-        select: { websiteUrl: true, userId: true, businessName: true },
+        select: { websiteUrl: true, userId: true, businessName: true, tombstoneBusinessId: true },
       });
       if (biz && biz.userId === userId) {
         websiteUrl = biz.websiteUrl;
         businessName = biz.businessName || 'Business';
+        tombstoneBusinessId = biz.tombstoneBusinessId;
       }
     }
 
     if (!websiteUrl) {
-      const biz = await prisma.business.findFirst({
+      const biz2 = await prisma.business.findFirst({
         where: { userId },
         orderBy: { updatedAt: 'desc' },
-        select: { id: true, websiteUrl: true, businessName: true },
+        select: { id: true, websiteUrl: true, businessName: true, tombstoneBusinessId: true },
       });
-      if (biz) {
-        websiteUrl = biz.websiteUrl;
-        businessName = biz.businessName || 'Business';
-        if (!resolvedBusinessId) resolvedBusinessId = biz.id;
+      if (biz2) {
+        websiteUrl = biz2.websiteUrl;
+        businessName = biz2.businessName || 'Business';
+        if (!resolvedBusinessId) resolvedBusinessId = biz2.id;
+        if (!tombstoneBusinessId) tombstoneBusinessId = biz2.tombstoneBusinessId;
       }
     }
 
@@ -302,6 +305,7 @@ export async function POST(req: NextRequest) {
       offer: offer || undefined,
       artDirection: artDirection || undefined,
       generateArt,
+      tombstoneBusinessId,
     });
 
     if (!result.success) {

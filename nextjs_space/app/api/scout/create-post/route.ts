@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
 
     const business = await prisma.business.findUnique({
       where: { id: businessId },
-      select: { id: true, websiteUrl: true, businessName: true },
+      select: { id: true, websiteUrl: true, businessName: true, tombstoneBusinessId: true },
     });
     if (!business) {
       console.error(`[create-post] Business ${businessId} not found`);
@@ -114,6 +114,7 @@ export async function GET(req: NextRequest) {
         storyId: story.id,
         postPackageId: postPackage.id,
         businessName: business.businessName || undefined,
+        tombstoneBusinessId: business.tombstoneBusinessId,
       },
     );
 

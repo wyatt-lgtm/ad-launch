@@ -337,6 +337,7 @@ export async function createSocialMissions(
     businessId?: string;
     businessName?: string;
     businessDomain?: string;
+    tombstoneBusinessId?: number;
   } = {},
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -382,7 +383,7 @@ export async function createSocialMissions(
       scoutSummary ? `\nContext from scout brief:\n${scoutSummary}` : '',
     ].filter(Boolean).join('\n');
 
-    const result = await sendCommand(command);
+    const result = await sendCommand(command, undefined, options.tombstoneBusinessId);
     return {
       success: !!result.workflowId,
       workflowIds: result.workflowId ? [result.workflowId] : [],
@@ -405,7 +406,7 @@ export async function createSocialMissions(
     const command = buildStoryCommand(normalizedUrl, story, platforms, mode, profileBlock, identityLockBlock);
     console.log(`[tombstone] Sending command ${i + 1}/${stories.length}: "${story.headline?.slice(0, 60)}..." (${story.type || 'interest'})`);
 
-    const result = await sendCommand(command);
+    const result = await sendCommand(command, undefined, options.tombstoneBusinessId);
     if (result.workflowId) {
       allWorkflowIds.push(result.workflowId);
       allTaskIds.push(...result.taskIds);
@@ -632,6 +633,7 @@ export async function createScoutStoryMission(
     storyId: string;
     postPackageId: string;
     businessName?: string;
+    tombstoneBusinessId?: number | null;
   },
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -675,8 +677,8 @@ export async function createScoutStoryMission(
     `--- END RSS STORY METADATA ---`,
   ].filter(Boolean).join('\n');
 
-  console.log(`[tombstone] Scout story mission for: ${normalizedUrl} — "${story.title.slice(0, 60)}"`);
-  const result = await sendCommand(command);
+  console.log(`[tombstone] Scout story mission for: ${normalizedUrl} — "${story.title.slice(0, 60)}" (business_id=${meta.tombstoneBusinessId ?? 'none'})`);
+  const result = await sendCommand(command, undefined, meta.tombstoneBusinessId);
 
   return {
     success: !!result.workflowId,
@@ -707,6 +709,7 @@ export async function createWeeklyTipMission(
     brandVoiceSummary: string;
     industry: string;
     businessId?: string;
+    tombstoneBusinessId?: number | null;
   },
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -756,8 +759,8 @@ export async function createWeeklyTipMission(
     `IMPORTANT: This is intent=weekly_tip, source=weekly_tip. Do NOT run RSS scouting or story discovery.`,
   ].filter(Boolean).join('\n');
 
-  console.log(`[tombstone] Weekly tip mission for: ${normalizedUrl} — "${opts.topic.slice(0, 60)}"`);
-  const result = await sendCommand(command);
+  console.log(`[tombstone] Weekly tip mission for: ${normalizedUrl} — "${opts.topic.slice(0, 60)}" (business_id=${opts.tombstoneBusinessId ?? 'none'})`);
+  const result = await sendCommand(command, undefined, opts.tombstoneBusinessId);
 
   return {
     success: !!result.workflowId,
@@ -782,6 +785,7 @@ export async function createDraftPolishMission(
     offer?: string;
     artDirection?: string;
     generateArt?: boolean;
+    tombstoneBusinessId?: number | null;
   } = {},
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
@@ -822,9 +826,9 @@ export async function createDraftPolishMission(
   commandParts.push(`\nIMPORTANT: This is intent=copy_edit_user_post, source=user_written_post. Do NOT run RSS scouting or story discovery.`);
 
   const command = commandParts.join('\n');
-  console.log(`[tombstone] Draft polish mission for: ${normalizedUrl} (art=${generateArt})`);
+  console.log(`[tombstone] Draft polish mission for: ${normalizedUrl} (art=${generateArt}, business_id=${options.tombstoneBusinessId ?? 'none'})`);
 
-  const result = await sendCommand(command);
+  const result = await sendCommand(command, undefined, options.tombstoneBusinessId);
   return {
     success: !!result.workflowId,
     workflowIds: result.workflowId ? [result.workflowId] : [],
