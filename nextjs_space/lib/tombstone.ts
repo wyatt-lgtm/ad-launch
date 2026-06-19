@@ -1814,9 +1814,38 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
     }
   }
 
+  // Extract competitor intelligence from the Research (Jim Bridger) step output
+  let competitorIntelligence: Record<string, any> | null = null;
+  const reconTask = allTasks.find((t: any) => t.department === 'Research' && t.status === 'complete');
+  if (reconTask?.id) {
+    try {
+      const reconOutputs = await getTaskOutputs(reconTask.id);
+      for (const out of reconOutputs) {
+        try {
+          const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+          if (parsed?.competitor_intelligence && typeof parsed.competitor_intelligence === 'object') {
+            const ci = parsed.competitor_intelligence;
+            if (ci.status === 'ok' && ci.concepts?.length > 0) {
+              competitorIntelligence = {
+                concepts: ci.concepts,
+                warRoomEvaluation: ci.war_room_evaluation,
+                finalSitePlan: ci.final_site_plan,
+                winningConceptId: ci.winning_concept_id,
+                competitiveSynthesis: ci.competitive_synthesis?.synthesis,
+                competitorCount: ci.competitor_analyses?.length ?? 0,
+              };
+            }
+            break;
+          }
+        } catch { /* skip */ }
+      }
+    } catch { /* skip */ }
+  }
+
   return {
     ...statusResult,
     steps,
     html,
+    competitorIntelligence,
   };
 }

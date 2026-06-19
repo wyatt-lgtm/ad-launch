@@ -169,6 +169,9 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
   const [competitorUrls, setCompetitorUrls] = useState<string[]>(['']);
   const [seoWarnings, setSeoWarnings] = useState<string[]>([]);
 
+  // Competitor intelligence (3 concepts + war room)
+  const [competitorIntel, setCompetitorIntel] = useState<any>(null);
+
   const isLoggedIn = !!(session?.user as any)?.email;
 
   // Cleanup polling on unmount
@@ -234,6 +237,11 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
       }
       setWorkflowStatus(result.status ?? '');
 
+      // Capture competitor intelligence if present
+      if (result.competitorIntelligence && !competitorIntel) {
+        setCompetitorIntel(result.competitorIntelligence);
+      }
+
       // Terminal states
       if (result.status === 'completed') {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -244,6 +252,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           setGeneratedUrl(url);
           window.open(url, '_blank');
         }
+        if (result.competitorIntelligence) setCompetitorIntel(result.competitorIntelligence);
         setGenerating(false);
       } else if (result.status === 'error') {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -351,7 +360,20 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     try {
       // Build reference sites (filter empty)
       const validRefUrls = refUrls.map(u => u.trim()).filter(Boolean);
-      const validCompetitorUrls = competitorUrls.map(u => u.trim()).filter(Boolean);
+      const rawCompetitorUrls = competitorUrls.map(u => u.trim()).filter(Boolean).slice(0, 3);
+
+      // Validate competitor URLs
+      const validCompetitorUrls: string[] = [];
+      for (const cu of rawCompetitorUrls) {
+        try {
+          const parsed = new URL(cu.startsWith('http') ? cu : `https://${cu}`);
+          if (parsed.hostname && parsed.hostname.includes('.')) {
+            validCompetitorUrls.push(cu.startsWith('http') ? cu : `https://${cu}`);
+          }
+        } catch {
+          // Skip invalid URLs silently
+        }
+      }
 
       const res = await fetch('/api/generate-concept-site', {
         method: 'POST',
@@ -684,7 +706,8 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-gray-600 block mb-1">Competitor URLs (optional — we'll find them if left blank)</label>
+                <label className="text-xs font-medium text-gray-600 block mb-1">Competitor URLs (up to 3 — optional)</label>
+                <p className="text-xs text-gray-400 mb-2">We'll analyze each competitor's SEO, offers, positioning, and create a SWOT to build a stronger site for you.</p>
                 {competitorUrls.map((url, i) => (
                   <div key={i} className="flex gap-2 items-center mb-2">
                     <input
@@ -695,7 +718,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
                         next[i] = e.target.value;
                         setCompetitorUrls(next);
                       }}
-                      placeholder={`Competitor ${i + 1}`}
+                      placeholder={`Competitor ${i + 1} website URL`}
                       className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
                     />
                     {competitorUrls.length > 1 && (
@@ -708,7 +731,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
                     )}
                   </div>
                 ))}
-                {competitorUrls.length < 5 && (
+                {competitorUrls.length < 3 && (
                   <button
                     onClick={() => setCompetitorUrls([...competitorUrls, ''])}
                     className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors"
@@ -719,6 +742,77 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Competitor Intelligence Panel */}
+      {expanded && competitorIntel?.concepts?.length > 0 && (
+        <div className="px-6 pb-4 border-b border-gray-100">
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-100">
+            <h4 className="flex items-center gap-2 text-sm font-bold text-indigo-900 mb-3">
+              <Users className="w-4 h-4" />
+              Competitive Strategy: 3 Concepts Evaluated
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+              {(competitorIntel.concepts as any[]).map((concept: any) => {
+                const isWinner = concept.concept_id === competitorIntel.winningConceptId;
+                const evaluation = (competitorIntel.warRoomEvaluation?.evaluations ?? []).find(
+                  (e: any) => e.concept_id === concept.concept_id
+                );
+                return (
+                  <div
+                    key={concept.concept_id}
+                    className={`rounded-lg p-4 border-2 transition-all ${
+                      isWinner
+                        ? 'border-green-400 bg-green-50 shadow-md'
+                        : 'border-gray-200 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-gray-500">Concept {concept.concept_id}</span>
+                      {isWinner && (
+                        <span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> Winner
+                        </span>
+                      )}
+                    </div>
+                    <h5 className="font-semibold text-sm text-gray-900 mb-1">{concept.concept_name}</h5>
+                    <p className="text-xs text-gray-600 mb-2">{concept.strategic_angle}</p>
+                    {concept.homepage_hero_headline && (
+                      <p className="text-xs font-medium text-indigo-700 italic mb-1">
+                        &ldquo;{concept.homepage_hero_headline}&rdquo;
+                      </p>
+                    )}
+                    {concept.primary_cta && (
+                      <span className="inline-block text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded font-medium">
+                        {concept.primary_cta}
+                      </span>
+                    )}
+                    {evaluation?.total_score != null && (
+                      <div className="mt-2 pt-2 border-t border-gray-100">
+                        <span className="text-xs text-gray-500">War Room Score: </span>
+                        <span className={`text-xs font-bold ${
+                          evaluation.total_score >= 60 ? 'text-green-600' : 'text-amber-600'
+                        }`}>{evaluation.total_score}/90</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {competitorIntel.warRoomEvaluation?.decision_reasons?.length > 0 && (
+              <div className="text-xs text-gray-600 bg-white/60 rounded-lg p-3">
+                <span className="font-semibold text-gray-700">War Room Decision: </span>
+                {(competitorIntel.warRoomEvaluation.decision_reasons as string[]).join(' ')}
+              </div>
+            )}
+            {competitorIntel.competitiveSynthesis?.gaps_all_competitors_leave_open?.length > 0 && (
+              <div className="mt-3 text-xs text-gray-600">
+                <span className="font-semibold text-gray-700">Competitive Gaps Found: </span>
+                {(competitorIntel.competitiveSynthesis.gaps_all_competitors_leave_open as string[]).slice(0, 3).join(' • ')}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

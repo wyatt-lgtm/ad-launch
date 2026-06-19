@@ -60,8 +60,8 @@ export async function POST(request: NextRequest) {
           analyze_competitors: !!analyzeCompetitors,
           primary_keyword: primaryKeyword,
           trade_area: tradeArea,
-          competitor_urls: competitorUrls,
-          competitor_count: 5,
+          competitor_urls: competitorUrls?.slice(0, 3),
+          competitor_count: 3,
         });
 
         if (result.success && result.workflowId) {
