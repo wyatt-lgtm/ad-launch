@@ -8,8 +8,9 @@ RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists
 # Enable Corepack for Yarn
 RUN corepack enable
 
-# Copy package manifests
-COPY package.json yarn.lock* ./
+# Copy package manifests (yarn.lock MUST be a real file, not a symlink)
+COPY package.json yarn.lock ./
+RUN test -f yarn.lock || (echo "ERROR: yarn.lock missing from Docker build context" && exit 1)
 
 # Override .yarnrc.yml for Docker context (platform paths don't exist here)
 RUN echo 'nodeLinker: node-modules' > .yarnrc.yml
