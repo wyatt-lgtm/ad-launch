@@ -721,6 +721,10 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const [generatingLane, setGeneratingLane] = useState<string | null>(null);
   const [stallCount, setStallCount] = useState(0);
   const [retrying, setRetrying] = useState(false);
+  const pollStartRef = React.useRef<number>(0);
+  const consecutiveErrorsRef = React.useRef<number>(0);
+  const stallCountRef = React.useRef(stallCount);
+  stallCountRef.current = stallCount;
   const { data: session } = useSession() || {};
   const router = useRouter();
 
@@ -845,16 +849,48 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const statusRef = React.useRef(status);
   statusRef.current = status;
 
-  // Only start polling when in tracking phase
+  // Only start polling when in tracking phase — with exponential backoff and max duration
   useEffect(() => {
     if (phase !== 'tracking') return;
-    pollStatus();
-    const interval = setInterval(() => {
-      if (statusRef.current !== 'completed' && statusRef.current !== 'error') {
-        pollStatus();
+    pollStartRef.current = Date.now();
+    consecutiveErrorsRef.current = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const MAX_POLL_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      if (statusRef.current === 'completed' || statusRef.current === 'error') return;
+
+      // Stop after max duration
+      const elapsed = Date.now() - pollStartRef.current;
+      if (elapsed > MAX_POLL_DURATION_MS) {
+        console.warn('[analysis-tracker] Max polling duration reached — stopping');
+        setStatus('error');
+        setError('Analysis is taking longer than expected. Please check back shortly or try again.');
+        return;
       }
-    }, 6000);
-    return () => { clearInterval(interval); };
+
+      // Exponential backoff based on stall count
+      // 0-9: 6s, 10-19: 15s, 20+: 30s
+      const sc = stallCountRef.current;
+      const delay = sc < 10 ? 6000 : sc < 20 ? 15000 : 30000;
+
+      timeoutId = setTimeout(async () => {
+        if (cancelled) return;
+        await pollStatus();
+        scheduleNext();
+      }, delay);
+    };
+
+    // Initial poll
+    pollStatus().then(() => { if (!cancelled) scheduleNext(); });
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisId, phase]);
 
@@ -1008,7 +1044,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
               <div className="flex items-center gap-3 px-4 py-4 rounded-lg bg-amber-50 border border-amber-200">
                 <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
                 <div className="text-sm">
-                  <p className="font-medium text-amber-800">Our content engine is currently unavailable.</p>
+                  <p className="font-medium text-amber-800">Our content engine is currently unavailable or overloaded.</p>
                   <p className="text-amber-600 mt-1">We're retrying automatically. Your request has been queued.</p>
                 </div>
               </div>

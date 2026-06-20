@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getMultiWorkflowStatus, getWorkflowResults, getSocialWorkflowResults, pollRunStatus } from '@/lib/tombstone';
+import { getMultiWorkflowStatus, getWorkflowResults, getSocialWorkflowResults, pollRunStatus, recoverRunByIdempotencyKey } from '@/lib/tombstone';
 
 const TOMBSTONE_API = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
@@ -455,9 +455,30 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      // After 90 seconds with no missionId, the pipeline was not created
+      // After 90 seconds with no missionId, try recovery before giving up
       if (ageSec > 90) {
-        console.warn(`[mission-status] analysisId=${analysisId} has no missionId after ${ageSec}s — marking as error`);
+        console.warn(`[mission-status] analysisId=${analysisId} has no missionId after ${ageSec}s — attempting recovery`);
+
+        // The analysisId was used as the idempotency_key in createAsyncRun.
+        // Tombstone may have completed the run even though the frontend never received the response.
+        const recovered = await recoverRunByIdempotencyKey(analysisId);
+        if (recovered?.command_id) {
+          console.log(`[mission-status] Recovered command_id=${recovered.command_id} for analysisId=${analysisId} (status=${recovered.status})`);
+          const recoveredMissionId = JSON.stringify({ command_id: recovered.command_id, async: true });
+          await prisma.analysis.update({
+            where: { id: analysisId },
+            data: { missionId: recoveredMissionId, status: 'processing' },
+          });
+          // Return processing so the frontend re-polls and picks up the recovered run
+          return NextResponse.json({
+            status: 'processing',
+            tasks: [],
+            message: 'Recovered analysis pipeline — resuming...',
+          });
+        }
+
+        // Recovery failed — truly no run exists
+        console.warn(`[mission-status] Recovery failed for analysisId=${analysisId} — marking as error`);
         await prisma.analysis.update({
           where: { id: analysisId },
           data: { status: 'error' },

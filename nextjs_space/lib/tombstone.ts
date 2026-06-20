@@ -211,6 +211,37 @@ export async function pollRunStatus(commandId: string): Promise<AsyncRunStatus |
 }
 
 /**
+ * Recovery endpoint: look up a command run by its idempotency key.
+ *
+ * When the frontend's initial POST /commands/run times out (no command_id
+ * received), the frontend can call this with the analysisId (which was
+ * used as the idempotency_key) to see if Tombstone actually created
+ * and/or completed the run.
+ *
+ * Returns the full AsyncRunStatus if found, null if not.
+ */
+export async function recoverRunByIdempotencyKey(key: string): Promise<AsyncRunStatus | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(
+      `${TOMBSTONE_URL}/commands/by-idempotency-key/${encodeURIComponent(key)}`,
+      { cache: 'no-store', signal: controller.signal },
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      console.error(`[tombstone] Recovery by idempotency key failed: ${res.status}`);
+      return null;
+    }
+    return await res.json() as AsyncRunStatus;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Build lane commands for the 3-lane async run.
  * This constructs the command text for each lane type.
  */
