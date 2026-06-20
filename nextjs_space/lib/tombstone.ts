@@ -155,7 +155,7 @@ export async function createAsyncRun(
   idempotencyKey?: string,
 ): Promise<AsyncRunResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000); // 15s — should be fast since async
+  const timer = setTimeout(() => controller.abort(), 90000); // 90s — Render cold-starts can take 30-60s on first request of the day
   try {
     const res = await fetch(`${TOMBSTONE_URL}/commands/run`, {
       method: 'POST',
