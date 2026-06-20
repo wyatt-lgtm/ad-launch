@@ -5,11 +5,11 @@ WORKDIR /app
 # Install OpenSSL for Prisma
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
-# Copy package manifest only (no lockfile — generate fresh)
-COPY package.json ./
+# Copy package manifest and lockfile for deterministic installs
+COPY package.json package-lock.json ./
 
 # Install all dependencies (including devDependencies for build)
-RUN npm install
+RUN npm ci --legacy-peer-deps
 
 # ── Stage 2: Build ────────────────────────────────────────────────
 FROM node:20-slim AS builder
