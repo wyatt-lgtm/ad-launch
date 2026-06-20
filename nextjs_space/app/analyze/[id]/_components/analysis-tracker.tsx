@@ -301,7 +301,8 @@ function LocationStep({
         const res = await fetch(`/api/analysis/${analysisId}`);
         const data = await res.json().catch(() => ({}));
 
-        if (data?.status && data.status !== 'pending_location') {
+        const aStatus = data?.analysis?.status ?? data?.status;
+        if (aStatus && aStatus !== 'pending_location') {
           onLaunched();
           return;
         }
@@ -940,7 +941,8 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       try {
         const res = await fetch(`/api/analysis/${analysisId}`);
         const data = await res.json().catch(() => ({}));
-        if (data?.status && data.status !== 'pending_location') {
+        const aStatus = data?.analysis?.status ?? data?.status;
+        if (aStatus && aStatus !== 'pending_location') {
           setPhase('tracking');
         }
       } catch {}
