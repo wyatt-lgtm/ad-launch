@@ -1005,25 +1005,36 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
             </div>
           ) : stallCount >= 20 ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200">
+              <div className="flex items-center gap-3 px-4 py-4 rounded-lg bg-amber-50 border border-amber-200">
                 <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
                 <div className="text-sm">
-                  <p className="font-medium text-amber-800">Our content engine is warming up</p>
-                  <p className="text-amber-600 mt-1">This can happen after periods of inactivity. Your posts are queued and will generate once the engine is ready.</p>
+                  <p className="font-medium text-amber-800">Our content engine is currently unavailable.</p>
+                  <p className="text-amber-600 mt-1">We're retrying automatically. Your request has been queued.</p>
                 </div>
               </div>
-              <button
-                onClick={async () => {
-                  setRetrying(true);
-                  setStallCount(0);
-                  try { await fetch(`/api/mission-status?analysisId=${analysisId}`); } catch {}
-                  setTimeout(() => setRetrying(false), 3000);
-                }}
-                disabled={retrying}
-                className="w-full py-2.5 rounded-lg border border-amber-300 bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 transition-colors disabled:opacity-50"
-              >
-                {retrying ? 'Checking...' : 'Check Again'}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    setRetrying(true);
+                    setStallCount(0);
+                    try { await fetch(`/api/mission-status?analysisId=${analysisId}`); } catch {}
+                    setTimeout(() => setRetrying(false), 3000);
+                  }}
+                  disabled={retrying}
+                  className="flex-1 py-2.5 rounded-lg border border-amber-300 bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 transition-colors disabled:opacity-50"
+                >
+                  {retrying ? 'Checking...' : 'Check Again'}
+                </button>
+                <button
+                  onClick={() => window.location.href = '/'}
+                  className="flex-1 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+                >
+                  Try Again Later
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 text-center">
+                If this persists, contact <a href="mailto:support@launchmarketing.com" className="underline hover:text-gray-600">support@launchmarketing.com</a>
+              </p>
             </div>
           ) : (
             <div className="space-y-2">
