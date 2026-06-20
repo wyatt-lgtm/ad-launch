@@ -77,6 +77,71 @@ import { extractBusinessAddress, parseGeoString, type ExtractedAddress } from '@
 import { getUpcomingEvents } from '@/lib/social/upcoming-events';
 // GPT-5.1 image generation moved to /api/upgrade-ad-images (async, fire-and-forget)
 
+/**
+ * Pipeline phases for the frontend state machine.
+ * The frontend must NEVER move backward through these phases.
+ *   connecting → pipeline_preparing → generating → finalizing → completed | completed_with_warnings | failed
+ */
+type PipelinePhase = 'connecting' | 'pipeline_preparing' | 'generating' | 'finalizing' | 'completed' | 'completed_with_warnings' | 'failed';
+
+/** Lane-level status for the frontend */
+interface LaneStatus {
+  status: 'completed' | 'running' | 'failed' | 'skipped' | 'queued';
+  post_text: string | null;
+  image_url: string | null;
+  error: string | null;
+}
+
+function buildLaneStatuses(
+  ads: any[],
+  laneWorkflows: Record<string, string | string[]>,
+  asyncLanes?: any[],
+  failedLanes?: string[],
+): Record<string, LaneStatus> {
+  const LANE_MAP: Record<string, string> = { website_post: 'website', evergreen_post: 'holiday', news_post: 'news' };
+  const expected = ['website', 'news', 'holiday'];
+  const result: Record<string, LaneStatus> = {};
+
+  // Build from async lane data if available
+  if (asyncLanes) {
+    for (const lane of asyncLanes) {
+      const adLane = LANE_MAP[lane.lane_type];
+      if (!adLane) continue;
+      const ad = ads.find((a: any) => a.lane === adLane);
+      result[adLane] = {
+        status: lane.status === 'completed' || lane.status === 'completed_with_warning'
+          ? (ad ? 'completed' : 'running') // if completed but no ad yet, still "running" from frontend POV
+          : lane.status === 'failed' ? 'failed'
+          : lane.status === 'processing' ? 'running'
+          : 'queued',
+        post_text: ad?.caption ?? null,
+        image_url: ad?.imageUrl ?? null,
+        error: lane.error_message ?? null,
+      };
+    }
+  }
+
+  // Fill from stored ads / workflows for lanes not covered by async
+  for (const lane of expected) {
+    if (result[lane]) continue;
+    const ad = ads.find((a: any) => {
+      let l = a.lane;
+      if (l === 'seasonal') l = 'holiday';
+      return l === lane;
+    });
+    if (ad) {
+      result[lane] = { status: 'completed', post_text: ad.caption ?? null, image_url: ad.imageUrl ?? null, error: null };
+    } else if (failedLanes?.includes(lane)) {
+      result[lane] = { status: 'failed', post_text: null, image_url: null, error: 'Lane generation failed' };
+    } else if (laneWorkflows[lane]) {
+      result[lane] = { status: 'running', post_text: null, image_url: null, error: null };
+    } else {
+      result[lane] = { status: 'queued', post_text: null, image_url: null, error: null };
+    }
+  }
+  return result;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -115,6 +180,8 @@ export async function GET(request: NextRequest) {
       laneWorkflows.holiday = laneWorkflows.seasonal;
       delete laneWorkflows.seasonal;
     }
+
+    const hasCommandId = !!asyncCommandId || !!analysis.missionId;
 
     // If already completed with ads, return cached results with fresh image URLs
     if ((analysis.status === 'completed' || analysis.status === 'completing') && (analysis.ads?.length ?? 0) > 0) {
@@ -182,8 +249,11 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      const pipelinePhase: PipelinePhase = cachedFailedLanes.length > 0 ? 'completed_with_warnings' : 'completed';
+
       return NextResponse.json({
         status: 'completed',
+        pipelinePhase,
         ads: freshAds,
         seoData,
         postingPlan: analysis.postingPlan ?? null,
@@ -192,8 +262,30 @@ export async function GET(request: NextRequest) {
         budgetData: cachedResults.budget ?? null,
         socialStatus,
         laneWorkflows,
+        laneStatuses: buildLaneStatuses(freshAds, laneWorkflows, undefined, cachedFailedLanes),
         tasks: [], // No need to poll tasks anymore
         ...(cachedFailedLanes.length > 0 ? { failedLanes: cachedFailedLanes } : {}),
+      });
+    }
+
+    // If status is 'completed' but NO ads exist, this is a completed_no_outputs situation
+    // Do NOT return 'completed' to the frontend — return 'finalizing' so UI doesn't show empty results
+    if (analysis.status === 'completed' && (analysis.ads?.length ?? 0) === 0) {
+      console.warn(`[mission-status] analysisId=${analysisId} status=completed but 0 ads — reporting as finalizing (completed_no_outputs)`);
+      return NextResponse.json({
+        status: 'processing',
+        pipelinePhase: 'finalizing' as PipelinePhase,
+        tasks: [],
+        laneStatuses: buildLaneStatuses([], laneWorkflows),
+        message: 'Finalizing your generated posts...',
+        diagnostics: {
+          analysisId,
+          commandId: asyncCommandId,
+          businessId: analysis.businessId,
+          dbStatus: analysis.status,
+          adCount: 0,
+          issue: 'completed_no_outputs',
+        },
       });
     }
 
@@ -207,7 +299,13 @@ export async function GET(request: NextRequest) {
       const runStatus = await pollRunStatus(asyncCommandId);
       if (!runStatus) {
         // Command not found or Tombstone down — keep polling
-        return NextResponse.json({ status: 'processing', tasks: [], message: 'Waiting for analysis pipeline...' });
+        return NextResponse.json({
+          status: 'processing',
+          pipelinePhase: 'pipeline_preparing' as PipelinePhase,
+          tasks: [],
+          laneStatuses: buildLaneStatuses([], laneWorkflows),
+          message: 'Waiting for analysis pipeline...',
+        });
       }
 
       // Map async lane types to ad lane names
@@ -286,8 +384,10 @@ export async function GET(request: NextRequest) {
           const firstErr = runStatus.lanes.find(l => l.error_message);
           return NextResponse.json({
             status: 'error',
+            pipelinePhase: 'failed' as PipelinePhase,
             tasks: asyncTasks,
             laneWorkflows: asyncLaneWorkflows,
+            laneStatuses: buildLaneStatuses([], asyncLaneWorkflows, runStatus.lanes),
             errorReason: firstErr?.error_message ?? 'All post generation lanes failed. Please try again.',
           });
         }
@@ -316,15 +416,23 @@ export async function GET(request: NextRequest) {
           if (refetched?.status === 'completed' && (refetched.ads?.length ?? 0) > 0) {
             const freshAds = await resolveAdImages(refetched.ads ?? []);
             const cachedResults = (refetched.results ?? {}) as any;
+            const phase: PipelinePhase = failedLaneNames.length > 0 ? 'completed_with_warnings' : 'completed';
             return NextResponse.json({
-              status: 'completed', ads: freshAds, seoData: refetched.seoData ?? null,
+              status: 'completed', pipelinePhase: phase, ads: freshAds, seoData: refetched.seoData ?? null,
               postingPlan: refetched.postingPlan ?? null, googleAdsData: cachedResults.googleAds ?? null,
               websiteConceptData: cachedResults.websiteConcept ?? null, budgetData: cachedResults.budget ?? null,
               tasks: asyncTasks, laneWorkflows: asyncLaneWorkflows,
+              laneStatuses: buildLaneStatuses(freshAds, asyncLaneWorkflows, runStatus.lanes, failedLaneNames),
               ...(failedLaneNames.length > 0 ? { failedLanes: failedLaneNames } : {}),
             });
           }
-          return NextResponse.json({ status: 'processing', tasks: asyncTasks, laneWorkflows: asyncLaneWorkflows });
+          return NextResponse.json({
+            status: 'processing',
+            pipelinePhase: 'finalizing' as PipelinePhase,
+            tasks: asyncTasks, laneWorkflows: asyncLaneWorkflows,
+            laneStatuses: buildLaneStatuses([], asyncLaneWorkflows, runStatus.lanes),
+            message: 'Finalizing your generated posts...',
+          });
         }
 
         try {
@@ -375,15 +483,46 @@ export async function GET(request: NextRequest) {
           const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
           fetch(`${baseUrl}/api/upgrade-ad-images`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysisId }) }).catch(() => {});
 
+          // Determine phase: if we created ads, it's truly completed; if 0 ads, it's output_hydration_failed
+          const hasUsableAds = (freshAds?.length ?? 0) > 0;
+          if (!hasUsableAds) {
+            console.warn(`[mission-status] Async completion created 0 ads from ${completedWfIds.length} workflows — output_hydration_failed`);
+            // Reset to processing so we don't show empty completed state
+            await prisma.analysis.update({ where: { id: analysisId }, data: { status: 'processing' } });
+            return NextResponse.json({
+              status: 'processing',
+              pipelinePhase: 'finalizing' as PipelinePhase,
+              tasks: asyncTasks, laneWorkflows: asyncLaneWorkflows,
+              laneStatuses: buildLaneStatuses([], asyncLaneWorkflows, runStatus.lanes, failedLaneNames),
+              message: 'Finalizing your generated posts...',
+              diagnostics: {
+                analysisId, commandId: asyncCommandId, businessId: analysis.businessId,
+                completedWorkflows: completedWfIds, adCount: 0, issue: 'output_hydration_failed',
+              },
+            });
+          }
+
+          const phase: PipelinePhase = failedLaneNames.length > 0 ? 'completed_with_warnings' : 'completed';
           return NextResponse.json({
-            status: 'completed', ads: freshAds, seoData, postingPlan, googleAdsData, websiteConceptData, budgetData,
+            status: 'completed', pipelinePhase: phase, ads: freshAds, seoData, postingPlan, googleAdsData, websiteConceptData, budgetData,
             tasks: asyncTasks, laneWorkflows: asyncLaneWorkflows,
+            laneStatuses: buildLaneStatuses(freshAds, asyncLaneWorkflows, runStatus.lanes, failedLaneNames),
             ...(failedLaneNames.length > 0 ? { failedLanes: failedLaneNames } : {}),
           });
         } catch (err: any) {
           console.error('[mission-status] Async completion failed, resetting:', err?.message);
           await prisma.analysis.update({ where: { id: analysisId }, data: { status: 'processing' } });
-          return NextResponse.json({ error: 'Failed to process results', tasks: asyncTasks }, { status: 500 });
+          return NextResponse.json({
+            status: 'processing',
+            pipelinePhase: 'finalizing' as PipelinePhase,
+            tasks: asyncTasks,
+            laneStatuses: buildLaneStatuses([], asyncLaneWorkflows, runStatus.lanes),
+            message: 'Finalizing your generated posts...',
+            diagnostics: {
+              analysisId, commandId: asyncCommandId, businessId: analysis.businessId,
+              issue: 'completion_exception', error: err?.message,
+            },
+          });
         }
       }
 
@@ -433,10 +572,19 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // Determine generating phase based on lane statuses
+      const anyLaneRunning = runStatus.lanes.some(l => l.status === 'processing');
+      const anyLaneQueued = runStatus.lanes.some(l => l.status === 'queued');
+      const asyncPhase: PipelinePhase = anyLaneRunning ? 'generating'
+        : anyLaneQueued ? 'pipeline_preparing'
+        : 'generating';
+
       return NextResponse.json({
         status: 'processing',
+        pipelinePhase: asyncPhase,
         tasks: asyncTasks,
         laneWorkflows: asyncLaneWorkflows,
+        laneStatuses: buildLaneStatuses(partialAds, asyncLaneWorkflows, runStatus.lanes),
         ...(partialAds.length > 0 ? { ads: partialAds } : {}),
       });
     }
@@ -450,7 +598,9 @@ export async function GET(request: NextRequest) {
       if (analysis.status === 'error') {
         return NextResponse.json({
           status: 'error',
+          pipelinePhase: 'failed' as PipelinePhase,
           tasks: [],
+          laneStatuses: buildLaneStatuses([], laneWorkflows),
           errorReason: 'Analysis pipeline could not be created. Please try again.',
         });
       }
@@ -472,7 +622,9 @@ export async function GET(request: NextRequest) {
           // Return processing so the frontend re-polls and picks up the recovered run
           return NextResponse.json({
             status: 'processing',
+            pipelinePhase: 'pipeline_preparing' as PipelinePhase,
             tasks: [],
+            laneStatuses: buildLaneStatuses([], laneWorkflows),
             message: 'Recovered analysis pipeline — resuming...',
           });
         }
@@ -485,7 +637,9 @@ export async function GET(request: NextRequest) {
         });
         return NextResponse.json({
           status: 'error',
+          pipelinePhase: 'failed' as PipelinePhase,
           tasks: [],
+          laneStatuses: buildLaneStatuses([], laneWorkflows),
           errorReason: 'Analysis pipeline was not created. Please try again.',
         });
       }
@@ -493,7 +647,9 @@ export async function GET(request: NextRequest) {
       // Still within timeout — missions are being launched
       return NextResponse.json({
         status: 'processing',
+        pipelinePhase: 'connecting' as PipelinePhase,
         tasks: [],
+        laneStatuses: buildLaneStatuses([], laneWorkflows),
         message: 'Launching analysis pipeline...',
       });
     }
@@ -536,12 +692,14 @@ export async function GET(request: NextRequest) {
           const cachedResults = (refetched.results ?? {}) as any;
           return NextResponse.json({
             status: 'completed',
+            pipelinePhase: 'completed' as PipelinePhase,
             ads: freshAds,
             seoData: refetched.seoData ?? null,
             postingPlan: refetched.postingPlan ?? null,
             googleAdsData: cachedResults.googleAds ?? null,
             websiteConceptData: cachedResults.websiteConcept ?? null,
             budgetData: cachedResults.budget ?? null,
+            laneStatuses: buildLaneStatuses(freshAds, laneWorkflows),
             tasks: [],
           });
         }
@@ -555,13 +713,18 @@ export async function GET(request: NextRequest) {
               where: { id: analysisId },
               data: { status: 'processing' },
             });
-            // Next poll will re-attempt the lock
           }
         }
 
         // Still completing — tell frontend to keep polling
         console.log(`[mission-status] analysisId=${analysisId} completion in progress, returning pending`);
-        return NextResponse.json({ status: 'processing', tasks: statusResult.tasks ?? [] });
+        return NextResponse.json({
+          status: 'processing',
+          pipelinePhase: 'finalizing' as PipelinePhase,
+          tasks: statusResult.tasks ?? [],
+          laneStatuses: buildLaneStatuses([], laneWorkflows),
+          message: 'Finalizing your generated posts...',
+        });
       }
 
       // We won the lock — proceed with ad creation (FAST path: use Tombstone images first)
@@ -688,8 +851,27 @@ export async function GET(request: NextRequest) {
           }
         }
 
+        // Check if we actually have ads
+        const hasUsableAdsLegacy = (freshAds?.length ?? 0) > 0;
+        if (!hasUsableAdsLegacy) {
+          console.warn(`[mission-status] Legacy completion created 0 ads from ${workflowIds.length} workflows — output_hydration_failed`);
+          await prisma.analysis.update({ where: { id: analysisId }, data: { status: 'processing' } });
+          return NextResponse.json({
+            status: 'processing',
+            pipelinePhase: 'finalizing' as PipelinePhase,
+            tasks: statusResult.tasks ?? [],
+            laneStatuses: buildLaneStatuses([], laneWorkflows),
+            message: 'Finalizing your generated posts...',
+            diagnostics: {
+              analysisId, businessId: analysis.businessId,
+              workflowIds, adCount: 0, issue: 'output_hydration_failed',
+            },
+          });
+        }
+
         return NextResponse.json({
           status: 'completed',
+          pipelinePhase: 'completed' as PipelinePhase,
           ads: freshAds,
           seoData,
           postingPlan,
@@ -698,6 +880,7 @@ export async function GET(request: NextRequest) {
           budgetData,
           socialStatus,
           laneWorkflows,
+          laneStatuses: buildLaneStatuses(freshAds, laneWorkflows),
           tasks: statusResult.tasks ?? [],
         });
       } catch (err: any) {
@@ -707,7 +890,17 @@ export async function GET(request: NextRequest) {
           where: { id: analysisId },
           data: { status: 'processing' },
         });
-        return NextResponse.json({ error: 'Failed to process results', tasks: [] }, { status: 500 });
+        return NextResponse.json({
+          status: 'processing',
+          pipelinePhase: 'finalizing' as PipelinePhase,
+          tasks: statusResult.tasks ?? [],
+          laneStatuses: buildLaneStatuses([], laneWorkflows),
+          message: 'Finalizing your generated posts...',
+          diagnostics: {
+            analysisId, businessId: analysis.businessId,
+            issue: 'completion_exception', error: err?.message,
+          },
+        });
       }
     }
 
@@ -848,6 +1041,7 @@ export async function GET(request: NextRequest) {
 
           return NextResponse.json({
             status: 'completed',
+            pipelinePhase: (failedLanes.length > 0 ? 'completed_with_warnings' : 'completed') as PipelinePhase,
             ads: freshAds,
             seoData,
             postingPlan,
@@ -855,6 +1049,7 @@ export async function GET(request: NextRequest) {
             websiteConceptData,
             budgetData,
             laneWorkflows,
+            laneStatuses: buildLaneStatuses(freshAds, laneWorkflows, undefined, failedLanes),
             failedLanes,
             tasks: statusResult.tasks ?? [],
           });
@@ -953,10 +1148,17 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Determine pipeline phase for non-completed statuses
+    const legacyPhase: PipelinePhase = mappedStatus === 'error'
+      ? 'failed'
+      : (statusResult.tasks ?? []).length > 0 ? 'generating' : 'pipeline_preparing';
+
     return NextResponse.json({
       status: mappedStatus,
+      pipelinePhase: legacyPhase,
       tasks: statusResult.tasks ?? [],
       laneWorkflows,
+      laneStatuses: buildLaneStatuses(partialAds, laneWorkflows, undefined, failedLanes),
       ...(partialAds.length > 0 ? { ads: partialAds } : {}),
       ...(errorReason ? { errorReason } : {}),
       ...(failedLanes.length > 0 ? { failedLanes } : {}),

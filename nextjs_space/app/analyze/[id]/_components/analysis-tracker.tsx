@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Loader2, CheckCircle, AlertCircle, Search, Sparkles, FileCheck,
+  Loader2, CheckCircle, CheckCircle2, AlertCircle, Search, Sparkles, FileCheck,
   Lock, Clock, CircleDot, XCircle, MapPin, Edit3,
   Building2, Newspaper, CalendarHeart, Plus,
 } from 'lucide-react';
@@ -703,11 +703,22 @@ const LANE_CONFIG: Record<string, { label: string; description: string; icon: Re
   seasonal: { label: 'Upcoming Holiday', description: 'Tied to upcoming calendar events', icon: CalendarHeart, color: 'text-rose-600', bgColor: 'bg-rose-50' },
 };
 
+/** Strict pipeline phase ordering — frontend must never move backward */
+const PHASE_ORDER = ['connecting', 'pipeline_preparing', 'generating', 'finalizing', 'completed', 'completed_with_warnings', 'failed'] as const;
+type PipelinePhase = typeof PHASE_ORDER[number];
+
+function phaseRank(p: PipelinePhase): number {
+  const idx = PHASE_ORDER.indexOf(p);
+  return idx >= 0 ? idx : 0;
+}
+
 export default function AnalysisTracker({ analysisId }: { analysisId: string }) {
   const [phase, setPhase] = useState<'location' | 'tracking'>('location');
   const [status, setStatus] = useState('processing');
+  const [pipelinePhase, setPipelinePhase] = useState<PipelinePhase>('connecting');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [ads, setAds] = useState<Ad[]>([]);
+  const [laneStatuses, setLaneStatuses] = useState<Record<string, any>>({});
   const [laneWorkflows, setLaneWorkflows] = useState<Record<string, string | string[]>>({});
   const [seoData, setSeoData] = useState<any>(null);
   const [postingPlan, setPostingPlan] = useState<any>(null);
@@ -725,6 +736,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const consecutiveErrorsRef = React.useRef<number>(0);
   const stallCountRef = React.useRef(stallCount);
   stallCountRef.current = stallCount;
+  const highWaterPhaseRef = React.useRef<PipelinePhase>('connecting');
   const { data: session } = useSession() || {};
   const router = useRouter();
 
@@ -740,8 +752,25 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
 
       setStatus(s);
 
-      // Stall detection: increment counter if still processing with no tasks
-      if (s === 'processing' && (!data?.tasks || data.tasks.length === 0)) {
+      // Update pipeline phase with high-water mark — NEVER go backward
+      const serverPhase = (data?.pipelinePhase ?? 'connecting') as PipelinePhase;
+      const serverRank = phaseRank(serverPhase);
+      const currentRank = phaseRank(highWaterPhaseRef.current);
+      // Allow terminal states (completed, completed_with_warnings, failed) to override,
+      // but never go from completed/failed back to connecting/generating
+      if (serverRank >= currentRank) {
+        highWaterPhaseRef.current = serverPhase;
+        setPipelinePhase(serverPhase);
+      } else {
+        // Server sent a lower phase (e.g. processing after completed) — ignore it
+        console.warn(`[analysis-tracker] Ignoring backward phase transition: ${serverPhase} < ${highWaterPhaseRef.current}`);
+      }
+
+      // Update lane statuses
+      if (data?.laneStatuses) setLaneStatuses(data.laneStatuses);
+
+      // Stall detection: increment counter if still in connecting phase with no tasks and no pipelinePhase advance
+      if (s === 'processing' && (!data?.tasks || data.tasks.length === 0) && serverPhase === 'connecting') {
         setStallCount(prev => prev + 1);
       } else {
         setStallCount(0);
@@ -760,7 +789,21 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       // Accept partial ads during generation (progressive lane results)
       if (data?.ads?.length) setAds(data.ads);
 
+      // Log diagnostics if present
+      if (data?.diagnostics) {
+        console.warn('[analysis-tracker] Diagnostics:', JSON.stringify(data.diagnostics));
+      }
+
       if (s === 'completed') {
+        // CRITICAL: Only accept 'completed' if there are actual ads
+        const adsReceived = data?.ads?.length ?? 0;
+        if (adsReceived === 0) {
+          console.warn('[analysis-tracker] Server said completed but 0 ads — treating as finalizing');
+          // Don't set status to completed; keep processing
+          setStatus('processing');
+          return;
+        }
+
         if (data?.seoData) setSeoData(data.seoData);
         if (data?.postingPlan) setPostingPlan(data.postingPlan);
         if (data?.googleAdsData) setGoogleAdsData(data.googleAdsData);
@@ -770,8 +813,6 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         if (data?.failedLanes?.length) setFailedLanes(data.failedLanes);
 
         // Safety net: if fewer than 3 ads arrived, do 1-2 delayed re-polls
-        // to catch any ads created by the completion path just after status flipped
-        const adsReceived = data?.ads?.length ?? 0;
         if (adsReceived < 3) {
           const doDelayedPoll = async (delay: number) => {
             await new Promise(r => setTimeout(r, delay));
@@ -786,7 +827,6 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         }
       } else if (s === 'error') {
         setError(data?.errorReason ?? 'Analysis failed. Please try again.');
-        // Extract the failing stage from task data for the error screen
         if (data?.tasks?.length) {
           const failed = data.tasks.find((t: any) => t.status === 'error' && t.lastError);
           if (failed) {
@@ -908,12 +948,12 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     checkState();
   }, [analysisId]);
 
-  // If user is confirmed and analysis is complete, redirect to results
+  // If user is confirmed and analysis is complete WITH ads, redirect to results
   useEffect(() => {
-    if (status === 'completed' && (session?.user as any)?.confirmed) {
+    if (status === 'completed' && ads.length > 0 && (session?.user as any)?.confirmed) {
       router.push(`/results/${analysisId}`);
     }
-  }, [status, session, analysisId, router]);
+  }, [status, session, analysisId, router, ads]);
 
   // Deduplicate tasks by department across 3 parallel workflows for cleaner display.
   // Enforce sequential appearance: a step can only show "active" if the prior step
@@ -992,24 +1032,59 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     );
   }
 
-  const isGenerating = status !== 'completed';
+  // Use pipelinePhase for UI state — ads must exist for completed to be true
+  const hasUsableAds = ads.length > 0;
+  const isCompleted = (pipelinePhase === 'completed' || pipelinePhase === 'completed_with_warnings') && hasUsableAds;
+  const isFinalizing = pipelinePhase === 'finalizing' || (status === 'completed' && !hasUsableAds);
+  const isGenerating = !isCompleted && pipelinePhase !== 'failed';
+
+  // Pipeline step indicators
+  const stepItems = React.useMemo(() => {
+    const p = pipelinePhase;
+    const r = phaseRank(p);
+    return [
+      {
+        label: r >= phaseRank('pipeline_preparing') ? 'Connected to AI agents' : 'Connecting to AI agents...',
+        status: r >= phaseRank('pipeline_preparing') ? 'complete' as const : 'active' as const,
+      },
+      {
+        label: r >= phaseRank('generating') ? 'Analysis pipeline ready' : 'Preparing analysis pipeline...',
+        status: r >= phaseRank('generating') ? 'complete' as const : r >= phaseRank('pipeline_preparing') ? 'active' as const : 'waiting' as const,
+      },
+      {
+        label: r >= phaseRank('finalizing') ? 'Posts generated' : 'Generating posts...',
+        status: r >= phaseRank('finalizing') ? 'complete' as const : r >= phaseRank('generating') ? 'active' as const : 'waiting' as const,
+      },
+      {
+        label: isCompleted ? 'Posts ready' : 'Finalizing posts...',
+        status: isCompleted ? 'complete' as const : r >= phaseRank('finalizing') ? 'active' as const : 'waiting' as const,
+      },
+    ];
+  }, [pipelinePhase, isCompleted]);
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-12">
       {/* Header */}
       <div className="text-center mb-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-          {isGenerating ? 'Creating Your Posts...' : 'Your Results Are Ready!'}
+          {isCompleted ? 'Your Results Are Ready!'
+            : isFinalizing ? 'Finalizing Your Posts...'
+            : 'Creating Your Posts...'}
         </h1>
-        {isGenerating && (
+        {isGenerating && !isFinalizing && (
           <p className="text-blue-600 mt-2 text-base font-medium">
             First-time analysis may take a few minutes while our AI agents research your business.
           </p>
         )}
+        {isFinalizing && (
+          <p className="text-blue-600 mt-2 text-base font-medium">
+            Almost there — assembling your generated posts...
+          </p>
+        )}
         <p className="text-gray-500 mt-2 text-sm">
-          {isGenerating
-            ? 'Our AI agents are analyzing your business and crafting 3 unique posts'
-            : 'Register with your business email to download without watermarks'}
+          {isCompleted
+            ? 'Register with your business email to download without watermarks'
+            : 'Our AI agents are analyzing your business and crafting 3 unique posts'}
         </p>
       </div>
 
@@ -1074,11 +1149,25 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
             </div>
           ) : (
             <div className="space-y-2">
-              {/* Placeholder skeleton while tasks load */}
-              {['Connecting to AI agents...', 'Preparing analysis pipeline...'].map((text, i) => (
-                <div key={i} className="flex items-center gap-3 px-4 py-3 rounded-lg bg-blue-50 border border-blue-200">
-                  <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                  <span className="text-sm font-medium text-blue-700">{text}</span>
+              {/* Pipeline step indicators — sequenced by pipelinePhase */}
+              {stepItems.map((step, i) => (
+                <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-lg border ${
+                  step.status === 'complete' ? 'bg-green-50 border-green-200'
+                    : step.status === 'active' ? 'bg-blue-50 border-blue-200'
+                    : 'bg-gray-50 border-gray-200'
+                }`}>
+                  {step.status === 'complete' ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500" />
+                  ) : step.status === 'active' ? (
+                    <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                  ) : (
+                    <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+                  )}
+                  <span className={`text-sm font-medium ${
+                    step.status === 'complete' ? 'text-green-700'
+                      : step.status === 'active' ? 'text-blue-700'
+                      : 'text-gray-400'
+                  }`}>{step.label}</span>
                 </div>
               ))}
               {stallCount >= 10 && (
@@ -1098,7 +1187,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       )}
 
       {/* Completed: Show all tasks as done */}
-      {!isGenerating && displayTasks.length > 0 && (
+      {isCompleted && displayTasks.length > 0 && (
         <div className="max-w-lg mx-auto mb-8">
           <div className="space-y-1">
             {displayTasks.map((task, i) => (
@@ -1109,7 +1198,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       )}
 
       {/* Results: Lane-Based Posts */}
-      {!isGenerating && (
+      {isCompleted && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
           {/* Posts by Content Lane */}
           <div className="mb-12">

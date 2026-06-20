@@ -96,6 +96,41 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
   }
 
   const ads: Ad[] = analysis?.ads ?? [];
+
+  // If analysis isn't completed yet, redirect back to the tracker page
+  if (analysis && analysis.status !== 'completed') {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-4" />
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Still Generating Your Posts</h2>
+        <p className="text-gray-500 mb-6">Your posts are still being created. You&apos;ll be redirected when they&apos;re ready.</p>
+        <button
+          onClick={() => router.push(`/analyze/${analysisId}`)}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+        >
+          Back to Progress Tracker
+        </button>
+      </div>
+    );
+  }
+
+  // Analysis is completed but zero ads exist — something went wrong in generation
+  if (analysis && ads.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Posts Still Finalizing</h2>
+        <p className="text-gray-500 mb-6 max-w-md">Your analysis completed but the post images are still being processed. Please check back in a moment.</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+        >
+          Refresh Results
+        </button>
+      </div>
+    );
+  }
+
   const seoData = analysis?.seoData ?? null;
   const postingPlan = analysis?.postingPlan ?? null;
   const cachedResults = analysis?.results ?? {};
@@ -242,7 +277,8 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
               )) : (
                 <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-8 text-center">
                   <Icon className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                  <p className="text-sm text-gray-400">No post generated</p>
+                  <p className="text-sm text-gray-400">This lane didn&apos;t produce a post this time</p>
+                  <p className="text-xs text-gray-300 mt-1">Try generating again to fill this slot</p>
                 </div>
               )}
             </div>
