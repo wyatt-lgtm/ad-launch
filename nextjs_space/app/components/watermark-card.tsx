@@ -202,7 +202,7 @@ export default function WatermarkCard({
       )}
       {showWatermark && (
         <div className="watermark-overlay">
-          <span className="watermark-text">Ad Launch</span>
+          <span className="watermark-text">Launch OS</span>
         </div>
       )}
       {/* Angle badge */}

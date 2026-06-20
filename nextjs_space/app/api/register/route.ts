@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
     const htmlBody = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
         <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #2563EB; margin: 0;">Ad Launch</h1>
+          <h1 style="color: #2563EB; margin: 0;">Launch OS</h1>
         </div>
         <h2 style="color: #1E293B;">Confirm Your Email</h2>
         <p style="color: #475569; font-size: 16px; line-height: 1.6;">Hi there!</p>
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
         </div>
         <p style="color: #94A3B8; font-size: 14px;">If the button doesn't work, copy and paste this link:<br/>${confirmLink}</p>
         <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 30px 0;"/>
-        <p style="color: #94A3B8; font-size: 12px; text-align: center;">Thanks,<br/>The Ad Launch Team</p>
+        <p style="color: #94A3B8; font-size: 12px; text-align: center;">Thanks,<br/>The Launch OS Team</p>
       </div>
     `;
 
@@ -189,9 +189,9 @@ export async function POST(request: NextRequest) {
     try {
       emailSent = await sendEmail({
         to: email,
-        subject: 'Confirm your email - Ad Launch',
+        subject: 'Confirm your email - Launch OS',
         html: htmlBody,
-        fromName: 'Ad Launch',
+        fromName: 'Launch OS',
       });
       if (emailSent) {
         console.log('[register] Confirmation email sent to', email);

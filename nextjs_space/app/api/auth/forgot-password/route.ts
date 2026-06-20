@@ -57,16 +57,16 @@ export async function POST(request: Request) {
           <p style="color: #94A3B8; font-size: 13px;">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
           <p style="color: #94A3B8; font-size: 13px; margin-top: 8px;">If the button doesn't work, copy and paste this link:<br/>${resetLink}</p>
           <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 30px 0;"/>
-          <p style="color: #94A3B8; font-size: 12px; text-align: center;">— The Ad Launch Team</p>
+          <p style="color: #94A3B8; font-size: 12px; text-align: center;">— The Launch OS Team</p>
         </div>
       `;
 
       try {
         const emailSent = await sendEmail({
           to: normalizedEmail,
-          subject: 'Reset your password - Ad Launch',
+          subject: 'Reset your password - Launch OS',
           html: htmlBody,
-          fromName: 'Ad Launch',
+          fromName: 'Launch OS',
         });
         if (!emailSent) {
           console.error('[forgot-password] Email send failed');

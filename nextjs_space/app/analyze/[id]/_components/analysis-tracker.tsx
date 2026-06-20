@@ -719,6 +719,8 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const [failedLanes, setFailedLanes] = useState<string[]>([]);
   const [showRegister, setShowRegister] = useState(false);
   const [generatingLane, setGeneratingLane] = useState<string | null>(null);
+  const [stallCount, setStallCount] = useState(0);
+  const [retrying, setRetrying] = useState(false);
   const { data: session } = useSession() || {};
   const router = useRouter();
 
@@ -733,6 +735,13 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       if (s === 'pending_location') return;
 
       setStatus(s);
+
+      // Stall detection: increment counter if still processing with no tasks
+      if (s === 'processing' && (!data?.tasks || data.tasks.length === 0)) {
+        setStallCount(prev => prev + 1);
+      } else {
+        setStallCount(0);
+      }
 
       // Capture lane workflow mapping
       if (data?.laneWorkflows && Object.keys(data.laneWorkflows).length > 0) {
@@ -958,7 +967,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         </h1>
         {isGenerating && (
           <p className="text-blue-600 mt-2 text-base font-medium">
-            First time complete analysis of business may take up to 5 minutes.
+            First-time analysis may take a few minutes while our AI agents research your business.
           </p>
         )}
         <p className="text-gray-500 mt-2 text-sm">
@@ -994,6 +1003,28 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
                 <TaskRow key={`${task.label}-${i}`} task={task} index={i} />
               ))}
             </div>
+          ) : stallCount >= 20 ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200">
+                <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                <div className="text-sm">
+                  <p className="font-medium text-amber-800">Our content engine is warming up</p>
+                  <p className="text-amber-600 mt-1">This can happen after periods of inactivity. Your posts are queued and will generate once the engine is ready.</p>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  setRetrying(true);
+                  setStallCount(0);
+                  try { await fetch(`/api/mission-status?analysisId=${analysisId}`); } catch {}
+                  setTimeout(() => setRetrying(false), 3000);
+                }}
+                disabled={retrying}
+                className="w-full py-2.5 rounded-lg border border-amber-300 bg-amber-100 text-amber-800 text-sm font-medium hover:bg-amber-200 transition-colors disabled:opacity-50"
+              >
+                {retrying ? 'Checking...' : 'Check Again'}
+              </button>
+            </div>
           ) : (
             <div className="space-y-2">
               {/* Placeholder skeleton while tasks load */}
@@ -1003,6 +1034,9 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
                   <span className="text-sm font-medium text-blue-700">{text}</span>
                 </div>
               ))}
+              {stallCount >= 10 && (
+                <p className="text-xs text-gray-400 text-center mt-2">Still connecting to our content engine — this may take a moment...</p>
+              )}
             </div>
           )}
 

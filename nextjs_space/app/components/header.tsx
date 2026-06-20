@@ -77,7 +77,7 @@ export default function Header() {
           <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center group-hover:bg-blue-700 transition-colors">
             <Rocket className="w-5 h-5 text-white" />
           </div>
-          <span className="text-xl font-bold text-gray-900">Ad <span className="text-blue-600">Launch</span></span>
+          <span className="text-xl font-bold text-gray-900">Launch <span className="text-blue-600">OS</span></span>
         </Link>
 
         <nav className="hidden md:flex items-center gap-1">

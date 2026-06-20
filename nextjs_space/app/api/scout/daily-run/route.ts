@@ -400,7 +400,7 @@ function buildScoutEmailHtml(
 
         <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-top: 20px;">
           You're receiving this because Daily Scout Report is enabled for ${escHtml(businessName)}.
-          <br/>Links expire in 72 hours. Manage settings in Ad Launch → Content Sources.
+          <br/>Links expire in 72 hours. Manage settings in Launch OS → Content Sources.
         </p>
       </div>
     </div>
@@ -420,6 +420,6 @@ async function sendScoutEmail(to: string, businessName: string, htmlBody: string
     to,
     subject: `📰 Daily Scout Report — ${businessName}`,
     html: htmlBody,
-    fromName: 'Ad Launch Scout',
+    fromName: 'Launch OS Scout',
   });
 }

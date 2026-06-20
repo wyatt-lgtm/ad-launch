@@ -373,7 +373,7 @@ async function trySendCompletionEmail(
 
   const emailSent = await sendNotificationEmailHelper({
     to: pkg.user.email,
-    subject: 'Your Ad Launch post is ready',
+    subject: 'Your Launch OS post is ready',
     html,
     notificationId: '', // legacy — no longer used
   });
