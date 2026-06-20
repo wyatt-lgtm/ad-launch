@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Loader2, CheckCircle, CheckCircle2, AlertCircle, Search, Sparkles, FileCheck,
+  Loader2, CheckCircle, AlertCircle, Search, Sparkles, FileCheck,
   Lock, Clock, CircleDot, XCircle, MapPin, Edit3,
   Building2, Newspaper, CalendarHeart, Plus,
 } from 'lucide-react';
@@ -1159,7 +1159,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
                     : 'bg-gray-50 border-gray-200'
                 }`}>
                   {step.status === 'complete' ? (
-                    <CheckCircle2 className="w-5 h-5 text-green-500" />
+                    <CheckCircle className="w-5 h-5 text-green-500" />
                   ) : step.status === 'active' ? (
                     <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
                   ) : (
