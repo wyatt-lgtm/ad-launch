@@ -10,16 +10,16 @@ const inter = Inter({ subsets: ['latin'] });
 export async function generateMetadata(): Promise<Metadata> {
   const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
   return {
-    title: 'Ad Launch - Turn Your Website Into a Social Posting Factory',
-    description: 'Enter your URL and watch AI generate 3 ready-to-post social media creatives from your website, local news, and upcoming holidays.',
+    title: 'Launch Connect | AI Website, SEO, CRM & Social Publishing Platform',
+    description: 'Launch Connect by Launch Marketing helps local businesses turn websites, offers, local news, and competitor insights into website previews, SEO pages, social posts, CRM forms, and scheduled social publishing.',
     metadataBase: new URL(baseUrl),
     icons: {
       icon: '/favicon.svg',
       shortcut: '/favicon.svg',
     },
     openGraph: {
-      title: 'Ad Launch - 3 Free AI-Generated Ads in Minutes',
-      description: 'Enter your website URL and get 3 professionally crafted Facebook ads, SEO insights, and a 90-day posting plan.',
+      title: 'Launch Connect | AI Website, SEO, CRM & Social Publishing Platform',
+      description: 'Launch Connect by Launch Marketing helps local businesses turn websites, offers, local news, and competitor insights into website previews, SEO pages, social posts, CRM forms, and scheduled social publishing.',
       images: ['/og-image.png'],
     },
   };

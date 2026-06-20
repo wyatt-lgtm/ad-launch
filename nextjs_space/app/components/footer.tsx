@@ -12,13 +12,15 @@ export default function Footer() {
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
               <Rocket className="w-4 h-4 text-white" />
             </div>
-            <span className="text-white font-bold">Ad Launch</span>
+            <span className="text-white font-bold">Launch Connect</span>
           </div>
           <div className="flex items-center gap-6 text-sm">
             <Link href="/" className="hover:text-white transition-colors">Home</Link>
             <Link href="/dashboard" className="hover:text-white transition-colors">Dashboard</Link>
+            <a href="#core-services" className="hover:text-white transition-colors">Services</a>
+            <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
           </div>
-          <p className="text-xs text-gray-500">&copy; {new Date().getFullYear()} Ad Launch</p>
+          <p className="text-xs text-gray-500">&copy; {new Date().getFullYear()} Launch Marketing</p>
         </div>
       </div>
     </footer>
