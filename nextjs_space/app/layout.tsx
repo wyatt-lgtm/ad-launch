@@ -10,16 +10,16 @@ const inter = Inter({ subsets: ['latin'] });
 export async function generateMetadata(): Promise<Metadata> {
   const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000';
   return {
-    title: 'Launch Connect | AI Website, SEO, CRM & Social Publishing Platform',
-    description: 'Launch Connect by Launch Marketing helps local businesses turn websites, offers, local news, and competitor insights into website previews, SEO pages, social posts, CRM forms, and scheduled social publishing.',
+    title: 'Launch OS | The AI-Powered Local Marketing Operating System',
+    description: 'Launch OS by Launch Marketing is the AI-powered local marketing operating system for websites, SEO, social, CRM, and ads.',
     metadataBase: new URL(baseUrl),
     icons: {
       icon: '/favicon.svg',
       shortcut: '/favicon.svg',
     },
     openGraph: {
-      title: 'Launch Connect | AI Website, SEO, CRM & Social Publishing Platform',
-      description: 'Launch Connect by Launch Marketing helps local businesses turn websites, offers, local news, and competitor insights into website previews, SEO pages, social posts, CRM forms, and scheduled social publishing.',
+      title: 'Launch OS | The AI-Powered Local Marketing Operating System',
+      description: 'Launch OS by Launch Marketing is the AI-powered local marketing operating system for websites, SEO, social, CRM, and ads.',
       images: ['/og-image.png'],
     },
   };
