@@ -17,5 +17,6 @@ STYLE_GUIDE*
 __pycache__
 *.pyc
 .pytest_cache
-.yarn/cache
-.yarn/install-state.gz
+.yarn
+.yarnrc.yml
+yarn.lock
