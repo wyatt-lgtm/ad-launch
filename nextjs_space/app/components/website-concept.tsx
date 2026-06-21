@@ -4,6 +4,7 @@ import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkle
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import WebsiteAgencyBrief from '@/components/website-agency-brief';
+import MissionProgress from './mission-progress';
 
 interface WebsiteConceptProps {
   data: any;
@@ -880,6 +881,14 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
       {/* Workflow progress */}
       {(generating || workflowStatus === 'completed') && workflowSteps.length > 0 && (
         <WorkflowProgress steps={workflowSteps} status={workflowStatus} />
+      )}
+
+      {/* Progressive Mission Progress (ribbon, timeline, artifact cards) */}
+      {workflowRef.current?.workflowId && (generating || workflowStatus === 'completed' || workflowStatus === 'error') && (
+        <MissionProgress
+          workflowId={workflowRef.current.workflowId}
+          isAdmin={(session?.user as any)?.role === 'admin'}
+        />
       )}
 
       {/* Email prompt modal */}
