@@ -638,7 +638,12 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           setGeneratedUrl(url);
           window.open(url, '_blank');
           setGenerating(false);
-          // Mark all completed steps visually, keep remaining as-is
+          // Mark all steps as complete (including QA) since HTML is ready
+          // QA may still be running but it's non-blocking — user has their site
+          setWorkflowSteps(prev => prev.map(s => ({
+            ...s,
+            status: s.status === 'waiting' ? 'complete' as const : s.status,
+          })));
           setWorkflowStatus('completed');
           return;
         }
@@ -878,17 +883,17 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         </button>
       </div>
 
-      {/* Workflow progress */}
-      {(generating || workflowStatus === 'completed') && workflowSteps.length > 0 && (
-        <WorkflowProgress steps={workflowSteps} status={workflowStatus} />
-      )}
-
-      {/* Progressive Mission Progress (ribbon, timeline, artifact cards) */}
-      {workflowRef.current?.workflowId && (generating || workflowStatus === 'completed' || workflowStatus === 'error') && (
+      {/* Progressive Mission Progress — unified progress display */}
+      {workflowRef.current?.workflowId && (generating || workflowStatus === 'completed' || workflowStatus === 'error') ? (
         <MissionProgress
           workflowId={workflowRef.current.workflowId}
           isAdmin={(session?.user as any)?.role === 'admin'}
         />
+      ) : (
+        /* Fallback: simple workflow progress when MissionProgress has no workflowId yet */
+        (generating || workflowStatus === 'completed') && workflowSteps.length > 0 && (
+          <WorkflowProgress steps={workflowSteps} status={workflowStatus} />
+        )
       )}
 
       {/* Email prompt modal */}

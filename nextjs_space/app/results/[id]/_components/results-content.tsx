@@ -57,22 +57,33 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
     if (analysisId && sessionStatus === 'authenticated') fetchAnalysis();
   }, [analysisId, sessionStatus, router]);
 
-  // Safety net: if analysis loaded but some lanes are empty, retry once after a delay
-  // This catches ads created by the completion path just after initial fetch
-  const retryDoneRef = React.useRef(false);
+  // Safety net: if analysis loaded but some lanes are empty, retry up to 3 times
+  // This catches ads created by the completion path just after initial fetch,
+  // or lanes still being processed by the async pipeline
+  const retryCountRef = React.useRef(0);
+  const MAX_LANE_RETRIES = 3;
+  const RETRY_DELAYS = [4000, 8000, 15000]; // escalating delays
   useEffect(() => {
-    if (!analysis || retryDoneRef.current) return;
-    const ads: Ad[] = analysis?.ads ?? [];
-    const lanes = new Set(ads.map((a: Ad) => a.lane === 'seasonal' ? 'holiday' : a.lane).filter(Boolean));
+    if (!analysis || retryCountRef.current >= MAX_LANE_RETRIES) return;
+    const currentAds: Ad[] = analysis?.ads ?? [];
+    const lanes = new Set(currentAds.map((a: Ad) => a.lane === 'seasonal' ? 'holiday' : a.lane).filter(Boolean));
     if (lanes.size < 3 && analysis?.status === 'completed') {
-      retryDoneRef.current = true;
+      const delay = RETRY_DELAYS[retryCountRef.current] ?? 15000;
+      retryCountRef.current += 1;
       const timer = setTimeout(async () => {
         try {
           const res = await fetch(`/api/analysis/${analysisId}`);
           const data = await res.json().catch(() => ({}));
-          if (res.ok && data?.analysis) setAnalysis(data.analysis);
+          if (res.ok && data?.analysis) {
+            const newAds: Ad[] = data.analysis.ads ?? [];
+            const newLanes = new Set(newAds.map((a: Ad) => a.lane === 'seasonal' ? 'holiday' : a.lane).filter(Boolean));
+            // Only update if we gained new lanes or ads
+            if (newLanes.size > lanes.size || newAds.length > currentAds.length) {
+              setAnalysis(data.analysis);
+            }
+          }
         } catch { /* ignore */ }
-      }, 4000);
+      }, delay);
       return () => clearTimeout(timer);
     }
   }, [analysis, analysisId]);

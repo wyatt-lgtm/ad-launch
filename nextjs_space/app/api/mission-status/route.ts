@@ -453,19 +453,28 @@ export async function GET(request: NextRequest) {
             wfToLane[wfId] = lane;
           }
 
+          // Log lane→workflow mapping for diagnostics
+          console.log(`[mission-status] Async completion: ${completedWfIds.length} workflows completed, ${results.ads.length} ads extracted, wfToLane=${JSON.stringify(wfToLane)}`);
+
           let createdCount = 0;
+          const unmappedLanes: string[] = [];
           for (const ad of results.ads) {
             let imageKey = ad?.imageUrl ?? null;
             if (imageKey && imageKey.startsWith('http') && !imageKey.includes('.s3.')) {
               try { const p = new URL(imageKey); let path = p.pathname.replace(/^\/+/, ''); if (path.startsWith('tombstoner2/')) path = path.slice('tombstoner2/'.length); imageKey = path; } catch {}
             }
+            const assignedLane = wfToLane[ad?.workflowId] ?? null;
+            if (!assignedLane) unmappedLanes.push(ad?.workflowId ?? 'unknown');
             const { created } = await createAdIdempotent({
               analysisId: analysis.id, imageUrl: imageKey, caption: ad?.caption ?? '',
-              headline: ad?.headline ?? 'Ad', watermarked: true, lane: wfToLane[ad?.workflowId] ?? null,
+              headline: ad?.headline ?? 'Ad', watermarked: true, lane: assignedLane,
             });
             if (created) createdCount++;
           }
-          console.log(`[mission-status] Async completion: created ${createdCount} ads`);
+          if (unmappedLanes.length > 0) {
+            console.warn(`[mission-status] ${unmappedLanes.length} ads had no lane mapping (workflows: ${unmappedLanes.join(', ')})`);
+          }
+          console.log(`[mission-status] Async completion: created ${createdCount} ads for ${Object.keys(wfToLane).length} lanes`);
 
           await prisma.analysis.update({
             where: { id: analysisId },

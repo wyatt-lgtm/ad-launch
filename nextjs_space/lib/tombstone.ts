@@ -1253,6 +1253,10 @@ export async function getWorkflowResults(workflowIds: string[]) {
       }
       if (bestAdTask) {
         ads.push({ taskId: bestAdTask.id, workflowId: wfId });
+      } else {
+        // Log why this workflow produced no ad task
+        const taskDepts = tasks.map((t: any) => `${t.department}(${t.status})`).join(', ');
+        console.warn(`[getWorkflowResults] Workflow ${wfId} has ${tasks.length} tasks but no completed ad task. Tasks: ${taskDepts}`);
       }
     }
 
