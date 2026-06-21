@@ -2,12 +2,12 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { sendEmail } from '@/lib/email';
+import { createGHLContact, sendGHLEmail } from '@/lib/ghl';
 import crypto from 'crypto';
 
 /**
  * POST /api/auth/forgot-password
- * Generates a password reset token, stores it, and emails a reset link.
+ * Generates a password reset token, stores it, and emails a reset link via GHL.
  * Always returns success to avoid leaking whether an email exists.
  */
 export async function POST(request: Request) {
@@ -48,8 +48,9 @@ export async function POST(request: Request) {
       const htmlBody = `
         <div style="font-family: 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
           <div style="text-align: center; margin-bottom: 30px;">
-            <h1 style="color: #1E293B; font-size: 24px; margin: 0;">Reset Your Password</h1>
+            <h1 style="color: #2563EB; margin: 0;">Launch OS</h1>
           </div>
+          <h2 style="color: #1E293B; font-size: 20px;">Reset Your Password</h2>
           <p style="color: #475569; font-size: 15px; line-height: 1.6;">We received a request to reset your password. Click the button below to choose a new one:</p>
           <div style="text-align: center; margin: 30px 0;">
             <a href="${resetLink}" style="display: inline-block; padding: 14px 32px; background-color: #2563EB; color: white; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px;">Reset Password</a>
@@ -57,24 +58,29 @@ export async function POST(request: Request) {
           <p style="color: #94A3B8; font-size: 13px;">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
           <p style="color: #94A3B8; font-size: 13px; margin-top: 8px;">If the button doesn't work, copy and paste this link:<br/>${resetLink}</p>
           <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 30px 0;"/>
-          <p style="color: #94A3B8; font-size: 12px; text-align: center;">— The Launch OS Team</p>
+          <p style="color: #94A3B8; font-size: 12px; text-align: center;">Thanks,<br/>The Launch OS Team</p>
         </div>
       `;
 
       try {
-        const emailSent = await sendEmail({
-          to: normalizedEmail,
-          subject: 'Reset your password - Launch OS',
-          html: htmlBody,
-          fromName: 'Launch OS',
-        });
-        if (!emailSent) {
-          console.error('[forgot-password] Email send failed');
+        // Find or create the GHL contact, then send via GHL
+        const contactResult = await createGHLContact(normalizedEmail, (user as any).name || undefined);
+        if (contactResult.contactId) {
+          const emailResult = await sendGHLEmail(
+            contactResult.contactId,
+            'Reset your password - Launch OS',
+            htmlBody,
+          );
+          if (!emailResult.success) {
+            console.error('[forgot-password] GHL email send failed:', emailResult.data);
+          } else {
+            console.log('[forgot-password] Reset email sent via GHL to', normalizedEmail);
+          }
         } else {
-          console.log('[forgot-password] Reset email sent to', normalizedEmail);
+          console.error('[forgot-password] Failed to create/find GHL contact for', normalizedEmail);
         }
       } catch (emailErr: any) {
-        console.error('[forgot-password] Email send error:', emailErr?.message);
+        console.error('[forgot-password] GHL email send error:', emailErr?.message);
       }
     }
 
