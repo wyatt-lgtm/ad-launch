@@ -1253,6 +1253,11 @@ export async function getWorkflowResults(workflowIds: string[]) {
       }
       if (bestAdTask) {
         ads.push({ taskId: bestAdTask.id, workflowId: wfId });
+      } else if (wfCreativeStrategy.has(wfId)) {
+        // Render Production failed but Creative Strategy completed — use copy-only fallback
+        const taskDepts = tasks.map((t: any) => `${t.department}(${t.status})`).join(', ');
+        console.warn(`[getWorkflowResults] Workflow ${wfId}: Render failed, falling back to Creative Strategy (task ${wfCreativeStrategy.get(wfId)}). Tasks: ${taskDepts}`);
+        ads.push({ taskId: wfCreativeStrategy.get(wfId)!, workflowId: wfId, copyOnly: true });
       } else {
         // Log why this workflow produced no ad task
         const taskDepts = tasks.map((t: any) => `${t.department}(${t.status})`).join(', ');
@@ -1265,6 +1270,40 @@ export async function getWorkflowResults(workflowIds: string[]) {
     // Claude Hopkins (legacy): { assets: [...], final_ad_path, ... }
     const enrichedAds = [];
     for (const ad of ads) {
+      // ── Copy-only fallback: Creative Strategy output (no rendered image) ──
+      if ((ad as any).copyOnly) {
+        const outputs = await getTaskOutputs(ad.taskId);
+        let headline = '';
+        let caption = '';
+        let cta = '';
+        for (const out of outputs) {
+          try {
+            const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+            if (parsed?.headline) {
+              headline = parsed.headline;
+              caption = parsed.body_copy ?? parsed.body ?? '';
+              cta = parsed.cta ?? '';
+              break;
+            }
+          } catch { /* ignore */ }
+        }
+        if (headline || caption) {
+          console.log(`[getWorkflowResults] Copy-only ad from Creative Strategy for workflow ${ad.workflowId}: headline=${headline.slice(0, 40)}...`);
+          enrichedAds.push({
+            taskId: ad.taskId,
+            workflowId: ad.workflowId,
+            headline,
+            caption,
+            cta,
+            imageUrl: null, // No rendered image — Render Production failed
+            copyOnly: true,
+          });
+        } else {
+          console.warn(`[getWorkflowResults] Copy-only fallback for workflow ${ad.workflowId} produced no usable copy`);
+        }
+        continue;
+      }
+
       const outputs = await getTaskOutputs(ad.taskId);
       let taskOutput: any = null;
       for (const out of outputs) {

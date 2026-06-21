@@ -166,8 +166,15 @@ export async function GET(request: NextRequest) {
         const parsed = JSON.parse(analysis.missionId);
         if (typeof parsed === 'object' && !Array.isArray(parsed)) {
           if (parsed.command_id && parsed.async) {
-            // New async format: { command_id, async: true }
+            // New async format: { command_id, async: true, website?: 'wf-1', ... }
             asyncCommandId = parsed.command_id;
+            // Also extract lane workflow IDs from enriched missionId
+            // so the cached-completion path can detect failed lanes
+            for (const [key, val] of Object.entries(parsed)) {
+              if (key !== 'command_id' && key !== 'async' && key !== 'duplicate' && typeof val === 'string') {
+                laneWorkflows[key] = val as string;
+              }
+            }
           } else {
             // Legacy format: { website: 'wf-1', news: 'wf-2', holiday: 'wf-3' }
             laneWorkflows = parsed;
