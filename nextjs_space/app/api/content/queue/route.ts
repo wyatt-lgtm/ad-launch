@@ -72,7 +72,8 @@ export async function GET(request: Request) {
       cache: 'no-store',
     });
     if (!res.ok) {
-      return NextResponse.json({ error: 'Failed to fetch content queue' }, { status: res.status });
+      console.warn(`[content/queue] Tombstone returned ${res.status} — returning empty queue`);
+      return NextResponse.json([]);
     }
     const data = await res.json();
 
