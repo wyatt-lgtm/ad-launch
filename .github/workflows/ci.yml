@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   frontend-build:
@@ -42,6 +43,10 @@ jobs:
       - name: Patch Next config for CI/Render path
         run: |
           sed -i '/outputFileTracingRoot/d' next.config.js
+
+      - name: Add CI-only yarn.lock placeholder
+        run: |
+          test -f yarn.lock || touch yarn.lock
 
       - name: Generate Prisma client
         run: npx prisma generate
