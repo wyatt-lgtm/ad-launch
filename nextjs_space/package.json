@@ -118,7 +118,6 @@
     "react-select": "5.8.0",
     "react-use": "17.6.0",
     "recharts": "2.15.3",
-    "regl": "npm:@plotly/regl@^2.1.2",
     "rss-parser": "^3.13.0",
     "sonner": "1.5.0",
     "stripe": "^22.1.1",
