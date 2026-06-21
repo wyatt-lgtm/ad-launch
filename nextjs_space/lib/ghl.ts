@@ -22,7 +22,14 @@ export async function createGHLContact(email: string, name?: string) {
       }),
     });
     const data = await res.json().catch(() => ({}));
-    return { success: res.ok, data, contactId: data?.contact?.id ?? null };
+
+    // GHL returns contactId in data.contact.id on success (200/201)
+    // but in data.meta.contactId on duplicate (400 "does not allow duplicated contacts")
+    const contactId = data?.contact?.id ?? data?.meta?.contactId ?? null;
+    if (contactId) {
+      console.log('[GHL] Contact resolved:', contactId, res.ok ? '(created)' : '(existing)');
+    }
+    return { success: true, data, contactId };
   } catch (err: any) {
     console.error('GHL create contact error:', err?.message);
     return { success: false, data: null, contactId: null };
