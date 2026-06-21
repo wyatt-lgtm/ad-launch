@@ -30,6 +30,7 @@ model User {
   postPackages      PostPackage[]
   generationRuns    GenerationRun[]
   uploadedAssets    BusinessAsset[]
+  siteFeedback      SiteFeedback[]   @relation("SiteFeedbackUser")
 }
 
 model Business {
@@ -792,4 +793,29 @@ model GenerationRun {
   @@index([userId])
   @@index([status])
   @@index([createdAt])
+}
+
+// ── Website Generation: Section-Level Feedback ──────────────────────────────
+model SiteFeedback {
+  id              String   @id @default(cuid())
+  businessId      String?
+  analysisId      String?
+  workflowId      String?  // Tombstone workflow ID
+  pageId          String   @default("home") // home, service_slug, etc.
+  sectionId       String?  // hero, about, services, how_it_works, etc.
+  target          String   // image | copy | layout | nav | service_page | whole_site | tone | mobile
+  feedback        String   // Owner's feedback text
+  requestedAction String?  // regenerate_image | revise_copy | revise_section | add_service_page | adjust_layout | revise_tone
+  status          String   @default("pending") // pending | applied | rejected | needs_review
+  appliedAt       DateTime?
+  appliedInWorkflowId String?
+  userId          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User?    @relation("SiteFeedbackUser", fields: [userId], references: [id])
+
+  @@index([analysisId])
+  @@index([workflowId])
+  @@index([businessId])
+  @@index([status])
 }

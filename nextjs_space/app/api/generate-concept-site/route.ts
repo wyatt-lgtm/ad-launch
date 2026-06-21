@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
       primaryKeyword,
       tradeArea,
       competitorUrls,
+      ownerFeedback,
     } = body;
 
     const warnings: string[] = [];
@@ -62,6 +63,8 @@ export async function POST(request: NextRequest) {
           trade_area: tradeArea,
           competitor_urls: competitorUrls?.slice(0, 3),
           competitor_count: 3,
+          // Owner feedback for revision pass
+          owner_feedback: Array.isArray(ownerFeedback) ? ownerFeedback : undefined,
         });
 
         if (result.success && result.workflowId) {

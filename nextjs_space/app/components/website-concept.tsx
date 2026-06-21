@@ -1,6 +1,6 @@
 'use client';
 
-import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail, ChevronDown, ChevronUp, CheckCircle2, Circle, AlertCircle, Clock, Plus, Trash2, Search, AlertTriangle } from 'lucide-react';
+import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkles, Loader2, ExternalLink, Mail, ChevronDown, ChevronUp, CheckCircle2, Circle, AlertCircle, Clock, Plus, Trash2, Search, AlertTriangle, MessageSquarePlus, Send, RefreshCw, FileText, ImageIcon, ShieldCheck } from 'lucide-react';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import WebsiteAgencyBrief from '@/components/website-agency-brief';
@@ -21,6 +21,269 @@ interface WorkflowStep {
   lastError?: string | null;
 }
 
+interface FeedbackEntry {
+  id: string;
+  sectionId: string;
+  target: string;
+  feedback: string;
+  requestedAction: string;
+  status: string;
+  createdAt: string;
+}
+
+function SectionFeedbackButton({ sectionId, sectionTitle, analysisId, workflowId, onFeedbackAdded }: {
+  sectionId: string;
+  sectionTitle: string;
+  analysisId?: string;
+  workflowId?: string;
+  onFeedbackAdded: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [action, setAction] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!text.trim() || !analysisId) return;
+    setSubmitting(true);
+    try {
+      await fetch('/api/site-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          analysisId,
+          workflowId: workflowId || '',
+          sectionId,
+          target: 'section',
+          feedback: text.trim(),
+          requestedAction: action.trim() || undefined,
+        }),
+      });
+      setText('');
+      setAction('');
+      setOpen(false);
+      onFeedbackAdded();
+    } catch { /* ignore */ }
+    setSubmitting(false);
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1 text-xs text-gray-400 hover:text-violet-600 transition-colors"
+        title={`Give feedback on ${sectionTitle}`}
+      >
+        <MessageSquarePlus className="w-3.5 h-3.5" />
+        Feedback
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 p-3 bg-violet-50 rounded-lg border border-violet-100">
+      <div className="text-xs font-semibold text-violet-700 mb-2">Feedback for: {sectionTitle}</div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="What would you change about this section?"
+        rows={2}
+        className="w-full px-3 py-2 text-sm border border-violet-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-300 resize-none bg-white"
+      />
+      <input
+        type="text"
+        value={action}
+        onChange={(e) => setAction(e.target.value)}
+        placeholder="Requested action (optional, e.g. 'rewrite headline')"
+        className="w-full mt-2 px-3 py-2 text-sm border border-violet-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white"
+      />
+      <div className="flex justify-end gap-2 mt-2">
+        <button onClick={() => setOpen(false)} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+        <button
+          onClick={handleSubmit}
+          disabled={submitting || !text.trim()}
+          className="flex items-center gap-1 text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-colors"
+        >
+          {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+          Submit
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FeedbackPanel({ analysisId, workflowId, feedbackList, onRevision, revising }: {
+  analysisId: string;
+  workflowId: string;
+  feedbackList: FeedbackEntry[];
+  onRevision: () => void;
+  revising: boolean;
+}) {
+  const pendingCount = feedbackList.filter(f => f.status === 'pending').length;
+
+  if (feedbackList.length === 0) return null;
+
+  return (
+    <div className="px-6 py-4 bg-amber-50/50 border-b border-amber-100">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="flex items-center gap-2 text-sm font-bold text-amber-900">
+          <MessageSquarePlus className="w-4 h-4" />
+          Owner Feedback ({pendingCount} pending)
+        </h4>
+        {pendingCount > 0 && (
+          <button
+            onClick={onRevision}
+            disabled={revising}
+            className="flex items-center gap-1.5 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-colors"
+          >
+            {revising ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            Apply & Regenerate
+          </button>
+        )}
+      </div>
+      <div className="space-y-2 max-h-48 overflow-y-auto">
+        {feedbackList.map((fb) => (
+          <div key={fb.id} className={`text-xs p-2.5 rounded-lg border ${
+            fb.status === 'applied' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-white border-amber-200 text-gray-700'
+          }`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-semibold">{fb.sectionId}</span>
+              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                fb.status === 'applied' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+              }`}>
+                {fb.status}
+              </span>
+            </div>
+            <p>{fb.feedback}</p>
+            {fb.requestedAction && <p className="mt-1 text-violet-600 italic">Action: {fb.requestedAction}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DiagnosticsPanel({ workflowId }: { workflowId: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const loadDiagnostics = async () => {
+    if (data) { setOpen(!open); return; }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/site-diagnostics?workflowId=${encodeURIComponent(workflowId)}`);
+      const result = await res.json().catch(() => ({}));
+      if (result.strategyBrief || result.sectionContracts || result.qaGates) {
+        setData(result);
+        setOpen(true);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  return (
+    <div className="px-6 py-3 border-b border-gray-100">
+      <button
+        onClick={loadDiagnostics}
+        disabled={loading}
+        className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-violet-600 transition-colors"
+      >
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+        Generation Diagnostics
+        {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+      </button>
+
+      {open && data && (
+        <div className="mt-3 space-y-4">
+          {/* Strategy Brief */}
+          {data.strategyBrief && (
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
+              <h5 className="flex items-center gap-1.5 text-xs font-bold text-blue-800 mb-2">
+                <Briefcase className="w-3.5 h-3.5" /> Strategy Brief
+              </h5>
+              <div className="text-xs text-blue-900 space-y-1">
+                {data.strategyBrief.primary_business_type && <p><span className="font-semibold">Type:</span> {data.strategyBrief.primary_business_type}</p>}
+                {data.strategyBrief.target_customer && <p><span className="font-semibold">Target:</span> {data.strategyBrief.target_customer}</p>}
+                {data.strategyBrief.primary_conversion_action && <p><span className="font-semibold">Conversion:</span> {data.strategyBrief.primary_conversion_action}</p>}
+                {Array.isArray(data.strategyBrief.core_pain_points) && (
+                  <p><span className="font-semibold">Pain Points:</span> {data.strategyBrief.core_pain_points.join(', ')}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Section Contracts */}
+          {data.sectionContracts && Array.isArray(data.sectionContracts) && (
+            <div className="bg-violet-50 rounded-lg p-4 border border-violet-100">
+              <h5 className="flex items-center gap-1.5 text-xs font-bold text-violet-800 mb-2">
+                <Layout className="w-3.5 h-3.5" /> Section Contracts ({data.sectionContracts.length})
+              </h5>
+              <div className="space-y-2">
+                {data.sectionContracts.map((sc: any, i: number) => (
+                  <div key={i} className="text-xs bg-white rounded p-2 border border-violet-100">
+                    <span className="font-semibold text-violet-700">{sc.section_id || sc.section_type || `Section ${i + 1}`}</span>
+                    {sc.benefit_statement && <span className="text-gray-600"> — {sc.benefit_statement}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Image Strategy */}
+          {data.imageStrategy && (
+            <div className="bg-orange-50 rounded-lg p-4 border border-orange-100">
+              <h5 className="flex items-center gap-1.5 text-xs font-bold text-orange-800 mb-2">
+                <ImageIcon className="w-3.5 h-3.5" /> Image Strategy
+              </h5>
+              <div className="text-xs text-orange-900">
+                {Array.isArray(data.imageStrategy) ? (
+                  <div className="space-y-1">
+                    {data.imageStrategy.map((img: any, i: number) => (
+                      <p key={i}>
+                        <span className="font-semibold">{img.section_id || `Section ${i + 1}`}:</span>{' '}
+                        {img.image_purpose || img.visual_style || 'Brief defined'}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-gray-600">Image strategy defined</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* QA Gates */}
+          {data.qaGates && (
+            <div className={`rounded-lg p-4 border ${
+              data.qaGates.verdict === 'APPROVED' ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'
+            }`}>
+              <h5 className={`flex items-center gap-1.5 text-xs font-bold mb-2 ${
+                data.qaGates.verdict === 'APPROVED' ? 'text-green-800' : 'text-red-800'
+              }`}>
+                <ShieldCheck className="w-3.5 h-3.5" /> QA Review: {data.qaGates.verdict || 'Unknown'}
+              </h5>
+              {data.qaGates.summary && <p className="text-xs text-gray-700 mb-2">{data.qaGates.summary}</p>}
+              {Array.isArray(data.qaGates.gates) && (
+                <div className="space-y-1">
+                  {data.qaGates.gates.filter((g: any) => g.status !== 'PASS').map((g: any, i: number) => (
+                    <div key={i} className={`text-xs flex items-center gap-1.5 ${
+                      g.status === 'FAIL' ? 'text-red-700' : 'text-amber-700'
+                    }`}>
+                      {g.status === 'FAIL' ? <AlertCircle className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                      <span className="font-semibold">{g.gate_id}:</span> {g.reason}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CopyAll({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = () => {
@@ -35,8 +298,13 @@ function CopyAll({ text }: { text: string }) {
   );
 }
 
-function SectionCard({ section, icon: Icon, color }: { section: any; icon: any; color: string }) {
+function SectionCard({ section, icon: Icon, color, index, analysisId, workflowId, showFeedback, onFeedbackAdded }: {
+  section: any; icon: any; color: string; index: number;
+  analysisId?: string; workflowId?: string; showFeedback?: boolean;
+  onFeedbackAdded: () => void;
+}) {
   const allText = [section.headline, section.cta].filter(Boolean).join('\n\n');
+  const sectionId = section.id || section.title || `section-${index}`;
   return (
     <div className="bg-gray-50 rounded-xl p-5 border border-gray-100">
       <div className="flex items-center justify-between mb-3">
@@ -46,7 +314,18 @@ function SectionCard({ section, icon: Icon, color }: { section: any; icon: any; 
           </div>
           <h4 className="font-semibold text-gray-900 text-sm">{section.title}</h4>
         </div>
-        <CopyAll text={allText} />
+        <div className="flex items-center gap-3">
+          {showFeedback && (
+            <SectionFeedbackButton
+              sectionId={sectionId}
+              sectionTitle={section.title || `Section ${index + 1}`}
+              analysisId={analysisId}
+              workflowId={workflowId}
+              onFeedbackAdded={onFeedbackAdded}
+            />
+          )}
+          <CopyAll text={allText} />
+        </div>
       </div>
       {section.headline && (
         <div className="mb-3">
@@ -172,6 +451,10 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
   // Competitor intelligence (3 concepts + war room)
   const [competitorIntel, setCompetitorIntel] = useState<any>(null);
 
+  // Owner feedback state
+  const [feedbackList, setFeedbackList] = useState<FeedbackEntry[]>([]);
+  const [revising, setRevising] = useState(false);
+
   const isLoggedIn = !!(session?.user as any)?.email;
 
   // Cleanup polling on unmount
@@ -180,6 +463,72 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  // Load existing feedback on mount
+  const loadFeedback = useCallback(async () => {
+    if (!analysisId) return;
+    try {
+      const res = await fetch(`/api/site-feedback?analysisId=${encodeURIComponent(analysisId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (Array.isArray(data.feedback)) setFeedbackList(data.feedback);
+    } catch { /* ignore */ }
+  }, [analysisId]);
+
+  useEffect(() => { loadFeedback(); }, [loadFeedback]);
+
+  const handleRevision = async () => {
+    if (!analysisId || revising) return;
+    setRevising(true);
+    try {
+      const res = await fetch('/api/site-revision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          analysisId,
+          websiteUrl: data?.websiteUrl || '',
+          businessName: data?.businessName || '',
+          industry: data?.industry || '',
+          location: data?.location || '',
+        }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (result.workflowId) {
+        // Start a new generation cycle with the revision workflow
+        workflowRef.current = { workflowId: result.workflowId, finalTaskId: result.taskIds?.[result.taskIds.length - 1] ?? 0 };
+        setGenerating(true);
+        setGeneratedUrl(null);
+        setGenError('');
+        setWorkflowStatus('generating');
+        genStartRef.current = Date.now();
+        stallCountRef.current = 0;
+        lastProgressRef.current = '';
+        const defaultSteps: WorkflowStep[] = [
+          { id: 1, department: 'Research', label: 'Brand Asset Recon', status: 'waiting' },
+          { id: 2, department: 'Marketing', label: 'Website Strategy', status: 'waiting' },
+          { id: 3, department: 'Creative Strategy', label: 'Copy Deck', status: 'waiting' },
+          { id: 4, department: 'Creative Direction', label: 'Creative Contract', status: 'waiting' },
+          { id: 5, department: 'Asset Retrieval', label: 'Asset Retrieval', status: 'waiting' },
+          { id: 6, department: 'Render Production', label: 'Image Generation', status: 'waiting' },
+          { id: 7, department: 'Code Execution', label: 'HTML Generation', status: 'waiting' },
+          { id: 8, department: 'Strategy & Intelligence', label: 'Quality Review', status: 'waiting' },
+        ];
+        if (result.taskIds?.length) {
+          result.taskIds.forEach((tid: number, i: number) => {
+            if (defaultSteps[i]) defaultSteps[i].id = tid;
+          });
+        }
+        setWorkflowSteps(defaultSteps);
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = setInterval(pollStatus, 5000);
+        setTimeout(pollStatus, 3000);
+        // Reload feedback to see applied status
+        loadFeedback();
+      } else {
+        setGenError(result.error || 'Revision failed to start');
+      }
+    } catch { setGenError('Revision request failed'); }
+    setRevising(false);
+  };
 
   // Restore saved concept website workflow on mount
   useEffect(() => {
@@ -592,6 +941,22 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         </div>
       )}
 
+      {/* Owner Feedback Panel — shown after generation */}
+      {analysisId && workflowRef.current?.workflowId && !generating && feedbackList.length > 0 && (
+        <FeedbackPanel
+          analysisId={analysisId}
+          workflowId={workflowRef.current.workflowId}
+          feedbackList={feedbackList}
+          onRevision={handleRevision}
+          revising={revising}
+        />
+      )}
+
+      {/* Diagnostics Panel — shown after workflow completes */}
+      {workflowRef.current?.workflowId && workflowStatus === 'completed' && (
+        <DiagnosticsPanel workflowId={workflowRef.current.workflowId} />
+      )}
+
       {/* Website Agency Brief — shown after workflow completes */}
       {workflowRef.current?.workflowId && workflowStatus === 'completed' && (
         <WebsiteAgencyBrief workflowId={workflowRef.current.workflowId} />
@@ -835,6 +1200,11 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
                 section={section}
                 icon={sectionIcons[i] ?? Globe}
                 color={sectionColors[i] ?? 'bg-gray-600'}
+                index={i}
+                analysisId={analysisId}
+                workflowId={workflowRef.current?.workflowId}
+                showFeedback={!!generatedUrl && !generating}
+                onFeedbackAdded={loadFeedback}
               />
             ))}
           </div>

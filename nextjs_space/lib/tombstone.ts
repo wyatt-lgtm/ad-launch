@@ -1677,6 +1677,13 @@ export interface ConceptWebsitePayload {
   trade_area?: string;
   competitor_urls?: string[];
   competitor_count?: number;
+  // Owner feedback for revision workflows
+  owner_feedback?: Array<{
+    section_id: string;
+    target: string;
+    feedback: string;
+    requested_action?: string;
+  }>;
 }
 
 /**
