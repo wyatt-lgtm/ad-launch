@@ -50,6 +50,7 @@ interface OperatorDiag {
   blocked_reason: string | null;
   heartbeat_at: string | null;
   claimed_at: string | null;
+  warning: string | null;
 }
 
 interface ProgressData {
@@ -305,7 +306,11 @@ function OperatorDiagnostics({ diags }: { diags: OperatorDiag[] }) {
                     </span>
                   </td>
                   <td className="py-1.5 pr-3 text-gray-500">{d.retry_count}</td>
-                  <td className="py-1.5 text-red-400 truncate max-w-[200px]">{d.last_error || '—'}</td>
+                  <td className="py-1.5 truncate max-w-[200px]">
+                    {d.last_error && <span className="text-red-400">{d.last_error}</span>}
+                    {!d.last_error && d.warning && <span className="text-amber-500">{d.warning}</span>}
+                    {!d.last_error && !d.warning && <span className="text-gray-300">—</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
