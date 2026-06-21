@@ -24,18 +24,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'workflowId required' }, { status: 400 });
     }
 
-    // Fetch all tasks for this workflow from Tombstone
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
+    // Fetch tasks for this workflow from Tombstone
+    // Try workflow-specific endpoint first, fall back to filtering all tasks
     let tasks: any[] = [];
     try {
-      const res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store', signal: controller.signal });
-      const allTasks = await res.json().catch(() => []);
-      tasks = Array.isArray(allTasks)
-        ? allTasks.filter((t: any) => t?.workflow_id === workflowId)
-        : [];
-    } finally {
-      clearTimeout(timer);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      try {
+        // Try workflow-specific tasks endpoint first
+        let res = await fetch(`${TOMBSTONE_URL}/workflows/${workflowId}/tasks`, { cache: 'no-store', signal: controller.signal }).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json().catch(() => []);
+          tasks = Array.isArray(data) ? data : [];
+        }
+        // Fall back to fetching all tasks and filtering
+        if (tasks.length === 0) {
+          res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store', signal: controller.signal });
+          const allTasks = await res!.json().catch(() => []);
+          tasks = Array.isArray(allTasks)
+            ? allTasks.filter((t: any) => t?.workflow_id === workflowId)
+            : [];
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (fetchErr: any) {
+      console.error('[site-diagnostics] Task fetch error:', fetchErr?.message);
     }
 
     if (tasks.length === 0) {
@@ -72,7 +86,10 @@ export async function GET(request: NextRequest) {
 
       // Fetch task output
       try {
-        const outRes = await fetch(`${TOMBSTONE_URL}/tasks/${task.id}/outputs`, { cache: 'no-store' });
+        const outCtrl = new AbortController();
+        const outTimer = setTimeout(() => outCtrl.abort(), 20000);
+        const outRes = await fetch(`${TOMBSTONE_URL}/tasks/${task.id}/outputs`, { cache: 'no-store', signal: outCtrl.signal });
+        clearTimeout(outTimer);
         const outputs = await outRes.json().catch(() => []);
         if (!Array.isArray(outputs) || outputs.length === 0) continue;
 
