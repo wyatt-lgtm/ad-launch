@@ -1,62 +1,62 @@
 name: Production Validation
 
 on:
-pull_request:
-branches:
-- main
-push:
-branches:
-- main
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
 
 jobs:
-frontend-build:
-name: Frontend npm production build
-runs-on: ubuntu-latest
+  frontend-build:
+    name: Frontend npm production build
+    runs-on: ubuntu-latest
 
-```
-defaults:
-  run:
-    working-directory: nextjs_space
 
-env:
-  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    defaults:
+      run:
+        working-directory: nextjs_space
 
-steps:
-  - name: Checkout repo
-    uses: actions/checkout@v5
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-  - name: Set up Node
-    uses: actions/setup-node@v5
-    with:
-      node-version: 20
-      cache: npm
-      cache-dependency-path: nextjs_space/package-lock.json
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
 
-  - name: Install dependencies with Render npm path
-    run: npm ci --legacy-peer-deps
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: nextjs_space/package-lock.json
 
-  - name: Patch Prisma schema for CI/Render path
-    run: |
-      sed -i '/output = /d' prisma/schema.prisma
-      sed -i 's/binaryTargets = .*/binaryTargets = ["native", "debian-openssl-3.0.x"]/' prisma/schema.prisma
+      - name: Install dependencies with Render npm path
+        run: npm ci --legacy-peer-deps
 
-  - name: Generate Prisma client
-    run: npx prisma generate
+      - name: Patch Prisma schema for CI/Render path
+        run: |
+          sed -i '/output = /d' prisma/schema.prisma
+          sed -i 's/binaryTargets = .*/binaryTargets = ["native", "debian-openssl-3.0.x"]/' prisma/schema.prisma
 
-  - name: Build Next.js app
-    run: npm run build
-```
+      - name: Generate Prisma client
+        run: npx prisma generate
 
-frontend-docker-build:
-name: Frontend Docker build
-runs-on: ubuntu-latest
+      - name: Build Next.js app
+        run: npm run build
 
-```
-steps:
-  - name: Checkout repo
-    uses: actions/checkout@v5
 
-  - name: Build frontend Docker image
-    working-directory: nextjs_space
-    run: docker build -t launch-os-frontend:ci .
-```
+  frontend-docker-build:
+    name: Frontend Docker build
+    runs-on: ubuntu-latest
+
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      - name: Build frontend Docker image
+        working-directory: nextjs_space
+        run: docker build -t launch-os-frontend:ci .
+
