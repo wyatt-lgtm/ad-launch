@@ -46,7 +46,8 @@ jobs:
 
       - name: Add CI-only yarn.lock placeholder
         run: |
-          test -f yarn.lock || touch yarn.lock
+          rm -f yarn.lock
+          touch yarn.lock
 
       - name: Generate Prisma client
         run: npx prisma generate
