@@ -80,7 +80,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: result.error || 'Website generation failed' }, { status: 500 });
       } catch (tombstoneErr: any) {
         console.error('[generate-concept-site] Tombstone unavailable:', tombstoneErr?.message);
-        return NextResponse.json({ error: 'Website generation service unavailable. Please try again.' }, { status: 503 });
+        const isAbort = tombstoneErr?.name === 'AbortError' || tombstoneErr?.message?.includes('aborted');
+        const msg = isAbort
+          ? 'Website generation timed out — the service may be warming up. Please try again in a moment.'
+          : 'Website generation service unavailable. Please try again.';
+        return NextResponse.json({ error: msg }, { status: 503 });
       }
     }
 

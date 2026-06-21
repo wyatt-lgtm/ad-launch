@@ -1686,7 +1686,7 @@ export interface ConceptWebsitePayload {
 export async function createConceptWebsiteMission(payload: ConceptWebsitePayload) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60000);
+    const timer = setTimeout(() => controller.abort(), 180000); // 180s — Render cold-starts + business provisioning can be slow
     let res: Response;
     try {
       res = await fetch(`${TOMBSTONE_URL}/workflows/concept-website`, {
