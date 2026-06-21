@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
 
     // Resolve URLs
     const resolved = await Promise.all(
-      assets.map(async (a) => {
+      assets.map(async (a: any) => {
         let resolvedUrl = a.publicUrl;
         if (a.cloudStoragePath && !a.publicUrl) {
           try {

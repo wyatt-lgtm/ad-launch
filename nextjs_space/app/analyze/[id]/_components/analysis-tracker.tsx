@@ -1011,6 +1011,27 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     return Math.round((complete / displayTasks.length) * 100);
   }, [displayTasks]);
 
+  // ── Derived state & remaining hooks MUST be above all early returns ──
+  // (React #310: every render must call the same number of hooks)
+  const hasUsableAds = ads.length > 0;
+  const isCompleted = (pipelinePhase === 'completed' || pipelinePhase === 'completed_with_warnings') && hasUsableAds;
+  const isFinalizing = pipelinePhase === 'finalizing' || (status === 'completed' && !hasUsableAds);
+  const isGenerating = !isCompleted && pipelinePhase !== 'failed';
+
+  // Pipeline step indicators
+  const stepLabels = React.useMemo((): Array<{ label: string; status: string }> => {
+    const p = pipelinePhase;
+    const r = phaseRank(p);
+    return [
+      { label: r >= phaseRank('pipeline_preparing') ? 'Connected to AI agents' : 'Connecting to AI agents...', status: r >= phaseRank('pipeline_preparing') ? 'complete' : 'active' },
+      { label: r >= phaseRank('generating') ? 'Analysis pipeline ready' : 'Preparing analysis pipeline...', status: r >= phaseRank('generating') ? 'complete' : r >= phaseRank('pipeline_preparing') ? 'active' : 'waiting' },
+      { label: r >= phaseRank('finalizing') ? 'Posts generated' : 'Generating posts...', status: r >= phaseRank('finalizing') ? 'complete' : r >= phaseRank('generating') ? 'active' : 'waiting' },
+      { label: isCompleted ? 'Posts ready' : 'Finalizing posts...', status: isCompleted ? 'complete' : r >= phaseRank('finalizing') ? 'active' : 'waiting' },
+    ];
+  }, [pipelinePhase, isCompleted]);
+
+  // ── Early returns (all hooks are declared above this line) ──────────
+
   // Phase 1: Location confirmation
   if (phase === 'location') {
     return <LocationStep analysisId={analysisId} onLaunched={() => setPhase('tracking')} />;
@@ -1033,23 +1054,6 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
       </div>
     );
   }
-
-  // Use pipelinePhase for UI state — ads must exist for completed to be true
-  const hasUsableAds = ads.length > 0;
-  const isCompleted = (pipelinePhase === 'completed' || pipelinePhase === 'completed_with_warnings') && hasUsableAds;
-  const isFinalizing = pipelinePhase === 'finalizing' || (status === 'completed' && !hasUsableAds);
-  const isGenerating = !isCompleted && pipelinePhase !== 'failed';
-
-  // Pipeline step indicators — use string arrays to avoid object-as-child issues (React #310)
-  const stepLabels = React.useMemo((): Array<{ label: string; status: string }> => {
-    const p = pipelinePhase;
-    const r = phaseRank(p);
-    const s1: { label: string; status: string } = { label: r >= phaseRank('pipeline_preparing') ? 'Connected to AI agents' : 'Connecting to AI agents...', status: r >= phaseRank('pipeline_preparing') ? 'complete' : 'active' };
-    const s2: { label: string; status: string } = { label: r >= phaseRank('generating') ? 'Analysis pipeline ready' : 'Preparing analysis pipeline...', status: r >= phaseRank('generating') ? 'complete' : r >= phaseRank('pipeline_preparing') ? 'active' : 'waiting' };
-    const s3: { label: string; status: string } = { label: r >= phaseRank('finalizing') ? 'Posts generated' : 'Generating posts...', status: r >= phaseRank('finalizing') ? 'complete' : r >= phaseRank('generating') ? 'active' : 'waiting' };
-    const s4: { label: string; status: string } = { label: isCompleted ? 'Posts ready' : 'Finalizing posts...', status: isCompleted ? 'complete' : r >= phaseRank('finalizing') ? 'active' : 'waiting' };
-    return [s1, s2, s3, s4];
-  }, [pipelinePhase, isCompleted]);
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-12">
