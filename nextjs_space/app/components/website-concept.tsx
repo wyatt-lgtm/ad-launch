@@ -4,7 +4,7 @@ import { Globe, Layout, Users, Briefcase, ArrowRight, Lock, Copy, Check, Sparkle
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import WebsiteAgencyBrief from '@/components/website-agency-brief';
-import MissionProgress from './mission-progress';
+import WebsiteProductionRoom from './website-production-room';
 
 interface WebsiteConceptProps {
   data: any;
@@ -883,14 +883,36 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         </button>
       </div>
 
-      {/* Progressive Mission Progress — unified progress display */}
+      {/* Website Production Room — unified workflow display */}
       {workflowRef.current?.workflowId && (generating || workflowStatus === 'completed' || workflowStatus === 'error') ? (
-        <MissionProgress
+        <WebsiteProductionRoom
           workflowId={workflowRef.current.workflowId}
+          businessName={data?.businessName || ''}
           isAdmin={(session?.user as any)?.role === 'admin'}
+          onWebsitePreview={generatedUrl ? () => window.open(generatedUrl, '_blank') : undefined}
+          onReviewAction={async (stage, action, feedback) => {
+            if (action === 'request_changes' && feedback && analysisId) {
+              // Route review feedback into existing site-feedback system
+              try {
+                await fetch('/api/site-feedback', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    analysisId,
+                    workflowId: workflowRef.current?.workflowId || '',
+                    sectionId: stage,
+                    target: 'stage_review',
+                    feedback,
+                    requestedAction: 'revise',
+                  }),
+                });
+                loadFeedback();
+              } catch { /* ignore */ }
+            }
+          }}
         />
       ) : (
-        /* Fallback: simple workflow progress when MissionProgress has no workflowId yet */
+        /* Fallback: simple workflow progress before workflowId exists */
         (generating || workflowStatus === 'completed') && workflowSteps.length > 0 && (
           <WorkflowProgress steps={workflowSteps} status={workflowStatus} />
         )
