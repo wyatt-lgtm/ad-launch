@@ -33,6 +33,7 @@ interface Ad {
   watermarkedUrl: string | null;
   caption: string | null;
   headline: string | null;
+  copyOnly?: boolean;
 }
 
 function TaskStatusIcon({ status }: { status: string }) {
@@ -1239,6 +1240,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
                           businessName={seoData?.businessName ?? ''}
                           websiteUrl={seoData?.websiteUrl ?? ''}
                           editable={true}
+                          copyOnly={ad.copyOnly}
                         />
                       ))
                     ) : failedLanes.includes(lane) ? (

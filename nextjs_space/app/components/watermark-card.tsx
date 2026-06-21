@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Lock, Image as ImageIcon, Pencil, Loader2, Check, Sparkles, ThumbsUp, MessageCircle, Share2, Globe, MoreHorizontal } from 'lucide-react';
+import { Lock, Image as ImageIcon, Pencil, Loader2, Check, Sparkles, ThumbsUp, MessageCircle, Share2, Globe, MoreHorizontal, AlertTriangle } from 'lucide-react';
 
 interface WatermarkCardProps {
   caption: string | null;
@@ -15,10 +15,12 @@ interface WatermarkCardProps {
   editable?: boolean;
   /** Callback when an edit is completed — passes the new image data URL */
   onEdited?: (editedImageUrl: string) => void;
+  /** True when ad has copy but image generation failed */
+  copyOnly?: boolean;
 }
 
 export default function WatermarkCard({
-  caption, headline, imageUrl, index, angle, businessName, websiteUrl, editable, onEdited,
+  caption, headline, imageUrl, index, angle, businessName, websiteUrl, editable, onEdited, copyOnly,
 }: WatermarkCardProps) {
   const laneColors: Record<string, string> = {
     'Website / Brand': 'bg-blue-500',
@@ -194,6 +196,12 @@ export default function WatermarkCard({
           className="w-full h-auto block"
           onError={(e: any) => { e.target.style.display = 'none'; }}
         />
+      ) : copyOnly ? (
+        <div className="w-full aspect-[4/5] flex flex-col items-center justify-center bg-amber-50 border-2 border-dashed border-amber-200">
+          <AlertTriangle className="w-10 h-10 text-amber-400 mb-2" />
+          <span className="text-sm font-semibold text-amber-700">Copy Ready</span>
+          <span className="text-xs text-amber-500 mt-1 px-4 text-center">Image generation needs retry</span>
+        </div>
       ) : (
         <div className="w-full aspect-[4/5] flex flex-col items-center justify-center text-gray-300">
           <ImageIcon className="w-16 h-16 mb-2" />
