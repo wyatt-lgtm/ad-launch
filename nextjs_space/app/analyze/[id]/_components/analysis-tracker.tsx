@@ -1040,28 +1040,15 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
   const isFinalizing = pipelinePhase === 'finalizing' || (status === 'completed' && !hasUsableAds);
   const isGenerating = !isCompleted && pipelinePhase !== 'failed';
 
-  // Pipeline step indicators
-  const stepItems = React.useMemo(() => {
+  // Pipeline step indicators — use string arrays to avoid object-as-child issues (React #310)
+  const stepLabels = React.useMemo((): Array<{ label: string; status: string }> => {
     const p = pipelinePhase;
     const r = phaseRank(p);
-    return [
-      {
-        label: r >= phaseRank('pipeline_preparing') ? 'Connected to AI agents' : 'Connecting to AI agents...',
-        status: r >= phaseRank('pipeline_preparing') ? 'complete' as const : 'active' as const,
-      },
-      {
-        label: r >= phaseRank('generating') ? 'Analysis pipeline ready' : 'Preparing analysis pipeline...',
-        status: r >= phaseRank('generating') ? 'complete' as const : r >= phaseRank('pipeline_preparing') ? 'active' as const : 'waiting' as const,
-      },
-      {
-        label: r >= phaseRank('finalizing') ? 'Posts generated' : 'Generating posts...',
-        status: r >= phaseRank('finalizing') ? 'complete' as const : r >= phaseRank('generating') ? 'active' as const : 'waiting' as const,
-      },
-      {
-        label: isCompleted ? 'Posts ready' : 'Finalizing posts...',
-        status: isCompleted ? 'complete' as const : r >= phaseRank('finalizing') ? 'active' as const : 'waiting' as const,
-      },
-    ];
+    const s1: { label: string; status: string } = { label: r >= phaseRank('pipeline_preparing') ? 'Connected to AI agents' : 'Connecting to AI agents...', status: r >= phaseRank('pipeline_preparing') ? 'complete' : 'active' };
+    const s2: { label: string; status: string } = { label: r >= phaseRank('generating') ? 'Analysis pipeline ready' : 'Preparing analysis pipeline...', status: r >= phaseRank('generating') ? 'complete' : r >= phaseRank('pipeline_preparing') ? 'active' : 'waiting' };
+    const s3: { label: string; status: string } = { label: r >= phaseRank('finalizing') ? 'Posts generated' : 'Generating posts...', status: r >= phaseRank('finalizing') ? 'complete' : r >= phaseRank('generating') ? 'active' : 'waiting' };
+    const s4: { label: string; status: string } = { label: isCompleted ? 'Posts ready' : 'Finalizing posts...', status: isCompleted ? 'complete' : r >= phaseRank('finalizing') ? 'active' : 'waiting' };
+    return [s1, s2, s3, s4];
   }, [pipelinePhase, isCompleted]);
 
   return (
@@ -1152,26 +1139,30 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
           ) : (
             <div className="space-y-2">
               {/* Pipeline step indicators — sequenced by pipelinePhase */}
-              {stepItems.map((step, i) => (
-                <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-lg border ${
-                  step.status === 'complete' ? 'bg-green-50 border-green-200'
-                    : step.status === 'active' ? 'bg-blue-50 border-blue-200'
-                    : 'bg-gray-50 border-gray-200'
-                }`}>
-                  {step.status === 'complete' ? (
-                    <CheckCircle className="w-5 h-5 text-green-500" />
-                  ) : step.status === 'active' ? (
-                    <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                  ) : (
-                    <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
-                  )}
-                  <span className={`text-sm font-medium ${
-                    step.status === 'complete' ? 'text-green-700'
-                      : step.status === 'active' ? 'text-blue-700'
-                      : 'text-gray-400'
-                  }`}>{step.label}</span>
-                </div>
-              ))}
+              {stepLabels.map((step, i) => {
+                const stepStatus = String(step.status || 'waiting');
+                const stepLabel = String(step.label || '');
+                return (
+                  <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-lg border ${
+                    stepStatus === 'complete' ? 'bg-green-50 border-green-200'
+                      : stepStatus === 'active' ? 'bg-blue-50 border-blue-200'
+                      : 'bg-gray-50 border-gray-200'
+                  }`}>
+                    {stepStatus === 'complete' ? (
+                      <CheckCircle className="w-5 h-5 text-green-500" />
+                    ) : stepStatus === 'active' ? (
+                      <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                    ) : (
+                      <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+                    )}
+                    <span className={`text-sm font-medium ${
+                      stepStatus === 'complete' ? 'text-green-700'
+                        : stepStatus === 'active' ? 'text-blue-700'
+                        : 'text-gray-400'
+                    }`}>{stepLabel}</span>
+                  </div>
+                );
+              })}
               {stallCount >= 10 && (
                 <p className="text-xs text-gray-400 text-center mt-2">Still connecting to our content engine — this may take a moment...</p>
               )}
