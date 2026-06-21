@@ -5,7 +5,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "prod:validate": "npm ci --legacy-peer-deps && npm run build",
+    "prod:docker:build": "docker build -t launch-os-frontend:local ."
   },
   "prisma": {
     "seed": "tsx --require dotenv/config scripts/safe-seed.ts"
