@@ -1,22 +1,47 @@
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
 
-function getHeaders() {
+// ── Credential tiers ──────────────────────────────────────────────
+//  MASTER  = GHL_MASTER_API_TOKEN / GHL_MASTER_LOCATION_ID  → account creation / CRM
+//  SUBTENANT = GHL_API_TOKEN / GHL_LOCATION_ID               → transactional email & customer follow-up
+type GhlTier = 'master' | 'subtenant';
+
+function getCredentials(tier: GhlTier = 'subtenant') {
+  if (tier === 'master') {
+    return {
+      token: process.env.GHL_MASTER_API_TOKEN ?? process.env.GHL_API_TOKEN ?? '',
+      locationId: process.env.GHL_MASTER_LOCATION_ID ?? process.env.GHL_LOCATION_ID ?? '',
+    };
+  }
+  // subtenant — fall back to master if subtenant vars aren't set
   return {
-    'Authorization': `Bearer ${process.env.GHL_API_TOKEN ?? ''}`,
+    token: process.env.GHL_API_TOKEN ?? process.env.GHL_MASTER_API_TOKEN ?? '',
+    locationId: process.env.GHL_LOCATION_ID ?? process.env.GHL_MASTER_LOCATION_ID ?? '',
+  };
+}
+
+function getHeaders(tier: GhlTier = 'subtenant') {
+  return {
+    'Authorization': `Bearer ${getCredentials(tier).token}`,
     'Content-Type': 'application/json',
     'Version': '2021-07-28',
   };
 }
 
-export async function createGHLContact(email: string, name?: string) {
+/**
+ * Create or resolve a GHL contact.
+ * @param tier  'master' for account-creation CRM tracking,
+ *              'subtenant' for transactional email (default)
+ */
+export async function createGHLContact(email: string, name?: string, tier: GhlTier = 'subtenant') {
+  const creds = getCredentials(tier);
   try {
     const res = await fetch(`${GHL_BASE_URL}/contacts/`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders(tier),
       body: JSON.stringify({
         email,
         name: name ?? email?.split('@')?.[0] ?? 'User',
-        locationId: process.env.GHL_LOCATION_ID ?? '',
+        locationId: creds.locationId,
         source: 'Launch OS',
         tags: ['ad-launch', 'free-trial'],
       }),
@@ -27,20 +52,24 @@ export async function createGHLContact(email: string, name?: string) {
     // but in data.meta.contactId on duplicate (400 "does not allow duplicated contacts")
     const contactId = data?.contact?.id ?? data?.meta?.contactId ?? null;
     if (contactId) {
-      console.log('[GHL] Contact resolved:', contactId, res.ok ? '(created)' : '(existing)');
+      console.log(`[GHL:${tier}] Contact resolved:`, contactId, res.ok ? '(created)' : '(existing)');
     }
     return { success: true, data, contactId };
   } catch (err: any) {
-    console.error('GHL create contact error:', err?.message);
+    console.error(`[GHL:${tier}] create contact error:`, err?.message);
     return { success: false, data: null, contactId: null };
   }
 }
 
+/**
+ * Send an email through GHL conversations API.
+ * Always uses subtenant credentials (transactional email).
+ */
 export async function sendGHLEmail(contactId: string, subject: string, htmlBody: string) {
   try {
     const res = await fetch(`${GHL_BASE_URL}/conversations/messages`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders('subtenant'),
       body: JSON.stringify({
         type: 'Email',
         contactId,
@@ -51,7 +80,7 @@ export async function sendGHLEmail(contactId: string, subject: string, htmlBody:
     const data = await res.json().catch(() => ({}));
     return { success: res.ok, data };
   } catch (err: any) {
-    console.error('GHL send email error:', err?.message);
+    console.error('[GHL:subtenant] send email error:', err?.message);
     return { success: false, data: null };
   }
 }

@@ -159,8 +159,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Still create GHL contact for CRM tracking (fire and forget)
-    createGHLContact(email).catch(() => {});
+    // Create GHL contact under MASTER account for CRM tracking (fire and forget)
+    createGHLContact(email, undefined, 'master').catch(() => {});
 
     // Send confirmation email via Abacus notification system
     const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? 'localhost:3000';
