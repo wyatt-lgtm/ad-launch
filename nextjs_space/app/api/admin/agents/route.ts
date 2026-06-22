@@ -75,24 +75,49 @@ export async function GET() {
     }
 
     // Build lookup: agent_name -> best (lowest) seconds_since_heartbeat across instances
-    const heartbeatMap: Record<string, { seconds: number; service_name: string; instance_id: string }> = {};
+    // Also track whether any instance is busy (has a current task)
+    const ALIVE_THRESHOLD = 45; // seconds — must match Tombstone HEARTBEAT_ALIVE_THRESHOLD_SECONDS
+    const STALE_THRESHOLD = 90;
+    const heartbeatMap: Record<string, { seconds: number; service_name: string; instance_id: string; isBusy: boolean }> = {};
     if (metricsData?.agents) {
       for (const m of metricsData.agents) {
         const key = m.agent_name;
         const secs = m.seconds_since_heartbeat ?? 9999;
-        if (!heartbeatMap[key] || secs < heartbeatMap[key].seconds) {
-          heartbeatMap[key] = { seconds: secs, service_name: m.service_name, instance_id: m.instance_id };
+        const busy = m.status === 'busy' || !!m.current_task_id;
+        const existing = heartbeatMap[key];
+        if (!existing || secs < existing.seconds) {
+          heartbeatMap[key] = { seconds: secs, service_name: m.service_name, instance_id: m.instance_id, isBusy: busy || (existing?.isBusy ?? false) };
+        } else if (busy && !existing.isBusy) {
+          // Another instance is busy — mark as busy even if not the freshest
+          existing.isBusy = true;
         }
       }
     }
 
-    // Enrich agents with heartbeat freshness
-    const enriched = (Array.isArray(agents) ? agents : []).map((a: any) => ({
-      ...a,
-      seconds_since_heartbeat: heartbeatMap[a.name]?.seconds ?? null,
-      service_name: heartbeatMap[a.name]?.service_name ?? null,
-      instance_id: heartbeatMap[a.name]?.instance_id ?? null,
-    }));
+    // Enrich agents with heartbeat freshness AND re-derive status from metrics
+    // This fixes the bug where /agents/status picks the wrong replica row
+    // (e.g. stale singleton) while /metrics/agents shows a fresh dedicated worker.
+    const enriched = (Array.isArray(agents) ? agents : []).map((a: any) => {
+      const hb = heartbeatMap[a.name];
+      let correctedStatus = a.status;
+      if (hb && hb.seconds !== null) {
+        if (hb.seconds <= ALIVE_THRESHOLD) {
+          correctedStatus = hb.isBusy ? 'alive_busy' : 'alive_idle';
+        } else if (hb.seconds <= STALE_THRESHOLD) {
+          correctedStatus = 'stale';
+        } else {
+          correctedStatus = 'offline';
+        }
+      }
+      return {
+        ...a,
+        status: correctedStatus,
+        running: correctedStatus === 'alive_idle' || correctedStatus === 'alive_busy',
+        seconds_since_heartbeat: hb?.seconds ?? null,
+        service_name: hb?.service_name ?? null,
+        instance_id: hb?.instance_id ?? null,
+      };
+    });
 
     return NextResponse.json({
       agents: enriched,
