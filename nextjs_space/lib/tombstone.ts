@@ -1,102 +1,138 @@
 import { loadBusinessProfile, formatProfileForCommand, isStale } from '@/lib/business-profile';
 
 const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
+
+// ── Fallback Image Generation ──────────────────────────────────────────────────
+// Env vars:
+//   IMAGE_PROVIDER       — "openai" (default). Controls which provider to use.
+//   OPENAI_IMAGE_MODEL   — "gpt-image-1.5" (default). Override to "gpt-image-2" etc.
+//   OPENAI_API_KEY       — Required when IMAGE_PROVIDER=openai.
+// DALL-E 3 is NOT used unless OPENAI_IMAGE_MODEL is explicitly set to "dall-e-3".
+
+interface FallbackImageResult {
+  imageUrl: string | null;
+  provider: string | null;
+  model: string | null;
+  error: string | null;
+  degraded: boolean;  // true if image gen failed but copy exists
+}
+
 /**
  * Generate a fallback image when Tombstone Render Production fails.
  * Uses the Creative Direction render_prompt to produce a social-media-ready image.
- * Tries Abacus AI LLM API first, falls back to OpenAI DALL-E.
- * Returns image URL (hosted URL or data URL), or null on failure.
+ * Provider & model controlled by IMAGE_PROVIDER / OPENAI_IMAGE_MODEL env vars.
  */
-async function generateFallbackImage(renderPrompt: string): Promise<string | null> {
-  // Try Abacus AI LLM API first
-  const abacusKey = process.env.ABACUSAI_API_KEY;
-  if (abacusKey) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 45000); // 45s for image gen
-      const res = await fetch('https://apps.abacus.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${abacusKey}` },
-        body: JSON.stringify({
-          model: 'gpt-5.1',
-          messages: [{ role: 'user', content: renderPrompt }],
-          modalities: ['image'],
-          image_config: { num_images: 1, aspect_ratio: '4:5' },
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const data = await res.json();
-        const url = extractImageUrl(data);
-        if (url) {
-          console.log(`[generateFallbackImage] Abacus AI image generated successfully`);
-          return url;
-        }
-      } else {
-        console.warn(`[generateFallbackImage] Abacus API returned ${res.status}`);
-      }
-    } catch (e: any) {
-      console.warn(`[generateFallbackImage] Abacus API error:`, e?.message ?? e);
-    }
+async function generateFallbackImage(renderPrompt: string): Promise<FallbackImageResult> {
+  const provider = (process.env.IMAGE_PROVIDER ?? 'openai').toLowerCase();
+  const openaiModel = process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-1.5';
+  const openaiKey = process.env.OPENAI_API_KEY;
+
+  const fail = (error: string): FallbackImageResult => {
+    console.error(`[generateFallbackImage] FAILED provider=${provider} model=${openaiModel} error="${error}"`);
+    return { imageUrl: null, provider, model: openaiModel, error, degraded: true };
+  };
+
+  if (provider !== 'openai') {
+    return fail(`Unsupported IMAGE_PROVIDER="${provider}". Only "openai" is supported.`);
   }
 
-  // Fallback to OpenAI DALL-E
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (openaiKey) {
+  if (!openaiKey) {
+    return fail('OPENAI_API_KEY is not configured. Cannot generate fallback image.');
+  }
+
+  console.log(`[generateFallbackImage] Starting: provider=${provider} model=${openaiModel} prompt_len=${renderPrompt.length}`);
+
+  // Determine API endpoint and payload based on model
+  const isDalle = openaiModel.startsWith('dall-e');
+  const maxPromptLen = isDalle ? 4000 : 32000; // GPT Image models support longer prompts
+  const truncatedPrompt = renderPrompt.slice(0, maxPromptLen);
+
+  // Retry config: 1 initial attempt + 1 retry on 429
+  const MAX_ATTEMPTS = 2;
+  let lastStatus = 0;
+  let lastError = '';
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      // Truncate prompt to 4000 chars for DALL-E
-      const dallePrompt = renderPrompt.slice(0, 4000);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 45000); // 45s timeout
+      const timer = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
+      const body: Record<string, any> = {
+        model: openaiModel,
+        prompt: truncatedPrompt,
+        n: 1,
+        size: isDalle ? '1024x1024' : '1024x1536', // 2:3 portrait for GPT Image models
+      };
+      if (isDalle) {
+        body.quality = 'standard';
+      } else {
+        body.quality = 'medium';
+      }
+
       const res = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-        body: JSON.stringify({
-          model: 'dall-e-3',
-          prompt: dallePrompt,
-          n: 1,
-          size: '1024x1024',
-          quality: 'standard',
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       clearTimeout(timer);
+      lastStatus = res.status;
+
       if (res.ok) {
         const data = await res.json();
-        const url = data?.data?.[0]?.url ?? data?.data?.[0]?.b64_json;
-        if (url) {
-          const imageUrl = url.startsWith('http') ? url : `data:image/png;base64,${url}`;
-          console.log(`[generateFallbackImage] DALL-E image generated successfully`);
-          return imageUrl;
+        const item = data?.data?.[0];
+        const rawUrl = item?.url ?? null;
+        const b64 = item?.b64_json ?? null;
+
+        if (rawUrl) {
+          console.log(`[generateFallbackImage] SUCCESS provider=${provider} model=${openaiModel} attempt=${attempt} format=url`);
+          return { imageUrl: rawUrl, provider, model: openaiModel, error: null, degraded: false };
         }
+        if (b64) {
+          const dataUrl = `data:image/png;base64,${b64}`;
+          console.log(`[generateFallbackImage] SUCCESS provider=${provider} model=${openaiModel} attempt=${attempt} format=b64`);
+          return { imageUrl: dataUrl, provider, model: openaiModel, error: null, degraded: false };
+        }
+
+        lastError = 'OpenAI returned 200 but no image data in response';
+        console.warn(`[generateFallbackImage] ${lastError}. Response keys: ${JSON.stringify(Object.keys(data ?? {}))}`);
+      } else if (res.status === 429) {
+        // Rate limited — retry after backoff
+        const retryAfter = parseInt(res.headers.get('retry-after') ?? '0', 10);
+        const waitMs = Math.max((retryAfter || 5) * 1000, 5000);
+        lastError = `HTTP 429 rate limited (attempt ${attempt}/${MAX_ATTEMPTS})`;
+        console.warn(`[generateFallbackImage] ${lastError}. provider=${provider} model=${openaiModel} retryAfter=${retryAfter}s`);
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, waitMs));
+          continue; // retry
+        }
+        // Final attempt exhausted
+        return fail(`Rate limited (HTTP 429) after ${MAX_ATTEMPTS} attempts. provider=${provider} model=${openaiModel}`);
       } else {
-        console.warn(`[generateFallbackImage] OpenAI DALL-E returned ${res.status}: ${await res.text().catch(() => '')}`);
+        // Non-429 error
+        const errBody = await res.text().catch(() => '');
+        lastError = `HTTP ${res.status}`;
+        // Don't log full error body if it's HTML (Cloudflare pages etc.)
+        const shortErr = errBody.startsWith('<!') ? errBody.slice(0, 100) + '...' : errBody.slice(0, 300);
+        console.error(`[generateFallbackImage] provider=${provider} model=${openaiModel} status=${res.status} body=${shortErr}`);
+        return fail(`OpenAI Images API returned ${res.status}. provider=${provider} model=${openaiModel}`);
       }
     } catch (e: any) {
-      console.warn(`[generateFallbackImage] DALL-E error:`, e?.message ?? e);
+      const isTimeout = e?.name === 'AbortError';
+      lastError = isTimeout ? 'Request timed out (60s)' : (e?.message ?? String(e));
+      console.error(`[generateFallbackImage] provider=${provider} model=${openaiModel} attempt=${attempt} error="${lastError}"`);
+      if (attempt >= MAX_ATTEMPTS) {
+        return fail(lastError);
+      }
+      // Retry after brief delay
+      await new Promise(r => setTimeout(r, 3000));
     }
   }
 
-  console.warn('[generateFallbackImage] No API key available for image generation');
-  return null;
-}
-
-/** Extract image URL from Abacus AI LLM response */
-function extractImageUrl(data: any): string | null {
-  // Check images array (standard format)
-  const images = data?.choices?.[0]?.message?.images;
-  if (Array.isArray(images) && images.length > 0) {
-    return images[0]?.image_url?.url ?? images[0]?.url ?? null;
-  }
-  // Check content array format
-  const content = data?.choices?.[0]?.message?.content;
-  if (Array.isArray(content)) {
-    for (const item of content) {
-      if (item?.type === 'image_url' && item?.image_url?.url) return item.image_url.url;
-    }
-  }
-  return null;
+  return fail(lastError || 'Unknown error after all attempts');
 }
 
 /**
@@ -1395,8 +1431,8 @@ export async function getWorkflowResults(workflowIds: string[]) {
           } catch { /* ignore */ }
         }
         if (headline || caption) {
-          // Attempt fallback image generation via LLM API using Creative Direction prompt
-          let fallbackImageUrl: string | null = null;
+          // Attempt fallback image generation using Creative Direction prompt
+          let fallbackResult: FallbackImageResult = { imageUrl: null, provider: null, model: null, error: null, degraded: true };
           const cdTaskId = wfCreativeDirection.get(ad.workflowId);
           if (cdTaskId) {
             try {
@@ -1409,22 +1445,33 @@ export async function getWorkflowResults(workflowIds: string[]) {
                 } catch { /* ignore */ }
               }
               if (renderPrompt) {
-                console.log(`[getWorkflowResults] Generating fallback image for workflow ${ad.workflowId} via LLM API. Prompt: ${renderPrompt.slice(0, 80)}...`);
-                fallbackImageUrl = await generateFallbackImage(renderPrompt);
+                console.log(`[getWorkflowResults] Generating fallback image for workflow ${ad.workflowId}. Prompt: ${renderPrompt.slice(0, 80)}...`);
+                fallbackResult = await generateFallbackImage(renderPrompt);
+              } else {
+                console.warn(`[getWorkflowResults] No render_prompt found in Creative Direction task ${cdTaskId} for workflow ${ad.workflowId}`);
+                fallbackResult.error = 'No render_prompt in Creative Direction output';
               }
             } catch (e) {
-              console.warn(`[getWorkflowResults] Fallback image generation failed for workflow ${ad.workflowId}:`, e);
+              console.error(`[getWorkflowResults] Fallback image generation crashed for workflow ${ad.workflowId}:`, e);
+              fallbackResult.error = `Exception: ${(e as Error)?.message ?? e}`;
             }
+          } else {
+            console.warn(`[getWorkflowResults] No Creative Direction task found for workflow ${ad.workflowId}`);
+            fallbackResult.error = 'No Creative Direction task for this workflow';
           }
-          console.log(`[getWorkflowResults] Copy-only ad from Creative Strategy for workflow ${ad.workflowId}: headline=${headline.slice(0, 40)}..., hasImage=${!!fallbackImageUrl}`);
+
+          // Only set copyOnly=false if we actually got an image
+          const hasImage = !!fallbackResult.imageUrl;
+          console.log(`[getWorkflowResults] Fallback result for workflow ${ad.workflowId}: hasImage=${hasImage} provider=${fallbackResult.provider} model=${fallbackResult.model} degraded=${fallbackResult.degraded}${fallbackResult.error ? ` error="${fallbackResult.error}"` : ''}`);
+
           enrichedAds.push({
             taskId: ad.taskId,
             workflowId: ad.workflowId,
             headline,
             caption,
             cta,
-            imageUrl: fallbackImageUrl,
-            copyOnly: true,
+            imageUrl: fallbackResult.imageUrl,
+            copyOnly: !hasImage, // false if image was generated, true if degraded
           });
         } else {
           console.warn(`[getWorkflowResults] Copy-only fallback for workflow ${ad.workflowId} produced no usable copy`);
