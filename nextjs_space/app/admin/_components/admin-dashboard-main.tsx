@@ -854,6 +854,8 @@ function AgentsTab() {
   const [error, setError] = useState('');
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  const [apiUnreachable, setApiUnreachable] = useState(false);
+
   const fetchAgents = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/agents');
@@ -861,7 +863,8 @@ function AgentsTab() {
       if (data.agents) {
         setAgents(data.agents);
         setLastFetch(data.fetchedAt || new Date().toISOString());
-        setError('');
+        setApiUnreachable(!!data.api_unreachable);
+        setError(data.api_unreachable ? (data.error || 'Backend unreachable') : '');
       } else if (data.error) {
         setError(data.error);
       }
@@ -883,6 +886,7 @@ function AgentsTab() {
     alive_busy: { color: 'text-green-700', bg: 'bg-green-50 border-green-200', label: 'Busy', dot: 'bg-green-500 animate-pulse' },
     stale: { color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', label: 'Stale', dot: 'bg-amber-500' },
     offline: { color: 'text-red-700', bg: 'bg-red-50 border-red-200', label: 'Offline', dot: 'bg-red-500' },
+    unreachable: { color: 'text-gray-500', bg: 'bg-gray-50 border-gray-300 border-dashed', label: 'Unreachable', dot: 'bg-gray-400' },
   };
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-blue-600 animate-spin" /></div>;
@@ -909,6 +913,18 @@ function AgentsTab() {
 
   return (
     <div>
+      {/* API unreachable banner */}
+      {apiUnreachable && (
+        <div className="mb-4 rounded-lg border border-blue-300 bg-blue-50 px-4 py-3">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-sm font-semibold text-blue-800">⚡ Backend Unreachable</span>
+          </div>
+          <p className="text-xs text-blue-700">
+            {error || 'Could not reach the Tombstone API.'} Showing known roster with unknown status.
+            The backend may be cold-starting — status will update automatically.
+          </p>
+        </div>
+      )}
       {/* Heartbeat freshness warning banner */}
       {staleWorkers.length > 0 && (
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">

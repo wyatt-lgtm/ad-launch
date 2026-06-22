@@ -5,13 +5,56 @@ import { requireAdmin } from '@/lib/admin-guard';
 
 const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
+// Known agent roster — returned with "unreachable" status when API is down
+const KNOWN_AGENTS = [
+  { name: 'Wyatt Earp', display_name: 'Wyatt Earp', department: 'Operations' },
+  { name: 'Dispatcher', display_name: 'Dispatcher', department: 'Operations' },
+  { name: 'Watchdog', display_name: 'Watchdog', department: 'Operations' },
+  { name: 'Zig Ziglar', display_name: 'Zig Ziglar', department: 'Marketing' },
+  { name: 'David Ogilvy', display_name: 'David Ogilvy', department: 'Creative Strategy' },
+  { name: 'Don Draper', display_name: 'Don Draper', department: 'Creative Direction' },
+  { name: 'Andy Warhol', display_name: 'Andy Warhol', department: 'Render Production' },
+  { name: 'George Boole', display_name: 'George Boole', department: 'Code Execution' },
+  { name: 'Ada Lovelace', display_name: 'Ada Lovelace', department: 'Development' },
+  { name: 'Peter Drucker', display_name: 'Peter Drucker', department: 'Strategy & Intelligence' },
+  { name: 'Tom Hopkins', display_name: 'Tom Hopkins', department: 'Sales Coaching' },
+  { name: 'Operations Worker', display_name: 'Operations Worker', department: 'Operations' },
+  { name: 'Jim Bridger', display_name: 'Jim Bridger', department: 'Research' },
+  { name: 'Bat Masterson', display_name: 'Bat Masterson', department: 'Creative Review' },
+  { name: 'Creative Synthesizer', display_name: 'Creative Synthesizer', department: 'Creative Synthesis' },
+  { name: 'Creative War Room', display_name: 'Creative War Room', department: 'Creative Prompt Engineering' },
+  { name: 'Clark Kent', display_name: 'Clark Kent', department: 'Research' },
+  { name: 'Asset Scout', display_name: 'Asset Scout', department: 'Asset Retrieval' },
+  { name: 'Clara Barton', display_name: 'Clara Barton', department: 'SEO Audit' },
+  { name: 'Rand Fishkin', display_name: 'Rand Fishkin', department: 'Keyword Strategy' },
+  { name: 'Gutenberg', display_name: 'Gutenberg', department: 'Site Publishing' },
+];
+
+function fallbackRoster(error: string) {
+  return NextResponse.json({
+    agents: KNOWN_AGENTS.map(a => ({
+      ...a,
+      status: 'unreachable',
+      running: false,
+      last_seen: null,
+      current_task_id: null,
+      seconds_since_heartbeat: null,
+      service_name: null,
+      instance_id: null,
+    })),
+    fetchedAt: new Date().toISOString(),
+    error,
+    api_unreachable: true,
+  });
+}
+
 export async function GET() {
   const auth = await requireAdmin();
   if (!auth.authorized) return auth.response;
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
+    const timer = setTimeout(() => controller.abort(), 15000);
     // Fetch both /agents/status (for running/status) and /metrics/agents (for heartbeat freshness)
     const [statusRes, metricsRes] = await Promise.all([
       fetch(`${TOMBSTONE_URL}/agents/status`, { cache: 'no-store', signal: controller.signal }),
@@ -20,7 +63,7 @@ export async function GET() {
     clearTimeout(timer);
 
     if (!statusRes.ok) {
-      return NextResponse.json({ error: 'Tombstone API error', status: statusRes.status }, { status: 502 });
+      return fallbackRoster(`Tombstone API returned ${statusRes.status}`);
     }
 
     const agents = await statusRes.json();
@@ -59,9 +102,10 @@ export async function GET() {
     });
   } catch (err: any) {
     if (err?.name === 'AbortError') {
-      return NextResponse.json({ error: 'Tombstone API timeout', agents: [] }, { status: 504 });
+      console.warn('[admin/agents] Tombstone API timeout (15s)');
+      return fallbackRoster('Tombstone API timeout — backend may be cold-starting');
     }
     console.error('[admin/agents] Tombstone proxy error:', err?.message);
-    return NextResponse.json({ error: 'Failed to reach Tombstone API', agents: [] }, { status: 502 });
+    return fallbackRoster('Failed to reach Tombstone API');
   }
 }
