@@ -81,7 +81,8 @@ async function sendViaSmtp(opts: SendEmailOpts): Promise<boolean> {
 async function sendViaLog(opts: SendEmailOpts): Promise<boolean> {
   console.log(`[email/log] TO: ${opts.to} | SUBJECT: ${opts.subject}`);
   console.log(`[email/log] HTML length: ${opts.html.length} chars`);
-  return true;
+  console.warn('[email/log] Log-only provider — email NOT actually sent. Set EMAIL_PROVIDER=smtp for real delivery.');
+  return false; // return false so callers know the email was NOT delivered
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

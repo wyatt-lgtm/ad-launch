@@ -81,27 +81,35 @@ export async function POST(request: Request) {
       let emailSent = false;
 
       // Strategy 1: GHL (primary) — subtenant credentials for transactional email
-      if (process.env.GHL_API_TOKEN || process.env.GHL_MASTER_API_TOKEN) {
+      const ghlToken = process.env.GHL_API_TOKEN || process.env.GHL_MASTER_API_TOKEN;
+      console.log('[forgot-password] GHL token available:', !!ghlToken, '| prefix:', ghlToken?.substring(0, 15) || 'none');
+      if (ghlToken) {
         try {
+          console.log('[forgot-password] Creating GHL contact for', normalizedEmail);
           const contactResult = await createGHLContact(normalizedEmail);
+          console.log('[forgot-password] GHL contact result — success:', contactResult.success, '| contactId:', contactResult.contactId, '| data:', JSON.stringify(contactResult.data)?.substring(0, 200));
           if (contactResult.contactId) {
+            console.log('[forgot-password] Sending GHL email to contactId:', contactResult.contactId);
             const emailResult = await sendGHLEmail(
               contactResult.contactId,
               'Reset your password - Launch OS',
               htmlBody,
             );
+            console.log('[forgot-password] GHL email result — success:', emailResult.success, '| data:', JSON.stringify(emailResult.data)?.substring(0, 200));
             if (emailResult.success) {
               emailSent = true;
-              console.log('[forgot-password] Reset email sent via GHL to', normalizedEmail);
+              console.log('[forgot-password] ✅ Reset email sent via GHL to', normalizedEmail);
             } else {
-              console.error('[forgot-password] GHL email send failed:', emailResult.data);
+              console.error('[forgot-password] ❌ GHL email send failed:', JSON.stringify(emailResult.data));
             }
           } else {
-            console.error('[forgot-password] Failed to create/find GHL contact for', normalizedEmail);
+            console.error('[forgot-password] ❌ Failed to create/find GHL contact — no contactId returned');
           }
         } catch (ghlErr: any) {
-          console.error('[forgot-password] GHL email send error:', ghlErr?.message);
+          console.error('[forgot-password] ❌ GHL exception:', ghlErr?.message, ghlErr?.stack?.substring(0, 300));
         }
+      } else {
+        console.warn('[forgot-password] ⚠️ No GHL token configured — skipping GHL');
       }
 
       // Strategy 2: SMTP fallback
