@@ -42,8 +42,8 @@ function buildResetHtml(resetLink: string): string {
  * Generates a password reset token, stores it, and emails a reset link.
  *
  * Email delivery strategy (try in order, first success wins):
- *   1. SMTP via sendEmail() — works when EMAIL_PROVIDER=smtp and SMTP_* vars are set
- *   2. GHL via createGHLContact + sendGHLEmail — works when GHL_API_TOKEN is set
+ *   1. GHL via createGHLContact + sendGHLEmail — primary, works when GHL_API_TOKEN is set
+ *   2. SMTP via sendEmail() — fallback, works when EMAIL_PROVIDER=smtp and SMTP_* vars are set
  *
  * Always returns success to avoid leaking whether an email exists.
  */
@@ -80,23 +80,8 @@ export async function POST(request: Request) {
 
       let emailSent = false;
 
-      // Strategy 1: SMTP via sendEmail()
-      try {
-        emailSent = await sendEmail({
-          to: normalizedEmail,
-          subject: 'Reset your password - Launch OS',
-          html: htmlBody,
-          fromName: 'Launch OS',
-        });
-        if (emailSent) {
-          console.log('[forgot-password] Reset email sent via SMTP to', normalizedEmail);
-        }
-      } catch (smtpErr: any) {
-        console.error('[forgot-password] SMTP send error:', smtpErr?.message);
-      }
-
-      // Strategy 2: GHL fallback
-      if (!emailSent && process.env.GHL_API_TOKEN) {
+      // Strategy 1: GHL (primary) — subtenant credentials for transactional email
+      if (process.env.GHL_API_TOKEN || process.env.GHL_MASTER_API_TOKEN) {
         try {
           const contactResult = await createGHLContact(normalizedEmail);
           if (contactResult.contactId) {
@@ -119,10 +104,27 @@ export async function POST(request: Request) {
         }
       }
 
+      // Strategy 2: SMTP fallback
+      if (!emailSent) {
+        try {
+          emailSent = await sendEmail({
+            to: normalizedEmail,
+            subject: 'Reset your password - Launch OS',
+            html: htmlBody,
+            fromName: 'Launch OS',
+          });
+          if (emailSent) {
+            console.log('[forgot-password] Reset email sent via SMTP to', normalizedEmail);
+          }
+        } catch (smtpErr: any) {
+          console.error('[forgot-password] SMTP send error:', smtpErr?.message);
+        }
+      }
+
       if (!emailSent) {
         console.error('[forgot-password] ALL email providers failed for', normalizedEmail,
-          '| SMTP configured:', !!(process.env.SMTP_HOST),
-          '| GHL configured:', !!(process.env.GHL_API_TOKEN));
+          '| GHL configured:', !!(process.env.GHL_API_TOKEN || process.env.GHL_MASTER_API_TOKEN),
+          '| SMTP configured:', !!(process.env.SMTP_HOST));
       }
     }
 
