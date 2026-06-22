@@ -5,7 +5,7 @@ const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xj
 // ── Fallback Image Generation ──────────────────────────────────────────────────
 // Env vars:
 //   IMAGE_PROVIDER       — "openai" (default). Controls which provider to use.
-//   OPENAI_IMAGE_MODEL   — "gpt-image-1.5" (default). Override to "gpt-image-2" etc.
+//   OPENAI_IMAGE_MODEL   — "gpt-image-2" (default). Must match Render env.
 //   OPENAI_API_KEY       — Required when IMAGE_PROVIDER=openai.
 // DALL-E 3 is NOT used unless OPENAI_IMAGE_MODEL is explicitly set to "dall-e-3".
 
@@ -24,7 +24,7 @@ interface FallbackImageResult {
  */
 async function generateFallbackImage(renderPrompt: string): Promise<FallbackImageResult> {
   const provider = (process.env.IMAGE_PROVIDER ?? 'openai').toLowerCase();
-  const openaiModel = process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-1.5';
+  const openaiModel = process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-2';
   const openaiKey = process.env.OPENAI_API_KEY;
 
   const fail = (error: string): FallbackImageResult => {
@@ -1445,7 +1445,7 @@ export async function getWorkflowResults(workflowIds: string[]) {
                 } catch { /* ignore */ }
               }
               if (renderPrompt) {
-                console.log(`[getWorkflowResults] Generating fallback image for workflow ${ad.workflowId}. Prompt: ${renderPrompt.slice(0, 80)}...`);
+                console.log(`[getWorkflowResults] ⚠️ FRONTEND_FALLBACK: Generating image for workflow ${ad.workflowId} because backend Render Production failed. This should not happen if Andy Warhol succeeds. prompt_len=${renderPrompt.length}`);
                 fallbackResult = await generateFallbackImage(renderPrompt);
               } else {
                 console.warn(`[getWorkflowResults] No render_prompt found in Creative Direction task ${cdTaskId} for workflow ${ad.workflowId}`);

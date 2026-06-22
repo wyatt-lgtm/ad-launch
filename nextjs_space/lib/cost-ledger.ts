@@ -106,7 +106,7 @@ export function estimateImagePostCosts(opts: {
       costType: 'image_generation',
       estimatedCostUsd: 0.04,
       imageCount: 1,
-      metadata: { model: 'gpt-image-1', stage: 'image_render' },
+      metadata: { model: process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-2', stage: 'image_render' },
     },
     {
       ...opts,

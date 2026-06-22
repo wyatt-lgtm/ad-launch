@@ -2,7 +2,7 @@
  * Ad Image Generation — calls OpenAI Images API directly.
  * Env vars:
  *   OPENAI_API_KEY       — Required.
- *   OPENAI_IMAGE_MODEL   — "gpt-image-1.5" (default). Override to "gpt-image-2", "dall-e-3", etc.
+ *   OPENAI_IMAGE_MODEL   — "gpt-image-2" (default). Must match Render env.
  *   IMAGE_PROVIDER       — "openai" (default). Reserved for future providers.
  */
 
@@ -87,7 +87,7 @@ function buildImagePrompt(brief: AdBrief): string {
  */
 export async function generateAdImage(brief: AdBrief): Promise<string | null> {
   const provider = process.env.IMAGE_PROVIDER ?? 'openai';
-  const model = process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-1.5';
+  const model = process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-2';
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
