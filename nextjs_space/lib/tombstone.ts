@@ -13,7 +13,7 @@ async function generateFallbackImage(renderPrompt: string): Promise<string | nul
   if (abacusKey) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 90000);
+      const timer = setTimeout(() => controller.abort(), 45000); // 45s for image gen
       const res = await fetch('https://apps.abacus.ai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${abacusKey}` },
@@ -48,7 +48,7 @@ async function generateFallbackImage(renderPrompt: string): Promise<string | nul
       // Truncate prompt to 4000 chars for DALL-E
       const dallePrompt = renderPrompt.slice(0, 4000);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 90000);
+      const timer = setTimeout(() => controller.abort(), 45000); // 45s timeout
       const res = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
