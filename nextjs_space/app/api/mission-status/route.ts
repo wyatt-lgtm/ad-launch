@@ -375,9 +375,9 @@ export async function GET(request: NextRequest) {
           rawStatus: l.status,
         }));
 
-      // If all lanes are done, extract workflow IDs and feed into existing completion path
+      // If all lanes are done (submitted), verify actual workflow task completion before proceeding
       if (allDone) {
-        const completedWfIds = runStatus.lanes
+        const submittedWfIds = runStatus.lanes
           .filter(l => (l.status === 'completed' || l.status === 'completed_with_warning') && l.workflow_id && LANE_MAP[l.lane_type])
           .map(l => l.workflow_id!);
 
@@ -385,8 +385,8 @@ export async function GET(request: NextRequest) {
           .filter(l => l.status === 'failed' && LANE_MAP[l.lane_type])
           .map(l => LANE_MAP[l.lane_type]);
 
-        if (completedWfIds.length === 0) {
-          // All lanes failed
+        if (submittedWfIds.length === 0) {
+          // All lanes failed at submission
           await prisma.analysis.update({ where: { id: analysisId }, data: { status: 'error' } }).catch(() => {});
           const firstErr = runStatus.lanes.find(l => l.error_message);
           return NextResponse.json({
@@ -399,11 +399,77 @@ export async function GET(request: NextRequest) {
           });
         }
 
+        // ── CRITICAL: Lane "completed" only means "workflow submitted", NOT "agents finished".
+        // We MUST check actual task statuses before declaring completion. ──
+        const wfStatus = await getMultiWorkflowStatus(submittedWfIds);
+        const wfOverall = wfStatus?.status ?? 'unknown';
+        const actuallyCompletedWfIds = wfStatus?.completedWorkflows ?? [];
+        const wfTasks = wfStatus?.tasks ?? [];
+        const anyWfActive = wfTasks.some((t: any) =>
+          ['active', 'waiting'].includes(t?.status) && !['failed', 'error'].includes(t?.rawStatus ?? '')
+        );
+
+        console.log(`[mission-status] Async lanes allDone, but actual workflow status: ${wfOverall} (${actuallyCompletedWfIds.length}/${submittedWfIds.length} workflows complete, ${wfTasks.length} tasks)`);
+
+        // If workflows are still running, don't complete — report generating with enriched task list
+        if (wfOverall !== 'completed' && wfOverall !== 'error' && anyWfActive) {
+          console.log(`[mission-status] Workflows still processing — reporting generating (not completing yet)`);
+
+          // Merge async tasks with real task data for better progress display
+          const enrichedTasks = wfTasks.length > 0 ? wfTasks : asyncTasks;
+
+          // Progressive ads: extract any already-completed workflow results
+          let partialAds: any[] = [];
+          if (actuallyCompletedWfIds.length > 0) {
+            const existingAds = await prisma.ad.findMany({ where: { analysisId: analysis.id }, select: { lane: true } });
+            const existingLanes = new Set(existingAds.map(a => a.lane).filter(Boolean));
+            const wfToLane: Record<string, string> = {};
+            for (const lane of runStatus.lanes) {
+              if (lane.workflow_id && LANE_MAP[lane.lane_type]) wfToLane[lane.workflow_id] = LANE_MAP[lane.lane_type];
+            }
+            const newWfs = actuallyCompletedWfIds.filter(id => {
+              const lane = wfToLane[id];
+              return lane && !existingLanes.has(lane);
+            });
+            if (newWfs.length > 0) {
+              try {
+                const partialResults = await getWorkflowResults(newWfs);
+                for (const ad of partialResults.ads) {
+                  const lane = wfToLane[ad.workflowId ?? ''] ?? ad.lane ?? 'website';
+                  if (!existingLanes.has(lane)) {
+                    await prisma.ad.create({
+                      data: {
+                        analysisId: analysis.id, lane, headline: ad.headline ?? '', caption: ad.caption ?? '',
+                        imageUrl: ad.imageUrl ?? null, watermarked: true,
+                      },
+                    }).catch(() => {});
+                    existingLanes.add(lane);
+                  }
+                }
+              } catch (e) { console.warn('[mission-status] Progressive extraction error:', e); }
+            }
+            const allAds = await prisma.ad.findMany({ where: { analysisId: analysis.id } });
+            partialAds = await resolveAdImages(allAds);
+          }
+
+          return NextResponse.json({
+            status: 'processing',
+            pipelinePhase: 'generating' as PipelinePhase,
+            tasks: enrichedTasks,
+            ads: partialAds,
+            laneWorkflows: asyncLaneWorkflows,
+            laneStatuses: buildLaneStatuses(partialAds, asyncLaneWorkflows, runStatus.lanes, failedLaneNames),
+            message: 'Agents still processing — results will appear as each lane finishes.',
+          });
+        }
+
+        // Workflows are actually done (or errored out) — proceed with completion
+        const completedWfIds = actuallyCompletedWfIds.length > 0 ? actuallyCompletedWfIds : submittedWfIds;
+
         // Feed completed workflow IDs into the existing full-completion logic
-        // Simulate the same statusResult shape the legacy path expects
         const syntheticStatusResult = {
-          status: allCompleted ? 'completed' : 'error',
-          tasks: asyncTasks,
+          status: wfOverall === 'completed' ? 'completed' : (actuallyCompletedWfIds.length > 0 ? 'completed' : 'error'),
+          tasks: wfTasks.length > 0 ? wfTasks : asyncTasks,
           completedWorkflows: completedWfIds,
         };
 
@@ -542,19 +608,27 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // ── Still processing: extract any completed lane ads progressively ──
+      // ── Still processing: extract any ACTUALLY completed lane ads progressively ──
+      // Lane "completed" means workflow submitted — verify actual task completion first
       let partialAds: any[] = [];
-      const completedLaneWfs = runStatus.lanes
+      let realTaskList: any[] | null = null;
+      const submittedLaneWfs = runStatus.lanes
         .filter(l => (l.status === 'completed' || l.status === 'completed_with_warning') && l.workflow_id && LANE_MAP[l.lane_type])
         .map(l => ({ wfId: l.workflow_id!, lane: LANE_MAP[l.lane_type] }));
 
-      if (completedLaneWfs.length > 0) {
+      if (submittedLaneWfs.length > 0) {
+        // Check which workflows are actually done (all tasks complete)
+        const progressWfStatus = await getMultiWorkflowStatus(submittedLaneWfs.map(l => l.wfId));
+        realTaskList = progressWfStatus?.tasks ?? null;
+        const actuallyDoneWfIds = new Set(progressWfStatus?.completedWorkflows ?? []);
+        const completedLaneWfs = submittedLaneWfs.filter(l => actuallyDoneWfIds.has(l.wfId));
+
         const existingAds = await prisma.ad.findMany({ where: { analysisId: analysis.id }, select: { lane: true } });
         const existingLanes = new Set(existingAds.map(a => a.lane).filter(Boolean));
 
         const newLaneWfs = completedLaneWfs.filter(l => !existingLanes.has(l.lane));
         if (newLaneWfs.length > 0) {
-          console.log(`[mission-status] Async progressive: ${newLaneWfs.length} lanes newly completed`);
+          console.log(`[mission-status] Async progressive: ${newLaneWfs.length} lanes actually completed (verified via task status)`);
           try {
             const partialResults = await getWorkflowResults(newLaneWfs.map(l => l.wfId));
             const wfToLane: Record<string, string> = {};
@@ -595,10 +669,13 @@ export async function GET(request: NextRequest) {
         : anyLaneQueued ? 'pipeline_preparing'
         : 'generating';
 
+      // Use real task list from workflow status check if available
+      const progressTasks = (realTaskList && realTaskList.length > 0) ? realTaskList : asyncTasks;
+
       return NextResponse.json({
         status: 'processing',
         pipelinePhase: asyncPhase,
-        tasks: asyncTasks,
+        tasks: progressTasks,
         laneWorkflows: asyncLaneWorkflows,
         laneStatuses: buildLaneStatuses(partialAds, asyncLaneWorkflows, runStatus.lanes),
         ...(partialAds.length > 0 ? { ads: partialAds } : {}),
