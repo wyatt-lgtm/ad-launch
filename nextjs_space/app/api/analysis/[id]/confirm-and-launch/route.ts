@@ -54,7 +54,7 @@ export async function POST(
       },
     });
 
-    // Sync confirmed location to the Business record
+    // Sync confirmed location to the Business record + BusinessLocation
     if (analysis.businessId) {
       const bName = name || analysis.businessName || '';
       const bAddr = address || analysis.businessAddr || '';
@@ -73,6 +73,43 @@ export async function POST(
           ...(bPhone ? { businessPhone: bPhone } : {}),
         },
       }).catch((e: any) => console.error('[confirm-and-launch] Business sync error (non-fatal):', e?.message));
+
+      // Upsert primary BusinessLocation (location_number=1)
+      try {
+        await prisma.businessLocation.upsert({
+          where: { businessId_locationNumber: { businessId: analysis.businessId, locationNumber: 1 } },
+          update: {
+            locationName: bName || undefined,
+            address1: bAddr || undefined,
+            city: bCity || undefined,
+            state: bState || undefined,
+            postalCode: bZip || undefined,
+            phone: bPhone || undefined,
+            placeId: placeId || undefined,
+            googleMapsUrl: googleMapsUrl || undefined,
+            isPrimary: true,
+            isConfirmed: true,
+            source: placeId ? 'google_places' : 'user_added',
+          },
+          create: {
+            businessId: analysis.businessId,
+            locationNumber: 1,
+            locationName: bName || null,
+            address1: bAddr || null,
+            city: bCity || null,
+            state: bState || null,
+            postalCode: bZip || null,
+            phone: bPhone || null,
+            placeId: placeId || null,
+            googleMapsUrl: googleMapsUrl || null,
+            isPrimary: true,
+            isConfirmed: true,
+            source: placeId ? 'google_places' : 'user_added',
+          },
+        });
+      } catch (locErr: any) {
+        console.error('[confirm-and-launch] BusinessLocation upsert error (non-fatal):', locErr?.message);
+      }
     }
 
     console.log(`[confirm-and-launch] Location confirmed for ${analysisId}. Returning immediately, launching pipeline in background.`);

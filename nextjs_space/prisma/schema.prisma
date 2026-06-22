@@ -63,10 +63,42 @@ model Business {
   contentProfile     BusinessContentProfile?
   savedAnalysis       Json?
   analysisRefreshedAt DateTime?
+  hasMultipleLocations Boolean                @default(false)
   assets              BusinessAsset[]
+  locations           BusinessLocation[]
 
   @@unique([userId, websiteUrl])
   @@index([userId])
+}
+
+model BusinessLocation {
+  id              String   @id @default(cuid())
+  businessId      String
+  locationNumber  Int
+  locationName    String?
+  address1        String?
+  address2        String?
+  city            String?
+  state           String?
+  postalCode      String?
+  county          String?
+  country         String   @default("US")
+  latitude        Float?
+  longitude       Float?
+  placeId         String?
+  source          String?  // google_places, user_added, existing_business, imported
+  isPrimary       Boolean  @default(false)
+  isConfirmed     Boolean  @default(true)
+  pageSlug        String?
+  phone           String?
+  googleMapsUrl   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, locationNumber])
+  @@unique([businessId, placeId])
+  @@index([businessId])
 }
 
 model BusinessContentProfile {

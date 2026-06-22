@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createConceptWebsiteMission } from '@/lib/tombstone';
+import { prisma } from '@/lib/db';
 
 /**
  * POST /api/generate-concept-site
@@ -43,11 +44,55 @@ export async function POST(request: NextRequest) {
           warnings.push('No search provider configured; automatic competitor discovery skipped. Provide competitor URLs manually for best results.');
         }
 
+        // Fetch all locations for multi-location website generation
+        let locationsPayload: { locations_count?: number; primary_location?: Record<string, any>; all_locations?: Array<Record<string, any>> } = {};
+        if (businessId) {
+          try {
+            const locations = await prisma.businessLocation.findMany({
+              where: { businessId },
+              orderBy: [{ isPrimary: 'desc' }, { locationNumber: 'asc' }],
+            });
+            if (locations.length > 0) {
+              const primary = locations.find(l => l.isPrimary) || locations[0];
+              locationsPayload = {
+                locations_count: locations.length,
+                primary_location: {
+                  location_number: primary.locationNumber,
+                  location_name: primary.locationName,
+                  address: primary.address1,
+                  city: primary.city,
+                  state: primary.state,
+                  zip: primary.postalCode,
+                  county: primary.county,
+                  phone: primary.phone,
+                  is_primary: true,
+                  page_slug: primary.pageSlug,
+                },
+                all_locations: locations.map(l => ({
+                  location_number: l.locationNumber,
+                  location_name: l.locationName,
+                  address: l.address1,
+                  city: l.city,
+                  state: l.state,
+                  zip: l.postalCode,
+                  county: l.county,
+                  phone: l.phone,
+                  is_primary: l.isPrimary,
+                  page_slug: l.pageSlug,
+                })),
+              };
+            }
+          } catch (locErr: any) {
+            console.warn('[generate-concept-site] Failed to fetch locations (non-fatal):', locErr?.message);
+          }
+        }
+
         const result = await createConceptWebsiteMission({
           website_url: websiteUrl || '',
           business_name: businessName || 'the business',
           industry: industry || '',
           location: location || '',
+          ...locationsPayload,
           content_profile: contentProfile || {},
           business_id: businessId || '',
           user_id: userId || '',

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, CheckCircle, AlertCircle, Search, Sparkles, FileCheck,
   Lock, Clock, CircleDot, XCircle, MapPin, Edit3,
-  Building2, Newspaper, CalendarHeart, Plus,
+  Building2, Newspaper, CalendarHeart, Plus, Trash2, Star,
 } from 'lucide-react';
 import WatermarkCard from '../../../components/watermark-card';
 import SeoInsights from '../../../components/seo-insights';
@@ -256,6 +256,49 @@ interface PlaceCandidate {
   userRatingCount: number | null;
 }
 
+/** A confirmed/pending location in multi-location mode */
+interface SelectedLocation {
+  key: string; // unique client key
+  locationName: string;
+  address1: string;
+  address2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  county: string;
+  phone: string;
+  placeId: string;
+  googleMapsUrl: string;
+  source: string;
+  isPrimary: boolean;
+}
+
+function makeEmptyLocation(source = 'user_added'): SelectedLocation {
+  return {
+    key: `loc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    locationName: '', address1: '', address2: '', city: '', state: '', postalCode: '',
+    county: '', phone: '', placeId: '', googleMapsUrl: '', source, isPrimary: false,
+  };
+}
+
+function placeToLocation(place: PlaceCandidate): SelectedLocation {
+  return {
+    key: `gp_${place.placeId}`,
+    locationName: place.name,
+    address1: place.formattedAddress,
+    address2: '',
+    city: place.city,
+    state: place.state,
+    postalCode: place.zip,
+    county: '',
+    phone: place.phone,
+    placeId: place.placeId,
+    googleMapsUrl: place.googleMapsUrl,
+    source: 'google_places',
+    isPrimary: false,
+  };
+}
+
 function LocationStep({
   analysisId,
   onLaunched,
@@ -273,13 +316,20 @@ function LocationStep({
     businessName: string; address: string; city: string; state: string; zip: string; phone: string;
     source: string; confidence: number;
   } | null>(null);
-  // Manual entry fields
+  // Manual entry fields (single-location mode)
   const [manualName, setManualName] = useState('');
   const [manualAddress, setManualAddress] = useState('');
   const [manualCity, setManualCity] = useState('');
   const [manualState, setManualState] = useState('');
   const [manualZip, setManualZip] = useState('');
   const [showManual, setShowManual] = useState(false);
+  // Multi-location state
+  const [multiMode, setMultiMode] = useState(false);
+  const [selectedLocations, setSelectedLocations] = useState<SelectedLocation[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newLoc, setNewLoc] = useState<SelectedLocation>(makeEmptyLocation());
+  // businessId for location API
+  const [businessId, setBusinessId] = useState<string | null>(null);
 
   /** Smart paste: if user pastes a full address like "123 Main St, City, ST 12345", split it */
   const handleAddressPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
@@ -303,6 +353,10 @@ function LocationStep({
         const data = await res.json().catch(() => ({}));
 
         const aStatus = data?.analysis?.status ?? data?.status;
+        // Store businessId for location API
+        const bId = data?.analysis?.businessId ?? data?.businessId;
+        if (bId) setBusinessId(bId);
+
         if (aStatus && aStatus !== 'pending_location') {
           onLaunched();
           return;
@@ -372,33 +426,86 @@ function LocationStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisId]);
 
+  // ── Multi-location helpers ─────────────────────────────────────────
+  const togglePlaceInMulti = (place: PlaceCandidate) => {
+    setSelectedLocations(prev => {
+      const exists = prev.find(l => l.placeId === place.placeId);
+      if (exists) {
+        return prev.filter(l => l.placeId !== place.placeId);
+      }
+      const loc = placeToLocation(place);
+      if (prev.length === 0) loc.isPrimary = true;
+      return [...prev, loc];
+    });
+  };
+
+  const setPrimary = (key: string) => {
+    setSelectedLocations(prev => prev.map(l => ({ ...l, isPrimary: l.key === key })));
+  };
+
+  const removeLocation = (key: string) => {
+    setSelectedLocations(prev => {
+      const updated = prev.filter(l => l.key !== key);
+      if (updated.length > 0 && !updated.some(l => l.isPrimary)) {
+        updated[0].isPrimary = true;
+      }
+      return updated;
+    });
+  };
+
+  const addManualLocation = () => {
+    if (!newLoc.city || !newLoc.state) return;
+    const loc = { ...newLoc, key: `manual_${Date.now()}` };
+    if (selectedLocations.length === 0) loc.isPrimary = true;
+    setSelectedLocations(prev => [...prev, loc]);
+    setNewLoc(makeEmptyLocation());
+    setShowAddForm(false);
+  };
+
   const handleLaunch = async () => {
     setLaunching(true);
     setError('');
     try {
-      const payload = selected
-        ? {
-            name: selected.name,
-            address: selected.formattedAddress,
-            city: selected.city,
-            state: selected.state,
-            zip: selected.zip,
-            phone: selected.phone,
-            placeId: selected.placeId,
-            googleMapsUrl: selected.googleMapsUrl,
-          }
-        : {
-            name: manualName,
-            address: manualAddress,
-            city: manualCity,
-            state: manualState,
-            zip: manualZip,
-          };
+      // ── Step 1: Confirm location on analysis (primary location for pipeline) ──
+      let primaryPayload: any;
+
+      if (multiMode && selectedLocations.length > 0) {
+        const primary = selectedLocations.find(l => l.isPrimary) || selectedLocations[0];
+        primaryPayload = {
+          name: primary.locationName,
+          address: primary.address1,
+          city: primary.city,
+          state: primary.state,
+          zip: primary.postalCode,
+          phone: primary.phone,
+          placeId: primary.placeId || undefined,
+          googleMapsUrl: primary.googleMapsUrl || undefined,
+        };
+      } else if (selected) {
+        primaryPayload = {
+          name: selected.name,
+          address: selected.formattedAddress,
+          city: selected.city,
+          state: selected.state,
+          zip: selected.zip,
+          phone: selected.phone,
+          placeId: selected.placeId,
+          googleMapsUrl: selected.googleMapsUrl,
+        };
+      } else {
+        primaryPayload = {
+          name: manualName,
+          address: manualAddress,
+          city: manualCity,
+          state: manualState,
+          zip: manualZip,
+        };
+      }
 
       const res = await fetch(`/api/analysis/${analysisId}/confirm-and-launch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(primaryPayload),
       });
       const data = await res.json().catch(() => ({}));
 
@@ -408,6 +515,33 @@ function LocationStep({
         return;
       }
 
+      // ── Step 2: Persist multi-location data (fire-and-forget) ──
+      const bId = businessId || data?.businessId;
+      if (bId && multiMode && selectedLocations.length > 0) {
+        const primaryIdx = selectedLocations.findIndex(l => l.isPrimary);
+        fetch(`/api/business/${bId}/locations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            hasMultipleLocations: true,
+            primaryLocationIndex: primaryIdx >= 0 ? primaryIdx : 0,
+            locations: selectedLocations.map(l => ({
+              locationName: l.locationName,
+              address1: l.address1,
+              address2: l.address2,
+              city: l.city,
+              state: l.state,
+              postalCode: l.postalCode,
+              county: l.county,
+              phone: l.phone,
+              placeId: l.placeId || undefined,
+              googleMapsUrl: l.googleMapsUrl || undefined,
+              source: l.source,
+            })),
+          }),
+        }).catch(err => console.error('[locations] Multi-location save error:', err));
+      }
+
       onLaunched();
     } catch (err) {
       console.error('Launch error:', err);
@@ -415,6 +549,13 @@ function LocationStep({
       setLaunching(false);
     }
   };
+
+  // Launch button disabled logic
+  const launchDisabled = launching || (
+    multiMode
+      ? selectedLocations.length === 0
+      : (!selected && (!manualCity || !manualState))
+  );
 
   if (loading) {
     return (
@@ -433,242 +574,467 @@ function LocationStep({
         </div>
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Confirm Your Business Location</h1>
         <p className="text-gray-500 mt-2 text-sm">
-          We'll use this to find local news and events for your social media posts
+          We&apos;ll use this to find local news and events for your social media posts
         </p>
       </div>
 
-      {/* Scraped Address from Website (only shown when Google Places couldn't cross-validate) */}
-      {scrapedAddress && !showManual && places.length === 0 && (
-        <div className="bg-white rounded-xl border-2 border-green-200 p-6 mb-6">
-          <div className="flex items-start gap-3 mb-4">
-            <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
-            <div>
-              <h4 className="text-sm font-semibold text-green-800">Address found on your website</h4>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Detected from {
-                  scrapedAddress.source === 'schema_org' ? 'structured data (Schema.org)' :
-                  scrapedAddress.source === 'address_tag' ? 'HTML address tag' :
-                  scrapedAddress.source === 'footer_parse' ? 'website footer' :
-                  'page content'
-                }. Please confirm or edit below.
-              </p>
-            </div>
-          </div>
-          {scrapedAddress.businessName && (
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Business Name</label>
-              <input
-                type="text"
-                value={manualName}
-                onChange={(e) => setManualName(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-              />
-            </div>
-          )}
-          {scrapedAddress.address && (
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Street Address</label>
-              <input
-                type="text"
-                value={manualAddress}
-                onChange={(e) => setManualAddress(e.target.value)}
-                onPaste={handleAddressPaste}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-              />
-            </div>
-          )}
-          <div className="grid grid-cols-3 gap-3 mb-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
-              <input
-                type="text"
-                value={manualCity}
-                onChange={(e) => setManualCity(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">State</label>
-              <input
-                type="text"
-                value={manualState}
-                onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-                maxLength={2}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">ZIP Code</label>
-              <input
-                type="text"
-                value={manualZip}
-                onChange={(e) => setManualZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10))}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-                maxLength={10}
-              />
-            </div>
-          </div>
-          {scrapedAddress.phone && (
-            <div className="text-xs text-gray-400 mt-1">📞 {scrapedAddress.phone}</div>
-          )}
-        </div>
+      {/* Multi-location toggle — only show when Google Places returned results */}
+      {places.length > 1 && (
+        <label className="flex items-center gap-2 mb-6 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={multiMode}
+            onChange={() => {
+              setMultiMode(prev => !prev);
+              // When entering multi-mode, seed selectedLocations from currently selected place
+              if (!multiMode && selected) {
+                setSelectedLocations([{ ...placeToLocation(selected), isPrimary: true }]);
+              }
+            }}
+            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+          <span className="text-sm text-gray-700 font-medium">I have multiple locations</span>
+        </label>
       )}
 
-      {/* Google Places Results (shown for both pure lookup and cross-validated scraped addresses) */}
-      {places.length > 0 && !showManual && (
-        <div className="space-y-3 mb-6">
-          {places.map((place) => (
-            <button
-              key={place.placeId}
-              onClick={() => setSelected(place)}
-              className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-                selected?.placeId === place.placeId
-                  ? 'border-blue-500 bg-blue-50 shadow-md'
-                  : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
-              }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="font-semibold text-gray-900">{place.name}</div>
-                  <div className="text-sm text-gray-500 mt-1">{place.formattedAddress}</div>
-                  <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
-                    {place.phone && <span>📞 {place.phone}</span>}
-                    {place.rating && (
-                      <span>⭐ {place.rating} ({place.userRatingCount ?? 0} reviews)</span>
-                    )}
-                    {place.googleMapsUrl && (
-                      <a
-                        href={place.googleMapsUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-500 hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        View on Maps →
-                      </a>
-                    )}
-                  </div>
-                </div>
-                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${
-                  selected?.placeId === place.placeId ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
-                }`}>
-                  {selected?.placeId === place.placeId && (
-                    <CheckCircle className="w-4 h-4 text-white" />
-                  )}
+      {/* ════════ SINGLE-LOCATION MODE (default / legacy behavior) ════════ */}
+      {!multiMode && (
+        <>
+          {/* Scraped Address from Website (only shown when Google Places couldn't cross-validate) */}
+          {scrapedAddress && !showManual && places.length === 0 && (
+            <div className="bg-white rounded-xl border-2 border-green-200 p-6 mb-6">
+              <div className="flex items-start gap-3 mb-4">
+                <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
+                <div>
+                  <h4 className="text-sm font-semibold text-green-800">Address found on your website</h4>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Detected from {
+                      scrapedAddress.source === 'schema_org' ? 'structured data (Schema.org)' :
+                      scrapedAddress.source === 'address_tag' ? 'HTML address tag' :
+                      scrapedAddress.source === 'footer_parse' ? 'website footer' :
+                      'page content'
+                    }. Please confirm or edit below.
+                  </p>
                 </div>
               </div>
-            </button>
-          ))}
-
-          <button
-            onClick={() => { setShowManual(true); setSelected(null); }}
-            className="w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium py-2"
-          >
-            My business isn't listed — enter manually
-          </button>
-        </div>
-      )}
-
-      {/* No Google Maps listing — missing customers message (only when no scraped address either) */}
-      {places.length === 0 && !showManual && !scrapedAddress && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-6">
-          <div className="flex items-start gap-3 mb-3">
-            <AlertCircle className="w-6 h-6 text-amber-500 mt-0.5 shrink-0" />
-            <div>
-              <h3 className="text-base font-semibold text-amber-800">Your business wasn't found on Google Maps</h3>
-              <p className="text-sm text-amber-700 mt-1">
-                You may be missing customers who search for businesses like yours on Google Maps.{' '}
-                <a
-                  href="https://business.google.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-700 underline font-medium"
-                >
-                  Add your business to Google Maps for free →
-                </a>
-              </p>
-              <p className="text-sm text-amber-600 mt-2">
-                In the meantime, please enter your address below so we can create your posts.
-              </p>
+              {scrapedAddress.businessName && (
+                <div className="mb-3">
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Business Name</label>
+                  <input
+                    type="text"
+                    value={manualName}
+                    onChange={(e) => setManualName(e.target.value)}
+                    className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                  />
+                </div>
+              )}
+              {scrapedAddress.address && (
+                <div className="mb-3">
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Street Address</label>
+                  <input
+                    type="text"
+                    value={manualAddress}
+                    onChange={(e) => setManualAddress(e.target.value)}
+                    onPaste={handleAddressPaste}
+                    className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                  />
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
+                  <input
+                    type="text"
+                    value={manualCity}
+                    onChange={(e) => setManualCity(e.target.value)}
+                    className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">State</label>
+                  <input
+                    type="text"
+                    value={manualState}
+                    onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
+                    className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                    maxLength={2}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">ZIP Code</label>
+                  <input
+                    type="text"
+                    value={manualZip}
+                    onChange={(e) => setManualZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10))}
+                    className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                    maxLength={10}
+                  />
+                </div>
+              </div>
+              {scrapedAddress.phone && (
+                <div className="text-xs text-gray-400 mt-1">📞 {scrapedAddress.phone}</div>
+              )}
             </div>
-          </div>
-          <button
-            onClick={() => setShowManual(true)}
-            className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 transition-all"
-          >
-            <Edit3 className="w-4 h-4" />
-            Enter Address Manually
-          </button>
-        </div>
-      )}
-
-      {/* Manual Entry (user chose manual or clicked enter manually) */}
-      {showManual && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 space-y-4">
-          {places.length > 0 && (
-            <button
-              onClick={() => { setShowManual(false); if (places[0]) setSelected(places[0]); }}
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium mb-2"
-            >
-              ← Back to Google results
-            </button>
           )}
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Business Name</label>
-            <input
-              type="text"
-              value={manualName}
-              onChange={(e) => setManualName(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-              placeholder="Your Business Name"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Street Address</label>
-            <input
-              type="text"
-              value={manualAddress}
-              onChange={(e) => setManualAddress(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-              onPaste={handleAddressPaste}
-              placeholder="123 Main Street"
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
-              <input
-                type="text"
-                value={manualCity}
-                onChange={(e) => setManualCity(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-                placeholder="City"
-              />
+
+          {/* Google Places Results — single-select radio style */}
+          {places.length > 0 && !showManual && (
+            <div className="space-y-3 mb-6">
+              {places.map((place) => (
+                <button
+                  key={place.placeId}
+                  onClick={() => setSelected(place)}
+                  className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
+                    selected?.placeId === place.placeId
+                      ? 'border-blue-500 bg-blue-50 shadow-md'
+                      : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="font-semibold text-gray-900">{place.name}</div>
+                      <div className="text-sm text-gray-500 mt-1">{place.formattedAddress}</div>
+                      <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
+                        {place.phone && <span>📞 {place.phone}</span>}
+                        {place.rating && (
+                          <span>⭐ {place.rating} ({place.userRatingCount ?? 0} reviews)</span>
+                        )}
+                        {place.googleMapsUrl && (
+                          <a
+                            href={place.googleMapsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-500 hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            View on Maps →
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${
+                      selected?.placeId === place.placeId ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+                    }`}>
+                      {selected?.placeId === place.placeId && (
+                        <CheckCircle className="w-4 h-4 text-white" />
+                      )}
+                    </div>
+                  </div>
+                </button>
+              ))}
+
+              <button
+                onClick={() => { setShowManual(true); setSelected(null); }}
+                className="w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium py-2"
+              >
+                My business isn&apos;t listed — enter manually
+              </button>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">State</label>
-              <input
-                type="text"
-                value={manualState}
-                onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-                placeholder="ST"
-                maxLength={2}
-              />
+          )}
+
+          {/* No Google Maps listing — missing customers message */}
+          {places.length === 0 && !showManual && !scrapedAddress && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-6">
+              <div className="flex items-start gap-3 mb-3">
+                <AlertCircle className="w-6 h-6 text-amber-500 mt-0.5 shrink-0" />
+                <div>
+                  <h3 className="text-base font-semibold text-amber-800">Your business wasn&apos;t found on Google Maps</h3>
+                  <p className="text-sm text-amber-700 mt-1">
+                    You may be missing customers who search for businesses like yours on Google Maps.{' '}
+                    <a
+                      href="https://business.google.com/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-700 underline font-medium"
+                    >
+                      Add your business to Google Maps for free →
+                    </a>
+                  </p>
+                  <p className="text-sm text-amber-600 mt-2">
+                    In the meantime, please enter your address below so we can create your posts.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowManual(true)}
+                className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 transition-all"
+              >
+                <Edit3 className="w-4 h-4" />
+                Enter Address Manually
+              </button>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">ZIP Code</label>
-              <input
-                type="text"
-                value={manualZip}
-                onChange={(e) => setManualZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10))}
-                className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
-                placeholder="12345"
-                maxLength={10}
-              />
+          )}
+
+          {/* Manual Entry (single-location) */}
+          {showManual && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 space-y-4">
+              {places.length > 0 && (
+                <button
+                  onClick={() => { setShowManual(false); if (places[0]) setSelected(places[0]); }}
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium mb-2"
+                >
+                  ← Back to Google results
+                </button>
+              )}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Business Name</label>
+                <input
+                  type="text"
+                  value={manualName}
+                  onChange={(e) => setManualName(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                  placeholder="Your Business Name"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Street Address</label>
+                <input
+                  type="text"
+                  value={manualAddress}
+                  onChange={(e) => setManualAddress(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                  onPaste={handleAddressPaste}
+                  placeholder="123 Main Street"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
+                  <input
+                    type="text"
+                    value={manualCity}
+                    onChange={(e) => setManualCity(e.target.value)}
+                    className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                    placeholder="City"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">State</label>
+                  <input
+                    type="text"
+                    value={manualState}
+                    onChange={(e) => setManualState(e.target.value.toUpperCase().slice(0, 2))}
+                    className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                    placeholder="ST"
+                    maxLength={2}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">ZIP Code</label>
+                  <input
+                    type="text"
+                    value={manualZip}
+                    onChange={(e) => setManualZip(e.target.value.replace(/[^\d-]/g, '').slice(0, 10))}
+                    className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                    placeholder="12345"
+                    maxLength={10}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          )}
+        </>
+      )}
+
+      {/* ════════ MULTI-LOCATION MODE ════════ */}
+      {multiMode && (
+        <>
+          {/* Google Places as multi-select checkboxes */}
+          {places.length > 0 && (
+            <div className="space-y-3 mb-6">
+              <p className="text-xs text-gray-500 font-medium">Select all locations that belong to your business:</p>
+              {places.map((place) => {
+                const isChecked = selectedLocations.some(l => l.placeId === place.placeId);
+                return (
+                  <button
+                    key={place.placeId}
+                    onClick={() => togglePlaceInMulti(place)}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
+                      isChecked
+                        ? 'border-blue-500 bg-blue-50 shadow-md'
+                        : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="font-semibold text-gray-900">{place.name}</div>
+                        <div className="text-sm text-gray-500 mt-1">{place.formattedAddress}</div>
+                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
+                          {place.phone && <span>📞 {place.phone}</span>}
+                          {place.rating && (
+                            <span>⭐ {place.rating} ({place.userRatingCount ?? 0} reviews)</span>
+                          )}
+                          {place.googleMapsUrl && (
+                            <a
+                              href={place.googleMapsUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              View on Maps →
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-1 ${
+                        isChecked ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+                      }`}>
+                        {isChecked && <CheckCircle className="w-4 h-4 text-white" />}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Selected locations summary cards */}
+          {selectedLocations.length > 0 && (
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                Selected locations ({selectedLocations.length})
+              </h4>
+              <div className="space-y-2">
+                {selectedLocations.map((loc) => (
+                  <div
+                    key={loc.key}
+                    className={`flex items-center justify-between p-3 rounded-lg border ${
+                      loc.isPrimary ? 'border-blue-300 bg-blue-50' : 'border-gray-200 bg-white'
+                    }`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-900 truncate">
+                          {loc.locationName || loc.address1 || `${loc.city}, ${loc.state}`}
+                        </span>
+                        {loc.isPrimary && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-700 bg-blue-100 rounded">
+                            <Star className="w-2.5 h-2.5" /> Primary
+                          </span>
+                        )}
+                      </div>
+                      {loc.address1 && loc.locationName && (
+                        <p className="text-xs text-gray-500 truncate mt-0.5">{loc.address1}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 ml-2 shrink-0">
+                      {!loc.isPrimary && (
+                        <button
+                          onClick={() => setPrimary(loc.key)}
+                          className="p-1.5 text-gray-400 hover:text-blue-600 rounded transition-colors"
+                          title="Set as primary"
+                        >
+                          <Star className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => removeLocation(loc.key)}
+                        className="p-1.5 text-gray-400 hover:text-red-600 rounded transition-colors"
+                        title="Remove"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Add another location form */}
+          {!showAddForm ? (
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 mb-6 text-sm font-medium text-blue-600 border border-dashed border-blue-300 rounded-lg hover:bg-blue-50 transition-colors"
+            >
+              <Plus className="w-4 h-4" /> Add a location not listed above
+            </button>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6 space-y-3">
+              <div className="flex items-center justify-between mb-1">
+                <h4 className="text-sm font-semibold text-gray-700">Add Location</h4>
+                <button
+                  onClick={() => { setShowAddForm(false); setNewLoc(makeEmptyLocation()); }}
+                  className="text-xs text-gray-400 hover:text-gray-600"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Location Name</label>
+                <input
+                  type="text"
+                  value={newLoc.locationName}
+                  onChange={(e) => setNewLoc(prev => ({ ...prev, locationName: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                  placeholder="Downtown Branch"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Street Address</label>
+                <input
+                  type="text"
+                  value={newLoc.address1}
+                  onChange={(e) => setNewLoc(prev => ({ ...prev, address1: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                  placeholder="123 Main Street"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">City</label>
+                  <input
+                    type="text"
+                    value={newLoc.city}
+                    onChange={(e) => setNewLoc(prev => ({ ...prev, city: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                    placeholder="City"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">State</label>
+                  <input
+                    type="text"
+                    value={newLoc.state}
+                    onChange={(e) => setNewLoc(prev => ({ ...prev, state: e.target.value.toUpperCase().slice(0, 2) }))}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                    placeholder="ST"
+                    maxLength={2}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">ZIP Code</label>
+                  <input
+                    type="text"
+                    value={newLoc.postalCode}
+                    onChange={(e) => setNewLoc(prev => ({ ...prev, postalCode: e.target.value.replace(/[^\d-]/g, '').slice(0, 10) }))}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                    placeholder="12345"
+                    maxLength={10}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Phone (optional)</label>
+                <input
+                  type="text"
+                  value={newLoc.phone}
+                  onChange={(e) => setNewLoc(prev => ({ ...prev, phone: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none"
+                  placeholder="(555) 123-4567"
+                />
+              </div>
+              <button
+                onClick={addManualLocation}
+                disabled={!newLoc.city || !newLoc.state}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                <Plus className="w-4 h-4" /> Add Location
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {error && (
@@ -679,7 +1045,7 @@ function LocationStep({
 
       <button
         onClick={handleLaunch}
-        disabled={launching || (!selected && (!manualCity || !manualState))}
+        disabled={launchDisabled}
         className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-blue-600 text-white text-base font-bold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-200"
       >
         {launching ? (
@@ -687,7 +1053,11 @@ function LocationStep({
         ) : (
           <Sparkles className="w-5 h-5" />
         )}
-        {launching ? 'Launching Post Creation...' : 'Confirm Location & Create Posts'}
+        {launching
+          ? 'Launching Post Creation...'
+          : multiMode && selectedLocations.length > 1
+            ? `Confirm ${selectedLocations.length} Locations & Create Posts`
+            : 'Confirm Location & Create Posts'}
       </button>
 
       <p className="text-center text-xs text-gray-400 mt-3">

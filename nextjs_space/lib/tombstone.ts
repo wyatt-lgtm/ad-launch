@@ -1730,6 +1730,9 @@ export interface ConceptWebsitePayload {
   business_name: string;
   industry: string;
   location?: string;
+  locations_count?: number;
+  primary_location?: Record<string, any>;
+  all_locations?: Array<Record<string, any>>;
   content_profile?: Record<string, any>;
   business_id?: string;
   user_id?: string;
