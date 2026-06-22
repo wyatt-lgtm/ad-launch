@@ -1277,10 +1277,19 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
                         <p className="text-sm font-medium text-amber-700">This post couldn't be generated</p>
                         <p className="text-xs text-amber-500 mt-1">Click "Generate 3 More" below to retry</p>
                       </div>
+                    ) : laneStatuses[lane]?.status === 'running' || laneStatuses[lane]?.status === 'queued' ? (
+                      <div className="border-2 border-dashed border-blue-200 rounded-xl p-8 text-center bg-blue-50/50">
+                        <Loader2 className="w-8 h-8 text-blue-400 mx-auto mb-2 animate-spin" />
+                        <p className="text-sm font-medium text-blue-700">Pipeline still processing</p>
+                        <p className="text-xs text-blue-500 mt-1">
+                          {laneStatuses[lane]?.error || 'Image generation in progress — this may take a few minutes'}
+                        </p>
+                      </div>
                     ) : (
                       <div className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center">
                         <Icon className="w-8 h-8 text-gray-300 mx-auto mb-2" />
                         <p className="text-sm text-gray-400">No post generated yet</p>
+                        <p className="text-xs text-gray-300 mt-1">Click "Generate 3 More" below to create one</p>
                       </div>
                     )}
 
