@@ -102,8 +102,16 @@ export async function POST(request: NextRequest) {
         serverHeader.includes('openresty')
       );
 
-      // Treat non-blocked 4xx/5xx as unreachable, but 2xx/3xx means site exists
-      if (res.status >= 400 && !botBlocked) {
+      // 502/503 usually means a CDN/proxy exists but the origin won't talk to
+      // datacenter IPs — the site IS reachable from browsers, just not from us.
+      // Treat them like bot-blocked rather than truly unreachable.
+      const serverError = res.status === 502 || res.status === 503;
+      if (serverError && !botBlocked) {
+        console.log(`[analyze] Server error ${res.status} for ${normalizedUrl} (server: ${serverHeader || 'unknown'}) — treating as reachable (CDN/origin issue)`);
+        siteReachable = true;
+        htmlBody = '';
+      } else if (res.status >= 400 && !botBlocked) {
+        // Treat non-blocked 4xx/5xx (except 502/503) as unreachable
         console.warn(`[analyze] Website error: ${normalizedUrl} (status: ${res.status}, server: ${serverHeader || 'unknown'})`);
         return NextResponse.json({
           error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
@@ -133,10 +141,27 @@ export async function POST(request: NextRequest) {
         }
       }
     } catch (fetchErr: any) {
+      // Some hosting providers cause SSL/connection errors from datacenter IPs
+      // but the site IS reachable from browsers. Try a simple DNS check as fallback.
       console.warn(`[analyze] Website fetch failed: ${normalizedUrl}`, fetchErr?.message);
-      return NextResponse.json({
-        error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
-      }, { status: 422 });
+      try {
+        const { hostname } = new URL(normalizedUrl);
+        const dns = await import('dns');
+        await new Promise<void>((resolve, reject) => {
+          dns.resolve4(hostname, (err, addresses) => {
+            if (err || !addresses?.length) reject(err || new Error('No DNS'));
+            else resolve();
+          });
+        });
+        // DNS resolves — site exists, we just can't fetch it from this server
+        console.log(`[analyze] DNS resolves for ${hostname} — treating as reachable despite fetch error`);
+        siteReachable = true;
+        htmlBody = '';
+      } catch {
+        return NextResponse.json({
+          error: `We couldn't reach ${normalizedUrl}. Please check the URL and make sure the website is online, then try again.`,
+        }, { status: 422 });
+      }
     }
 
     // Step 2: Try to extract address from the website HTML first
