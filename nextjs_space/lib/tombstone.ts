@@ -1,6 +1,103 @@
 import { loadBusinessProfile, formatProfileForCommand, isStale } from '@/lib/business-profile';
 
 const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
+/**
+ * Generate a fallback image when Tombstone Render Production fails.
+ * Uses the Creative Direction render_prompt to produce a social-media-ready image.
+ * Tries Abacus AI LLM API first, falls back to OpenAI DALL-E.
+ * Returns image URL (hosted URL or data URL), or null on failure.
+ */
+async function generateFallbackImage(renderPrompt: string): Promise<string | null> {
+  // Try Abacus AI LLM API first
+  const abacusKey = process.env.ABACUSAI_API_KEY;
+  if (abacusKey) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 90000);
+      const res = await fetch('https://apps.abacus.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${abacusKey}` },
+        body: JSON.stringify({
+          model: 'gpt-5.1',
+          messages: [{ role: 'user', content: renderPrompt }],
+          modalities: ['image'],
+          image_config: { num_images: 1, aspect_ratio: '4:5' },
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        const url = extractImageUrl(data);
+        if (url) {
+          console.log(`[generateFallbackImage] Abacus AI image generated successfully`);
+          return url;
+        }
+      } else {
+        console.warn(`[generateFallbackImage] Abacus API returned ${res.status}`);
+      }
+    } catch (e: any) {
+      console.warn(`[generateFallbackImage] Abacus API error:`, e?.message ?? e);
+    }
+  }
+
+  // Fallback to OpenAI DALL-E
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    try {
+      // Truncate prompt to 4000 chars for DALL-E
+      const dallePrompt = renderPrompt.slice(0, 4000);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 90000);
+      const res = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt: dallePrompt,
+          n: 1,
+          size: '1024x1024',
+          quality: 'standard',
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        const url = data?.data?.[0]?.url ?? data?.data?.[0]?.b64_json;
+        if (url) {
+          const imageUrl = url.startsWith('http') ? url : `data:image/png;base64,${url}`;
+          console.log(`[generateFallbackImage] DALL-E image generated successfully`);
+          return imageUrl;
+        }
+      } else {
+        console.warn(`[generateFallbackImage] OpenAI DALL-E returned ${res.status}: ${await res.text().catch(() => '')}`);
+      }
+    } catch (e: any) {
+      console.warn(`[generateFallbackImage] DALL-E error:`, e?.message ?? e);
+    }
+  }
+
+  console.warn('[generateFallbackImage] No API key available for image generation');
+  return null;
+}
+
+/** Extract image URL from Abacus AI LLM response */
+function extractImageUrl(data: any): string | null {
+  // Check images array (standard format)
+  const images = data?.choices?.[0]?.message?.images;
+  if (Array.isArray(images) && images.length > 0) {
+    return images[0]?.image_url?.url ?? images[0]?.url ?? null;
+  }
+  // Check content array format
+  const content = data?.choices?.[0]?.message?.content;
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      if (item?.type === 'image_url' && item?.image_url?.url) return item.image_url.url;
+    }
+  }
+  return null;
+}
 
 /**
  * Load saved business profile and format as a command block.
@@ -1223,6 +1320,8 @@ export async function getWorkflowResults(workflowIds: string[]) {
 
     // Also track Creative Strategy task per workflow for fallback copy
     const wfCreativeStrategy = new Map<string, number>(); // workflowId → taskId
+    // Track Creative Direction task per workflow for fallback image generation prompt
+    const wfCreativeDirection = new Map<string, number>(); // workflowId → taskId
 
     for (const [wfId, tasks] of byWorkflow) {
       // Pick ONE ad task per workflow: prefer Conversion Assembly (final step),
@@ -1241,6 +1340,10 @@ export async function getWorkflowResults(workflowIds: string[]) {
         // Track creative strategy per workflow (Ogilvy's copy data)
         if (dept.includes('creative strategy')) {
           wfCreativeStrategy.set(wfId, task.id);
+        }
+        // Track creative direction per workflow (Don Draper's render prompt)
+        if (dept.includes('creative direction')) {
+          wfCreativeDirection.set(wfId, task.id);
         }
         // First research task has business data for SEO
         if (dept.includes('research') && !researchData) {
@@ -1292,14 +1395,35 @@ export async function getWorkflowResults(workflowIds: string[]) {
           } catch { /* ignore */ }
         }
         if (headline || caption) {
-          console.log(`[getWorkflowResults] Copy-only ad from Creative Strategy for workflow ${ad.workflowId}: headline=${headline.slice(0, 40)}...`);
+          // Attempt fallback image generation via LLM API using Creative Direction prompt
+          let fallbackImageUrl: string | null = null;
+          const cdTaskId = wfCreativeDirection.get(ad.workflowId);
+          if (cdTaskId) {
+            try {
+              const cdOutputs = await getTaskOutputs(cdTaskId);
+              let renderPrompt = '';
+              for (const out of cdOutputs) {
+                try {
+                  const parsed = typeof out.output === 'string' ? JSON.parse(out.output) : out.output;
+                  if (parsed?.render_prompt) { renderPrompt = parsed.render_prompt; break; }
+                } catch { /* ignore */ }
+              }
+              if (renderPrompt) {
+                console.log(`[getWorkflowResults] Generating fallback image for workflow ${ad.workflowId} via LLM API. Prompt: ${renderPrompt.slice(0, 80)}...`);
+                fallbackImageUrl = await generateFallbackImage(renderPrompt);
+              }
+            } catch (e) {
+              console.warn(`[getWorkflowResults] Fallback image generation failed for workflow ${ad.workflowId}:`, e);
+            }
+          }
+          console.log(`[getWorkflowResults] Copy-only ad from Creative Strategy for workflow ${ad.workflowId}: headline=${headline.slice(0, 40)}..., hasImage=${!!fallbackImageUrl}`);
           enrichedAds.push({
             taskId: ad.taskId,
             workflowId: ad.workflowId,
             headline,
             caption,
             cta,
-            imageUrl: null, // No rendered image — Render Production failed
+            imageUrl: fallbackImageUrl,
             copyOnly: true,
           });
         } else {
