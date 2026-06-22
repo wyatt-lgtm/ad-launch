@@ -466,7 +466,7 @@ function LocationStep({
     setLaunching(true);
     setError('');
     try {
-      // ── Step 1: Confirm location on analysis (primary location for pipeline) ──
+      // Build primary location fields (always sent for backward-compat Analysis update)
       let primaryPayload: any;
 
       if (multiMode && selectedLocations.length > 0) {
@@ -502,6 +502,29 @@ function LocationStep({
         };
       }
 
+      // Attach full multi-location payload inline so confirm-and-launch
+      // persists ALL locations transactionally BEFORE launching the workflow.
+      if (multiMode && selectedLocations.length > 0) {
+        const primaryIdx = selectedLocations.findIndex(l => l.isPrimary);
+        primaryPayload.multiLocation = {
+          hasMultipleLocations: true,
+          primaryLocationIndex: primaryIdx >= 0 ? primaryIdx : 0,
+          locations: selectedLocations.map(l => ({
+            locationName: l.locationName,
+            address1: l.address1,
+            address2: l.address2,
+            city: l.city,
+            state: l.state,
+            postalCode: l.postalCode,
+            county: l.county,
+            phone: l.phone,
+            placeId: l.placeId || undefined,
+            googleMapsUrl: l.googleMapsUrl || undefined,
+            source: l.source,
+          })),
+        };
+      }
+
       const res = await fetch(`/api/analysis/${analysisId}/confirm-and-launch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -513,33 +536,6 @@ function LocationStep({
         setError(data?.error ?? 'Failed to launch. Please try again.');
         setLaunching(false);
         return;
-      }
-
-      // ── Step 2: Persist multi-location data (fire-and-forget) ──
-      const bId = businessId || data?.businessId;
-      if (bId && multiMode && selectedLocations.length > 0) {
-        const primaryIdx = selectedLocations.findIndex(l => l.isPrimary);
-        fetch(`/api/business/${bId}/locations`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            hasMultipleLocations: true,
-            primaryLocationIndex: primaryIdx >= 0 ? primaryIdx : 0,
-            locations: selectedLocations.map(l => ({
-              locationName: l.locationName,
-              address1: l.address1,
-              address2: l.address2,
-              city: l.city,
-              state: l.state,
-              postalCode: l.postalCode,
-              county: l.county,
-              phone: l.phone,
-              placeId: l.placeId || undefined,
-              googleMapsUrl: l.googleMapsUrl || undefined,
-              source: l.source,
-            })),
-          }),
-        }).catch(err => console.error('[locations] Multi-location save error:', err));
       }
 
       onLaunched();
