@@ -882,10 +882,10 @@ function AgentsTab() {
   }, [fetchAgents]);
 
   const statusConfig: Record<string, { color: string; bg: string; label: string; dot: string }> = {
-    alive_idle: { color: 'text-green-700', bg: 'bg-green-50 border-green-200', label: 'Idle', dot: 'bg-green-500' },
-    alive_busy: { color: 'text-green-700', bg: 'bg-green-50 border-green-200', label: 'Busy', dot: 'bg-green-500 animate-pulse' },
+    alive_idle: { color: 'text-purple-700', bg: 'bg-purple-50 border-purple-200', label: 'Idle', dot: 'bg-purple-400' },
+    alive_busy: { color: 'text-green-700', bg: 'bg-green-50 border-green-200', label: 'Active', dot: 'bg-green-500 animate-pulse' },
     stale: { color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', label: 'Stale', dot: 'bg-amber-500' },
-    offline: { color: 'text-red-700', bg: 'bg-red-50 border-red-200', label: 'Offline', dot: 'bg-red-500' },
+    offline: { color: 'text-red-700', bg: 'bg-red-50 border-red-200', label: 'On standby', dot: 'bg-red-500' },
     unreachable: { color: 'text-gray-500', bg: 'bg-gray-50 border-gray-300 border-dashed', label: 'Unreachable', dot: 'bg-gray-400' },
   };
 
@@ -944,13 +944,13 @@ function AgentsTab() {
       {/* Summary bar */}
       <div className="flex items-center gap-6 mb-6 text-sm">
         <span className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-green-500" /> {alive} alive
+          <span className="w-2.5 h-2.5 rounded-full bg-green-500" /> {alive} online
         </span>
         <span className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> {stale} stale
         </span>
         <span className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-red-500" /> {offline} offline
+          <span className="w-2.5 h-2.5 rounded-full bg-red-500" /> {offline} on standby
         </span>
         {lastFetch && (
           <span className="text-gray-400 text-xs ml-auto">
