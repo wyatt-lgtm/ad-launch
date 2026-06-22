@@ -125,7 +125,7 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(180_000), // 180s — production 1024x1536+high can take 120-150s
     });
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

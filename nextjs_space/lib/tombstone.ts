@@ -69,7 +69,7 @@ async function generateFallbackImage(renderPrompt: string, meta?: { workflowId?:
   // Single attempt only — no blind retry while diagnosing
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60000);
+    const timer = setTimeout(() => controller.abort(), 180000); // 180s — production 1024x1536+high can take 120-150s
 
     const body: Record<string, any> = {
       model: openaiModel,
