@@ -48,14 +48,19 @@ function buildResetHtml(resetLink: string): string {
  * Always returns success to avoid leaking whether an email exists.
  */
 export async function POST(request: Request) {
+  const diagnostics: string[] = [];
+  const diag = (msg: string) => { diagnostics.push(msg); console.log('[forgot-password]', msg); };
+
   try {
-    const { email } = await request.json();
+    const body = await request.json();
+    const { email, debug } = body; // debug flag for temporary diagnostics
     if (!email || typeof email !== 'string') {
       return NextResponse.json({ success: true, message: 'If that email exists, a reset link has been sent.' });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
     const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    diag(`User lookup: ${user ? 'found' : 'not found'}`);
 
     if (user) {
       // Invalidate any existing unused tokens for this user
@@ -75,45 +80,48 @@ export async function POST(request: Request) {
       const appUrl = getAppUrl();
       const resetLink = `${appUrl}/reset-password?token=${token}`;
       const htmlBody = buildResetHtml(resetLink);
-
-      console.log('[forgot-password] Token created for', normalizedEmail, '| link host:', appUrl);
+      diag(`Token created | link host: ${appUrl}`);
 
       let emailSent = false;
 
       // Strategy 1: GHL (primary) — subtenant credentials for transactional email
       const ghlToken = process.env.GHL_API_TOKEN || process.env.GHL_MASTER_API_TOKEN;
-      console.log('[forgot-password] GHL token available:', !!ghlToken, '| prefix:', ghlToken?.substring(0, 15) || 'none');
+      diag(`GHL token: ${!!ghlToken} | prefix: ${ghlToken?.substring(0, 15) || 'none'}`);
+
       if (ghlToken) {
         try {
-          console.log('[forgot-password] Creating GHL contact for', normalizedEmail);
+          diag(`Creating GHL contact for ${normalizedEmail}`);
           const contactResult = await createGHLContact(normalizedEmail);
-          console.log('[forgot-password] GHL contact result — success:', contactResult.success, '| contactId:', contactResult.contactId, '| data:', JSON.stringify(contactResult.data)?.substring(0, 200));
+          diag(`Contact result — success: ${contactResult.success} | contactId: ${contactResult.contactId} | data: ${JSON.stringify(contactResult.data)?.substring(0, 300)}`);
+
           if (contactResult.contactId) {
-            console.log('[forgot-password] Sending GHL email to contactId:', contactResult.contactId);
+            diag(`Sending GHL email to contactId: ${contactResult.contactId}`);
             const emailResult = await sendGHLEmail(
               contactResult.contactId,
               'Reset your password - Launch OS',
               htmlBody,
             );
-            console.log('[forgot-password] GHL email result — success:', emailResult.success, '| data:', JSON.stringify(emailResult.data)?.substring(0, 200));
+            diag(`Email result — success: ${emailResult.success} | data: ${JSON.stringify(emailResult.data)?.substring(0, 300)}`);
+
             if (emailResult.success) {
               emailSent = true;
-              console.log('[forgot-password] ✅ Reset email sent via GHL to', normalizedEmail);
+              diag('✅ Reset email sent via GHL');
             } else {
-              console.error('[forgot-password] ❌ GHL email send failed:', JSON.stringify(emailResult.data));
+              diag('❌ GHL email send returned unsuccessful');
             }
           } else {
-            console.error('[forgot-password] ❌ Failed to create/find GHL contact — no contactId returned');
+            diag('❌ No contactId returned from GHL');
           }
         } catch (ghlErr: any) {
-          console.error('[forgot-password] ❌ GHL exception:', ghlErr?.message, ghlErr?.stack?.substring(0, 300));
+          diag(`❌ GHL exception: ${ghlErr?.message}`);
         }
       } else {
-        console.warn('[forgot-password] ⚠️ No GHL token configured — skipping GHL');
+        diag('⚠️ No GHL token configured — skipping GHL');
       }
 
       // Strategy 2: SMTP fallback
       if (!emailSent) {
+        diag('Trying SMTP fallback...');
         try {
           emailSent = await sendEmail({
             to: normalizedEmail,
@@ -121,25 +129,29 @@ export async function POST(request: Request) {
             html: htmlBody,
             fromName: 'Launch OS',
           });
-          if (emailSent) {
-            console.log('[forgot-password] Reset email sent via SMTP to', normalizedEmail);
-          }
+          diag(`SMTP result: ${emailSent}`);
         } catch (smtpErr: any) {
-          console.error('[forgot-password] SMTP send error:', smtpErr?.message);
+          diag(`SMTP error: ${smtpErr?.message}`);
         }
       }
 
       if (!emailSent) {
-        console.error('[forgot-password] ALL email providers failed for', normalizedEmail,
-          '| GHL configured:', !!(process.env.GHL_API_TOKEN || process.env.GHL_MASTER_API_TOKEN),
-          '| SMTP configured:', !!(process.env.SMTP_HOST));
+        diag(`ALL providers failed | GHL: ${!!ghlToken} | SMTP: ${!!process.env.SMTP_HOST}`);
       }
     }
 
-    // Always return success — no information leakage
-    return NextResponse.json({ success: true, message: 'If that email exists, a reset link has been sent.' });
+    // If debug flag is set, include diagnostics in response (TEMPORARY — remove after debugging)
+    const response: any = { success: true, message: 'If that email exists, a reset link has been sent.' };
+    if (debug === true) {
+      response._diagnostics = diagnostics;
+    }
+    return NextResponse.json(response);
   } catch (err: any) {
-    console.error('[forgot-password] Error:', err?.message);
-    return NextResponse.json({ success: false, error: 'Something went wrong' }, { status: 500 });
+    diag(`Fatal error: ${err?.message}`);
+    const response: any = { success: false, error: 'Something went wrong' };
+    if ((await request.clone().json().catch(() => ({}))).debug === true) {
+      response._diagnostics = diagnostics;
+    }
+    return NextResponse.json(response, { status: 500 });
   }
 }
