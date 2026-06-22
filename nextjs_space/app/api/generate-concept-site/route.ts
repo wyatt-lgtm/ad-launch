@@ -102,8 +102,8 @@ export async function POST(request: NextRequest) {
           reference_instructions: referenceInstructions,
           inspiration_only: true,
           do_not_copy_assets: true,
-          // Competitive SEO scout
-          analyze_competitors: !!analyzeCompetitors,
+          // Competitive SEO scout — always enabled for website generation
+          analyze_competitors: true,
           primary_keyword: primaryKeyword,
           trade_area: tradeArea,
           competitor_urls: competitorUrls?.slice(0, 3),

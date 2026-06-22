@@ -442,10 +442,11 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
   const [refInstructions, setRefInstructions] = useState('');
   const [showRefSection, setShowRefSection] = useState(false);
 
-  // Competitive SEO scout state
-  const [seoScoutEnabled, setSeoScoutEnabled] = useState(false);
+  // Competitive SEO scout state — checked by default, always-on for backend
+  const [seoScoutEnabled, setSeoScoutEnabled] = useState(true);
   const [primaryKeyword, setPrimaryKeyword] = useState('');
   const [tradeArea, setTradeArea] = useState('');
+  const [defaultsPrefilled, setDefaultsPrefilled] = useState(false);
   const [competitorUrls, setCompetitorUrls] = useState<string[]>(['']);
   const [seoWarnings, setSeoWarnings] = useState<string[]>([]);
 
@@ -464,6 +465,33 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  // Prefill keyword and trade area from research data when card expands
+  useEffect(() => {
+    if (expanded && !defaultsPrefilled && data) {
+      // Primary keyword from business type / category / industry
+      if (!primaryKeyword) {
+        const kw = data.contentProfile?.business_type
+          || data.contentProfile?.business_research?.business_type
+          || data.contentProfile?.business_category
+          || data.industry
+          || data.contentProfile?.industry
+          || data.contentProfile?.detected_service_type
+          || '';
+        if (kw) setPrimaryKeyword(kw);
+      }
+      // Trade area from confirmed city / location
+      if (!tradeArea) {
+        const ta = data.contentProfile?.confirmed_location?.city
+          || data.contentProfile?.city
+          || data.contentProfile?.service_area?.primary_city
+          || data.location
+          || '';
+        if (ta) setTradeArea(ta);
+      }
+      setDefaultsPrefilled(true);
+    }
+  }, [expanded, defaultsPrefilled, data, primaryKeyword, tradeArea]);
 
   // Load existing feedback on mount
   const loadFeedback = useCallback(async () => {
@@ -671,8 +699,18 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     }
   }, []);
 
-  const handleGenerate = async () => {
-    if (!data?.sections?.length || generating) return;
+  const handleGenerateButtonClick = async () => {
+    if (generating) return;
+
+    // If card is collapsed, first click just expands the card
+    if (!expanded) {
+      setExpanded(true);
+      setShowRefSection(true); // auto-open reference websites section
+      return;
+    }
+
+    // Card is already expanded — this is the "Start Now" action
+    if (!data?.sections?.length) return;
 
     if (!isLoggedIn) {
       setShowEmailPrompt(true);
@@ -715,6 +753,8 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     try {
       // Build reference sites (filter empty)
       const validRefUrls = refUrls.map(u => u.trim()).filter(Boolean);
+      // Always enable competitor analysis for website generation
+      const effectiveSeoScout = true;
       const rawCompetitorUrls = competitorUrls.map(u => u.trim()).filter(Boolean).slice(0, 3);
 
       // Validate competitor URLs
@@ -743,8 +783,8 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           // Reference websites
           referenceSites: validRefUrls.length > 0 ? validRefUrls.slice(0, 3) : undefined,
           referenceInstructions: refInstructions.trim() || undefined,
-          // Competitive SEO scout
-          analyzeCompetitors: seoScoutEnabled,
+          // Competitive SEO scout — always enabled for website generation
+          analyzeCompetitors: effectiveSeoScout,
           primaryKeyword: primaryKeyword.trim() || undefined,
           tradeArea: tradeArea.trim() || undefined,
           competitorUrls: validCompetitorUrls.length > 0 ? validCompetitorUrls : undefined,
@@ -871,7 +911,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           {expanded ? <ChevronUp className="w-5 h-5 text-white flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-white flex-shrink-0" />}
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); handleGenerate(); }}
+          onClick={(e) => { e.stopPropagation(); handleGenerateButtonClick(); }}
           disabled={generating || locked}
           className="flex-shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-white/20 hover:bg-white/30 text-white rounded-xl font-semibold transition-all disabled:opacity-50 text-sm border border-white/30 ml-3"
         >
@@ -1065,24 +1105,25 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
       {/* ── Optional: Competitive SEO Scout ── */}
       {expanded && !generating && !generatedUrl && (
         <div className="px-6 pt-4 pb-4 border-b border-gray-100">
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className="flex items-center gap-2 cursor-default">
             <input
               type="checkbox"
               checked={seoScoutEnabled}
-              onChange={(e) => setSeoScoutEnabled(e.target.checked)}
-              className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+              readOnly
+              className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 cursor-default"
             />
             <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-700">
               <Search className="w-4 h-4" />
               Analyze top local organic competitors
             </span>
+            <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">Always on</span>
           </label>
-          <p className="text-xs text-gray-400 mt-1 ml-6">Discover SEO patterns from competitors in your area</p>
+          <p className="text-xs text-gray-400 mt-1 ml-6">Organic competitor evaluation is included automatically with every website generation</p>
 
           {seoScoutEnabled && (
             <div className="mt-3 ml-6 space-y-3">
               <p className="text-xs text-gray-500 bg-blue-50 px-3 py-2 rounded-lg">
-                We'll use competitor sites to understand SEO patterns, not to copy their content or design.
+                We&apos;ll analyze organic competitors for SEO patterns, offers, and positioning to build a stronger site for you.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -1143,6 +1184,21 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Start Now CTA ── */}
+      {expanded && !generating && !generatedUrl && (
+        <div className="px-6 py-5 border-b border-gray-100 text-center">
+          <button
+            onClick={handleGenerateButtonClick}
+            disabled={locked}
+            className="inline-flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white rounded-xl font-bold text-base transition-all shadow-lg shadow-emerald-200 hover:shadow-xl hover:shadow-emerald-300 disabled:opacity-50"
+          >
+            <Sparkles className="w-5 h-5" />
+            Start Now
+          </button>
+          <p className="text-xs text-gray-400 mt-2">Add reference websites above, then click to generate your concept site</p>
         </div>
       )}
 
