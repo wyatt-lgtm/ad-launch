@@ -22,13 +22,29 @@ interface FallbackImageResult {
  * Uses the Creative Direction render_prompt to produce a social-media-ready image.
  * Provider & model controlled by IMAGE_PROVIDER / OPENAI_IMAGE_MODEL env vars.
  */
-async function generateFallbackImage(renderPrompt: string): Promise<FallbackImageResult> {
+async function generateFallbackImage(renderPrompt: string, meta?: { workflowId?: string; taskId?: string; lane?: string }): Promise<FallbackImageResult> {
+  // ── DIAGNOSTIC: disabled during debugging ─────────────────────────────
+  // Frontend fallback is disabled to prevent double-calling OpenAI while
+  // we diagnose the 429/HTML issue. Backend (Andy Warhol) is the sole renderer.
+  const FALLBACK_DISABLED = process.env.DISABLE_FRONTEND_FALLBACK !== 'false'; // disabled unless explicitly set to "false"
+  if (FALLBACK_DISABLED) {
+    console.warn(
+      `[generateFallbackImage] ⛔ DISABLED — frontend fallback is turned off during debugging. ` +
+      `Set DISABLE_FRONTEND_FALLBACK=false to re-enable. ` +
+      `workflow=${meta?.workflowId ?? 'n/a'} lane=${meta?.lane ?? 'n/a'}`
+    );
+    return { imageUrl: null, provider: null, model: null, error: 'Frontend fallback disabled during debugging', degraded: true };
+  }
+
   const provider = (process.env.IMAGE_PROVIDER ?? 'openai').toLowerCase();
   const openaiModel = process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-2';
   const openaiKey = process.env.OPENAI_API_KEY;
+  const keySuffix = openaiKey ? `...${openaiKey.slice(-6)}` : 'MISSING';
+  const endpoint = 'https://api.openai.com/v1/images/generations';
+  const metaTag = `workflow=${meta?.workflowId ?? 'n/a'} task=${meta?.taskId ?? 'n/a'} lane=${meta?.lane ?? 'n/a'}`;
 
   const fail = (error: string): FallbackImageResult => {
-    console.error(`[generateFallbackImage] FAILED provider=${provider} model=${openaiModel} error="${error}"`);
+    console.error(`[generateFallbackImage] FAILED provider=${provider} model=${openaiModel} key=${keySuffix} ${metaTag} error="${error}"`);
     return { imageUrl: null, provider, model: openaiModel, error, degraded: true };
   };
 
@@ -40,99 +56,131 @@ async function generateFallbackImage(renderPrompt: string): Promise<FallbackImag
     return fail('OPENAI_API_KEY is not configured. Cannot generate fallback image.');
   }
 
-  console.log(`[generateFallbackImage] Starting: provider=${provider} model=${openaiModel} prompt_len=${renderPrompt.length}`);
+  console.log(
+    `[generateFallbackImage] ⚠️ FRONTEND_FALLBACK Starting: ` +
+    `endpoint=${endpoint} method=POST provider=${provider} model=${openaiModel} ` +
+    `key=${keySuffix} prompt_len=${renderPrompt.length} ${metaTag}`
+  );
 
-  // Determine API endpoint and payload based on model
   const isDalle = openaiModel.startsWith('dall-e');
-  const maxPromptLen = isDalle ? 4000 : 32000; // GPT Image models support longer prompts
+  const maxPromptLen = isDalle ? 4000 : 32000;
   const truncatedPrompt = renderPrompt.slice(0, maxPromptLen);
 
-  // Retry config: 1 initial attempt + 1 retry on 429
-  const MAX_ATTEMPTS = 2;
-  let lastStatus = 0;
-  let lastError = '';
+  // Single attempt only — no blind retry while diagnosing
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 60000); // 60s timeout
-
-      const body: Record<string, any> = {
-        model: openaiModel,
-        prompt: truncatedPrompt,
-        n: 1,
-        size: isDalle ? '1024x1024' : '1024x1536', // 2:3 portrait for GPT Image models
-      };
-      if (isDalle) {
-        body.quality = 'standard';
-      } else {
-        body.quality = 'medium';
-      }
-
-      const res = await fetch('https://api.openai.com/v1/images/generations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${openaiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      lastStatus = res.status;
-
-      if (res.ok) {
-        const data = await res.json();
-        const item = data?.data?.[0];
-        const rawUrl = item?.url ?? null;
-        const b64 = item?.b64_json ?? null;
-
-        if (rawUrl) {
-          console.log(`[generateFallbackImage] SUCCESS provider=${provider} model=${openaiModel} attempt=${attempt} format=url`);
-          return { imageUrl: rawUrl, provider, model: openaiModel, error: null, degraded: false };
-        }
-        if (b64) {
-          const dataUrl = `data:image/png;base64,${b64}`;
-          console.log(`[generateFallbackImage] SUCCESS provider=${provider} model=${openaiModel} attempt=${attempt} format=b64`);
-          return { imageUrl: dataUrl, provider, model: openaiModel, error: null, degraded: false };
-        }
-
-        lastError = 'OpenAI returned 200 but no image data in response';
-        console.warn(`[generateFallbackImage] ${lastError}. Response keys: ${JSON.stringify(Object.keys(data ?? {}))}`);
-      } else if (res.status === 429) {
-        // Rate limited — retry after backoff
-        const retryAfter = parseInt(res.headers.get('retry-after') ?? '0', 10);
-        const waitMs = Math.max((retryAfter || 5) * 1000, 5000);
-        lastError = `HTTP 429 rate limited (attempt ${attempt}/${MAX_ATTEMPTS})`;
-        console.warn(`[generateFallbackImage] ${lastError}. provider=${provider} model=${openaiModel} retryAfter=${retryAfter}s`);
-        if (attempt < MAX_ATTEMPTS) {
-          await new Promise(r => setTimeout(r, waitMs));
-          continue; // retry
-        }
-        // Final attempt exhausted
-        return fail(`Rate limited (HTTP 429) after ${MAX_ATTEMPTS} attempts. provider=${provider} model=${openaiModel}`);
-      } else {
-        // Non-429 error
-        const errBody = await res.text().catch(() => '');
-        lastError = `HTTP ${res.status}`;
-        // Don't log full error body if it's HTML (Cloudflare pages etc.)
-        const shortErr = errBody.startsWith('<!') ? errBody.slice(0, 100) + '...' : errBody.slice(0, 300);
-        console.error(`[generateFallbackImage] provider=${provider} model=${openaiModel} status=${res.status} body=${shortErr}`);
-        return fail(`OpenAI Images API returned ${res.status}. provider=${provider} model=${openaiModel}`);
-      }
-    } catch (e: any) {
-      const isTimeout = e?.name === 'AbortError';
-      lastError = isTimeout ? 'Request timed out (60s)' : (e?.message ?? String(e));
-      console.error(`[generateFallbackImage] provider=${provider} model=${openaiModel} attempt=${attempt} error="${lastError}"`);
-      if (attempt >= MAX_ATTEMPTS) {
-        return fail(lastError);
-      }
-      // Retry after brief delay
-      await new Promise(r => setTimeout(r, 3000));
+    const body: Record<string, any> = {
+      model: openaiModel,
+      prompt: truncatedPrompt,
+      n: 1,
+      size: isDalle ? '1024x1024' : '1024x1536',
+    };
+    if (isDalle) {
+      body.quality = 'standard';
+    } else {
+      body.quality = 'medium';
     }
-  }
 
-  return fail(lastError || 'Unknown error after all attempts');
+    const startTime = Date.now();
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    // ── DIAGNOSTIC: log full response metadata ─────────────────────────
+    const contentType = res.headers.get('content-type') ?? 'null';
+    const retryAfterRaw = res.headers.get('retry-after');
+    const ratelimitHeaders: Record<string, string | null> = {};
+    res.headers.forEach((v, k) => {
+      if (k.startsWith('x-ratelimit')) ratelimitHeaders[k] = v;
+    });
+    console.log(
+      `[generateFallbackImage] RESPONSE status=${res.status} elapsed=${elapsed}s ` +
+      `content-type="${contentType}" retry-after-raw="${retryAfterRaw ?? 'null'}" ` +
+      `x-ratelimit=${JSON.stringify(ratelimitHeaders)} ` +
+      `endpoint=${endpoint} model=${openaiModel} key=${keySuffix} ${metaTag}`
+    );
+
+    if (res.ok) {
+      const data = await res.json();
+      const item = data?.data?.[0];
+      const rawUrl = item?.url ?? null;
+      const b64 = item?.b64_json ?? null;
+
+      if (rawUrl) {
+        console.log(`[generateFallbackImage] SUCCESS format=url elapsed=${elapsed}s ${metaTag}`);
+        return { imageUrl: rawUrl, provider, model: openaiModel, error: null, degraded: false };
+      }
+      if (b64) {
+        const dataUrl = `data:image/png;base64,${b64}`;
+        console.log(`[generateFallbackImage] SUCCESS format=b64 elapsed=${elapsed}s ${metaTag}`);
+        return { imageUrl: dataUrl, provider, model: openaiModel, error: null, degraded: false };
+      }
+
+      return fail(`200 OK but no image data. Response keys: ${JSON.stringify(Object.keys(data ?? {}))}`);
+    }
+
+    // ── Non-OK: read body for diagnostics ────────────────────────────
+    const rawBody = await res.text().catch(() => '');
+    const isJson = contentType.includes('application/json');
+    const isHtml = rawBody.trimStart().startsWith('<') || contentType.includes('text/html');
+    let bodyPreview: string;
+    let parsedError: { type?: string; code?: string; message?: string } | null = null;
+
+    if (isJson) {
+      try {
+        const parsed = JSON.parse(rawBody);
+        parsedError = {
+          type: parsed?.error?.type,
+          code: parsed?.error?.code,
+          message: parsed?.error?.message?.slice(0, 300),
+        };
+        bodyPreview = JSON.stringify(parsedError);
+      } catch {
+        bodyPreview = rawBody.slice(0, 300);
+      }
+    } else if (isHtml) {
+      bodyPreview = `[HTML] ${rawBody.slice(0, 300)}`;
+    } else {
+      bodyPreview = rawBody.slice(0, 300);
+    }
+
+    console.error(
+      `[generateFallbackImage] HTTP_ERROR status=${res.status} ` +
+      `content-type="${contentType}" is_json=${isJson} is_html=${isHtml} ` +
+      `retry-after-raw="${retryAfterRaw ?? 'null'}" ` +
+      `body_preview=${bodyPreview} ` +
+      `x-ratelimit=${JSON.stringify(ratelimitHeaders)} ` +
+      `endpoint=${endpoint} model=${openaiModel} key=${keySuffix} ${metaTag}`
+    );
+
+    if (isHtml && res.status === 429) {
+      return fail(
+        `429 with HTML body — this is NOT an OpenAI API error. Likely Cloudflare WAF or CDN rate limit. ` +
+        `The request may not have reached OpenAI. Check: (1) API key project rate limits in OpenAI dashboard, ` +
+        `(2) IP-level blocks, (3) Cloudflare configuration. ` +
+        `retry-after-raw="${retryAfterRaw}" content-type="${contentType}"`
+      );
+    }
+
+    return fail(
+      `HTTP ${res.status} | content-type="${contentType}" | ` +
+      `${parsedError ? `type=${parsedError.type} code=${parsedError.code} msg=${parsedError.message}` : `body=${bodyPreview.slice(0, 200)}`}`
+    );
+  } catch (e: any) {
+    const isTimeout = e?.name === 'AbortError';
+    const errMsg = isTimeout ? 'Request timed out (60s)' : (e?.message ?? String(e));
+    return fail(`${errMsg} | endpoint=${endpoint} model=${openaiModel} key=${keySuffix}`);
+  }
 }
 
 /**
@@ -1446,7 +1494,7 @@ export async function getWorkflowResults(workflowIds: string[]) {
               }
               if (renderPrompt) {
                 console.log(`[getWorkflowResults] ⚠️ FRONTEND_FALLBACK: Generating image for workflow ${ad.workflowId} because backend Render Production failed. This should not happen if Andy Warhol succeeds. prompt_len=${renderPrompt.length}`);
-                fallbackResult = await generateFallbackImage(renderPrompt);
+                fallbackResult = await generateFallbackImage(renderPrompt, { workflowId: String(ad.workflowId), taskId: String(cdTaskId), lane: ad.lane });
               } else {
                 console.warn(`[getWorkflowResults] No render_prompt found in Creative Direction task ${cdTaskId} for workflow ${ad.workflowId}`);
                 fallbackResult.error = 'No render_prompt in Creative Direction output';

@@ -89,6 +89,7 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
   const provider = process.env.IMAGE_PROVIDER ?? 'openai';
   const model = process.env.OPENAI_IMAGE_MODEL ?? 'gpt-image-2';
   const apiKey = process.env.OPENAI_API_KEY;
+  const keySuffix = apiKey ? `...${apiKey.slice(-6)}` : 'MISSING';
 
   if (!apiKey) {
     console.error(`[generate-ad] OPENAI_API_KEY not set — cannot generate image`);
@@ -99,7 +100,6 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
   const isDallE = model.startsWith('dall-e');
   const size = isDallE ? '1024x1024' : '1024x1536';
 
-  // Build payload — DALL-E uses different params than GPT Image models
   const payload: Record<string, any> = {
     model,
     prompt,
@@ -110,58 +110,91 @@ export async function generateAdImage(brief: AdBrief): Promise<string | null> {
     payload.quality = 'high';
   }
 
-  console.log(`[generate-ad] provider=${provider} model=${model} size=${size} business=${brief.businessName} angle=${brief.angle ?? 'general'} prompt_len=${prompt.length}`);
+  console.log(
+    `[generate-ad] endpoint=${OPENAI_IMAGES_URL} method=POST provider=${provider} model=${model} ` +
+    `key=${keySuffix} size=${size} business=${brief.businessName} angle=${brief.angle ?? 'general'} prompt_len=${prompt.length}`
+  );
 
-  const MAX_ATTEMPTS = 2;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      const startTime = Date.now();
-      const res = await fetch(OPENAI_IMAGES_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(120_000),
-      });
+  // Single attempt — no blind retry while diagnosing 429 issue
+  try {
+    const startTime = Date.now();
+    const res = await fetch(OPENAI_IMAGES_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(120_000),
+    });
 
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const contentType = res.headers.get('content-type') ?? 'null';
+    const retryAfterRaw = res.headers.get('retry-after');
+    const ratelimitHeaders: Record<string, string | null> = {};
+    res.headers.forEach((v, k) => {
+      if (k.startsWith('x-ratelimit')) ratelimitHeaders[k] = v;
+    });
 
-      if (res.status === 429 && attempt < MAX_ATTEMPTS) {
-        const retryAfter = parseInt(res.headers.get('retry-after') ?? '5', 10);
-        console.warn(`[generate-ad] 429 rate-limited, retrying in ${retryAfter}s (attempt ${attempt}/${MAX_ATTEMPTS})`);
-        await new Promise(r => setTimeout(r, retryAfter * 1000));
-        continue;
-      }
+    console.log(
+      `[generate-ad] RESPONSE status=${res.status} elapsed=${elapsed}s ` +
+      `content-type="${contentType}" retry-after-raw="${retryAfterRaw ?? 'null'}" ` +
+      `x-ratelimit=${JSON.stringify(ratelimitHeaders)} ` +
+      `endpoint=${OPENAI_IMAGES_URL} model=${model} key=${keySuffix}`
+    );
 
-      if (!res.ok) {
-        const errText = await res.text().catch(() => 'Unknown error');
-        console.error(`[generate-ad] provider=${provider} model=${model} HTTP ${res.status} (${elapsed}s): ${errText.slice(0, 300)}`);
-        return null;
-      }
-
+    if (res.ok) {
       const data = await res.json();
       const item = data?.data?.[0];
 
       if (item?.url) {
-        console.log(`[generate-ad] SUCCESS provider=${provider} model=${model} format=url elapsed=${elapsed}s`);
+        console.log(`[generate-ad] SUCCESS format=url elapsed=${elapsed}s model=${model}`);
         return item.url;
       }
       if (item?.b64_json) {
         const dataUrl = `data:image/png;base64,${item.b64_json}`;
-        console.log(`[generate-ad] SUCCESS provider=${provider} model=${model} format=b64 elapsed=${elapsed}s`);
+        console.log(`[generate-ad] SUCCESS format=b64 elapsed=${elapsed}s model=${model}`);
         return dataUrl;
       }
 
-      console.error(`[generate-ad] No image in response. provider=${provider} model=${model} keys=${JSON.stringify(Object.keys(data ?? {}))}`);
+      console.error(`[generate-ad] 200 OK but no image. keys=${JSON.stringify(Object.keys(data ?? {}))}`);
       return null;
-    } catch (err: any) {
-      console.error(`[generate-ad] provider=${provider} model=${model} attempt=${attempt} error="${err?.message}"`);
-      if (attempt >= MAX_ATTEMPTS) return null;
     }
+
+    // ── Non-OK: full diagnostic logging ──────────────────────────────
+    const rawBody = await res.text().catch(() => '');
+    const isJson = contentType.includes('application/json');
+    const isHtml = rawBody.trimStart().startsWith('<') || contentType.includes('text/html');
+    let bodyPreview: string;
+
+    if (isJson) {
+      try {
+        const parsed = JSON.parse(rawBody);
+        bodyPreview = JSON.stringify({
+          type: parsed?.error?.type,
+          code: parsed?.error?.code,
+          message: parsed?.error?.message?.slice(0, 300),
+        });
+      } catch {
+        bodyPreview = rawBody.slice(0, 300);
+      }
+    } else if (isHtml) {
+      bodyPreview = `[HTML] ${rawBody.slice(0, 300)}`;
+    } else {
+      bodyPreview = rawBody.slice(0, 300);
+    }
+
+    console.error(
+      `[generate-ad] HTTP_ERROR status=${res.status} content-type="${contentType}" ` +
+      `is_json=${isJson} is_html=${isHtml} retry-after-raw="${retryAfterRaw ?? 'null'}" ` +
+      `body=${bodyPreview} x-ratelimit=${JSON.stringify(ratelimitHeaders)} ` +
+      `endpoint=${OPENAI_IMAGES_URL} model=${model} key=${keySuffix}`
+    );
+    return null;
+  } catch (err: any) {
+    console.error(`[generate-ad] EXCEPTION endpoint=${OPENAI_IMAGES_URL} model=${model} key=${keySuffix} error="${err?.message}"`);
+    return null;
   }
-  return null;
 }
 
 /**
