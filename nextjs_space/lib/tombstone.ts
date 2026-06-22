@@ -1088,17 +1088,19 @@ export function getTaskLabel(department: string): { label: string; description: 
 export async function getMultiWorkflowStatus(workflowIds: string[]) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25000); // 25s timeout for large response
+    const timer = setTimeout(() => controller.abort(), 25000); // 25s timeout
     let res: Response;
     try {
-      res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store', signal: controller.signal });
+      // Pass workflow_ids as comma-separated filter to avoid fetching all tasks
+      const wfParam = workflowIds.join(',');
+      res = await fetch(`${TOMBSTONE_URL}/tasks?workflow_id=${encodeURIComponent(wfParam)}`, { cache: 'no-store', signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }
     const allTasks = await res.json().catch(() => []);
     if (!Array.isArray(allTasks)) return { success: false, tasks: [], status: 'error' };
 
-    // Filter tasks belonging to our workflows
+    // Filter tasks belonging to our workflows (belt-and-suspenders)
     const wfSet = new Set(workflowIds);
     const ourTasks = allTasks.filter((t: any) => wfSet.has(t?.workflow_id));
 
@@ -1191,10 +1193,12 @@ export async function getMissionStatus(missionId: string) {
 export async function getWorkflowResults(workflowIds: string[]) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000); // 20s timeout
+    const timer = setTimeout(() => controller.abort(), 25000); // 25s timeout
     let res: Response;
     try {
-      res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store', signal: controller.signal });
+      // Pass workflow_ids as comma-separated filter to avoid fetching all tasks
+      const wfParam = workflowIds.join(',');
+      res = await fetch(`${TOMBSTONE_URL}/tasks?workflow_id=${encodeURIComponent(wfParam)}`, { cache: 'no-store', signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }
@@ -1477,21 +1481,41 @@ async function resolveArtifactUrl(artifactPath: string): Promise<string | null> 
     cleanPath = slashIdx >= 0 ? withoutScheme.slice(slashIdx + 1) : withoutScheme;
   }
 
-  try {
-    const res = await fetch(`${TOMBSTONE_URL}/artifacts/resolve?artifact_path=${encodeURIComponent(cleanPath)}`, { cache: 'no-store' });
-    if (!res.ok) return null;
-    const data = await res.json().catch(() => ({}));
-    return data?.artifact_url ?? null;
-  } catch { return null; }
+  // Retry up to 2 times (artifact resolution is critical for image display)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${TOMBSTONE_URL}/artifacts/resolve?artifact_path=${encodeURIComponent(cleanPath)}`, { cache: 'no-store' });
+      if (!res.ok) {
+        if (attempt < 2) { await new Promise(r => setTimeout(r, 800 * (attempt + 1))); continue; }
+        return null;
+      }
+      const data = await res.json().catch(() => ({}));
+      return data?.artifact_url ?? null;
+    } catch {
+      if (attempt < 2) { await new Promise(r => setTimeout(r, 800 * (attempt + 1))); continue; }
+      return null;
+    }
+  }
+  return null;
 }
 
 export async function getTaskOutputs(taskId: number): Promise<any[]> {
-  try {
-    const res = await fetch(`${TOMBSTONE_URL}/tasks/${taskId}/outputs`, { cache: 'no-store' });
-    if (!res.ok) return [];
-    const data = await res.json().catch(() => []);
-    return Array.isArray(data) ? data : [];
-  } catch { return []; }
+  // Retry up to 2 times on failure (task outputs are critical for ad extraction)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${TOMBSTONE_URL}/tasks/${taskId}/outputs`, { cache: 'no-store' });
+      if (!res.ok) {
+        if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue; }
+        return [];
+      }
+      const data = await res.json().catch(() => []);
+      return Array.isArray(data) ? data : [];
+    } catch {
+      if (attempt < 2) { await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); continue; }
+      return [];
+    }
+  }
+  return [];
 }
 
 /**
@@ -1501,7 +1525,8 @@ export async function getTaskOutputs(taskId: number): Promise<any[]> {
  */
 export async function getSocialWorkflowResults(workflowIds: string[]) {
   try {
-    const res = await fetch(`${TOMBSTONE_URL}/tasks`, { cache: 'no-store' });
+    const wfParam = workflowIds.join(',');
+    const res = await fetch(`${TOMBSTONE_URL}/tasks?workflow_id=${encodeURIComponent(wfParam)}`, { cache: 'no-store' });
     const allTasks = await res.json().catch(() => []);
     if (!Array.isArray(allTasks)) return { success: false, posts: [], status: 'error' };
 
