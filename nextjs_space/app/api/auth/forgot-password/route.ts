@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { email, debug } = body; // debug flag for temporary diagnostics
+    const { email } = body;
     if (!email || typeof email !== 'string') {
       return NextResponse.json({ success: true, message: 'If that email exists, a reset link has been sent.' });
     }
@@ -140,18 +140,9 @@ export async function POST(request: Request) {
       }
     }
 
-    // If debug flag is set, include diagnostics in response (TEMPORARY — remove after debugging)
-    const response: any = { success: true, message: 'If that email exists, a reset link has been sent.' };
-    if (debug === true) {
-      response._diagnostics = diagnostics;
-    }
-    return NextResponse.json(response);
+    return NextResponse.json({ success: true, message: 'If that email exists, a reset link has been sent.' });
   } catch (err: any) {
     diag(`Fatal error: ${err?.message}`);
-    const response: any = { success: false, error: 'Something went wrong' };
-    if ((await request.clone().json().catch(() => ({}))).debug === true) {
-      response._diagnostics = diagnostics;
-    }
-    return NextResponse.json(response, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Something went wrong' }, { status: 500 });
   }
 }
