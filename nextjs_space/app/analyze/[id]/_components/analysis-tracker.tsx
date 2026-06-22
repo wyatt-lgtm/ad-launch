@@ -148,7 +148,7 @@ function LocationConfirmCard({
     address_tag: 'HTML address tag',
     footer_parse: 'Website footer',
     regex_fallback: 'Page content scan',
-    research_pipeline: 'AI research',
+    research_pipeline: 'Automated research',
     user_input: 'Your input',
     none: 'Not detected',
   };
@@ -1005,12 +1005,40 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     return result;
   }, [tasks]);
 
-  // Progress percentage
+  // Progress percentage — derived from pipelinePhase + laneStatuses so
+  // it advances even when displayTasks is empty (common early in the run).
   const progress = React.useMemo(() => {
-    if (displayTasks.length === 0) return 0;
-    const complete = displayTasks.filter(t => t.status === 'complete').length;
-    return Math.round((complete / displayTasks.length) * 100);
-  }, [displayTasks]);
+    // Phase-based baseline progress
+    const phaseProgress: Record<string, number> = {
+      connecting: 5,
+      pipeline_preparing: 15,
+      generating: 40,
+      finalizing: 90,
+      completed: 100,
+      completed_with_warnings: 100,
+      failed: 0,
+    };
+    const base = phaseProgress[pipelinePhase] ?? 5;
+
+    // During 'generating', refine using lane completion ratios
+    if (pipelinePhase === 'generating') {
+      const laneKeys = Object.keys(laneStatuses);
+      if (laneKeys.length > 0) {
+        const done = laneKeys.filter(k => {
+          const s = laneStatuses[k];
+          return s === 'generated_full' || s === 'generated_copy_only' || s === 'failed' || s === 'skipped';
+        }).length;
+        // Scale from 40 → 85 based on lane completion
+        return Math.round(40 + (done / laneKeys.length) * 45);
+      }
+      // If we have displayTasks, use those as a secondary signal
+      if (displayTasks.length > 0) {
+        const complete = displayTasks.filter(t => t.status === 'complete').length;
+        return Math.round(40 + (complete / displayTasks.length) * 45);
+      }
+    }
+    return base;
+  }, [pipelinePhase, laneStatuses, displayTasks]);
 
   // ── Derived state & remaining hooks MUST be above all early returns ──
   // (React #310: every render must call the same number of hooks)
@@ -1024,10 +1052,10 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
     const p = pipelinePhase;
     const r = phaseRank(p);
     return [
-      { label: r >= phaseRank('pipeline_preparing') ? 'Connected to AI agents' : 'Connecting to AI agents...', status: r >= phaseRank('pipeline_preparing') ? 'complete' : 'active' },
-      { label: r >= phaseRank('generating') ? 'Analysis pipeline ready' : 'Preparing analysis pipeline...', status: r >= phaseRank('generating') ? 'complete' : r >= phaseRank('pipeline_preparing') ? 'active' : 'waiting' },
-      { label: r >= phaseRank('finalizing') ? 'Posts generated' : 'Generating posts...', status: r >= phaseRank('finalizing') ? 'complete' : r >= phaseRank('generating') ? 'active' : 'waiting' },
-      { label: isCompleted ? 'Posts ready' : 'Finalizing posts...', status: isCompleted ? 'complete' : r >= phaseRank('finalizing') ? 'active' : 'waiting' },
+      { label: r >= phaseRank('pipeline_preparing') ? 'Content engine connected' : 'Connecting to content engine...', status: r >= phaseRank('pipeline_preparing') ? 'complete' : 'active' },
+      { label: r >= phaseRank('generating') ? 'Business research complete' : 'Researching your business...', status: r >= phaseRank('generating') ? 'complete' : r >= phaseRank('pipeline_preparing') ? 'active' : 'waiting' },
+      { label: r >= phaseRank('finalizing') ? 'Posts generated' : 'Writing copy & generating images...', status: r >= phaseRank('finalizing') ? 'complete' : r >= phaseRank('generating') ? 'active' : 'waiting' },
+      { label: isCompleted ? 'Posts ready' : 'Finalizing your posts...', status: isCompleted ? 'complete' : r >= phaseRank('finalizing') ? 'active' : 'waiting' },
     ];
   }, [pipelinePhase, isCompleted]);
 
@@ -1067,7 +1095,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         </h1>
         {isGenerating && !isFinalizing && (
           <p className="text-blue-600 mt-2 text-base font-medium">
-            First-time analysis may take a few minutes while our AI agents research your business.
+            First-time analysis may take a few minutes while we research your business.
           </p>
         )}
         {isFinalizing && (
@@ -1078,7 +1106,7 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
         <p className="text-gray-500 mt-2 text-sm">
           {isCompleted
             ? 'Register with your business email to download without watermarks'
-            : 'Our AI agents are analyzing your business and crafting 3 unique posts'}
+            : 'Analyzing your business and crafting 3 unique posts'}
         </p>
       </div>
 
