@@ -66,6 +66,7 @@ model Business {
   hasMultipleLocations Boolean                @default(false)
   assets              BusinessAsset[]
   locations           BusinessLocation[]
+  publishSettings     PublishSettings?
 
   @@unique([userId, websiteUrl])
   @@index([userId])
@@ -850,4 +851,20 @@ model SiteFeedback {
   @@index([workflowId])
   @@index([businessId])
   @@index([status])
+}
+
+model PublishSettings {
+  id              String   @id @default(cuid())
+  businessId      String   @unique
+  autoPublish     Boolean  @default(false)
+  frequency       String   @default("3x_week")  // 1x_week, 2x_week, 3x_week, 5x_week, 1x_day, 2x_day, 3x_day
+  preferredTime   String   @default("10:00")     // HH:mm in user's local time
+  timezone        String   @default("America/Denver")
+  platforms       String[] @default([])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([autoPublish])
 }

@@ -8,7 +8,8 @@ import {
   Loader2, Send, Clock, CheckCircle2, XCircle, Edit3,
   Hash, CalendarDays, Zap, RefreshCw, ImageIcon, FileText,
   Facebook, Instagram, Linkedin, ChevronRight, AlertCircle,
-  Save, RotateCcw, Link2, Building2, Plus,
+  Save, RotateCcw, Link2, Building2, Plus, Settings, Power,
+  ToggleLeft, ToggleRight,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -159,6 +160,197 @@ const PLATFORMS = [
   { id: 'linkedin', label: 'LinkedIn', icon: Linkedin, color: 'bg-blue-700', ring: 'ring-blue-300' },
 ];
 
+// ── Frequency Options ───────────────────────────────────────────────────────
+
+const FREQUENCY_OPTIONS = [
+  { value: '1x_week', label: '1× per week', desc: 'Once a week' },
+  { value: '2x_week', label: '2× per week', desc: 'Twice a week' },
+  { value: '3x_week', label: '3× per week', desc: 'Three times a week' },
+  { value: '5x_week', label: '5× per week', desc: 'Weekdays' },
+  { value: '1x_day', label: '1× daily', desc: 'Once every day' },
+  { value: '2x_day', label: '2× daily', desc: 'Twice a day' },
+  { value: '3x_day', label: '3× daily', desc: 'Three times a day' },
+];
+
+const TIME_OPTIONS = [
+  { value: '06:00', label: '6:00 AM' },
+  { value: '07:00', label: '7:00 AM' },
+  { value: '08:00', label: '8:00 AM' },
+  { value: '09:00', label: '9:00 AM' },
+  { value: '10:00', label: '10:00 AM' },
+  { value: '11:00', label: '11:00 AM' },
+  { value: '12:00', label: '12:00 PM' },
+  { value: '13:00', label: '1:00 PM' },
+  { value: '14:00', label: '2:00 PM' },
+  { value: '15:00', label: '3:00 PM' },
+  { value: '16:00', label: '4:00 PM' },
+  { value: '17:00', label: '5:00 PM' },
+  { value: '18:00', label: '6:00 PM' },
+  { value: '19:00', label: '7:00 PM' },
+  { value: '20:00', label: '8:00 PM' },
+  { value: '21:00', label: '9:00 PM' },
+];
+
+// ── Auto-Publish Settings Panel ─────────────────────────────────────────────
+
+function AutoPublishSettingsPanel({
+  loading, saving, enabled, frequency, preferredTime, platforms, toast,
+  onToggleEnabled, onFrequencyChange, onTimeChange, onTogglePlatform, onSave,
+}: {
+  loading: boolean;
+  saving: boolean;
+  enabled: boolean;
+  frequency: string;
+  preferredTime: string;
+  platforms: string[];
+  toast: InlineToast | null;
+  onToggleEnabled: () => void;
+  onFrequencyChange: (f: string) => void;
+  onTimeChange: (t: string) => void;
+  onTogglePlatform: (p: string) => void;
+  onSave: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+          <span className="ml-2 text-sm text-gray-500">Loading settings…</span>
+        </div>
+      </div>
+    );
+  }
+
+  const currentFreq = FREQUENCY_OPTIONS.find(f => f.value === frequency);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+      {/* Toggle + Status */}
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onToggleEnabled}
+            disabled={saving}
+            className="flex items-center gap-0 focus:outline-none disabled:opacity-50"
+            aria-label={enabled ? 'Disable auto-posting' : 'Enable auto-posting'}
+          >
+            {enabled
+              ? <ToggleRight className="w-10 h-10 text-emerald-500" />
+              : <ToggleLeft className="w-10 h-10 text-gray-300" />
+            }
+          </button>
+          <div>
+            <h3 className="text-sm font-bold text-gray-900">
+              Auto-Posting {enabled ? <span className="text-emerald-600">Active</span> : <span className="text-gray-400">Off</span>}
+            </h3>
+            <p className="text-xs text-gray-500">
+              {enabled
+                ? `Posting ${currentFreq?.desc?.toLowerCase() || frequency} at ${TIME_OPTIONS.find(t => t.value === preferredTime)?.label || preferredTime}`
+                : 'Enable to automatically publish approved posts to your social channels'
+              }
+            </p>
+          </div>
+        </div>
+        {enabled && (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <Power className="w-3 h-3" /> Live
+          </span>
+        )}
+      </div>
+
+      {/* Settings grid — only visible when enabled */}
+      {enabled && (
+        <div className="space-y-5">
+          {/* Frequency */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Posting Frequency</label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+              {FREQUENCY_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => onFrequencyChange(opt.value)}
+                  className={`px-3 py-2.5 rounded-lg text-sm font-medium border transition-all text-center ${
+                    frequency === opt.value
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Time of Day */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Preferred Time of Day</label>
+            <p className="text-[11px] text-gray-400 mb-2">First post of the day will be scheduled near this time. Additional posts are spread evenly throughout the day.</p>
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+              {TIME_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => onTimeChange(opt.value)}
+                  className={`px-2 py-2 rounded-lg text-xs font-medium border transition-all text-center ${
+                    preferredTime === opt.value
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Platforms */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Publish To</label>
+            <div className="flex flex-wrap gap-2">
+              {PLATFORMS.map(p => {
+                const Icon = p.icon;
+                const isOn = platforms.includes(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => onTogglePlatform(p.id)}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all border ${
+                      isOn
+                        ? `${p.color} text-white border-transparent ring-2 ${p.ring} shadow-sm`
+                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Save button + toast */}
+          <div className="flex items-center gap-4 pt-3 border-t border-gray-100">
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? 'Saving…' : 'Save Settings'}
+            </button>
+            {toast && (
+              <span className={`text-sm font-medium ${
+                toast.type === 'success' ? 'text-emerald-600' : 'text-red-600'
+              }`}>
+                {toast.type === 'success' ? '✓' : '✕'} {toast.message}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function PublishingDashboard() {
@@ -228,6 +420,17 @@ export default function PublishingDashboard() {
   const [connectedAccounts, setConnectedAccounts] = useState<SocialAccountItem[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(true);
 
+  // Auto-publish settings state
+  const [autoPublishEnabled, setAutoPublishEnabled] = useState(false);
+  const [frequency, setFrequency] = useState('3x_week');
+  const [preferredTime, setPreferredTime] = useState('10:00');
+  const [publishPlatforms, setPublishPlatforms] = useState<string[]>([]);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsToast, setSettingsToast] = useState<InlineToast | null>(null);
+  const settingsToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+
   // Auth guard
   useEffect(() => {
     if (sessionStatus === 'unauthenticated') router.push('/login');
@@ -281,6 +484,82 @@ export default function PublishingDashboard() {
   useEffect(() => {
     if (sessionStatus === 'authenticated') fetchAccounts();
   }, [sessionStatus, fetchAccounts]);
+
+  // ── Fetch auto-publish settings ─────────────────────────────────────────────
+
+  const fetchPublishSettings = useCallback(async () => {
+    if (!activeBusinessId) return;
+    setSettingsLoading(true);
+    try {
+      const res = await fetch(`/api/publish/settings?businessId=${activeBusinessId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAutoPublishEnabled(data.autoPublish ?? false);
+        setFrequency(data.frequency ?? '3x_week');
+        setPreferredTime(data.preferredTime ?? '10:00');
+        setPublishPlatforms(Array.isArray(data.platforms) ? data.platforms : []);
+      }
+    } catch (e) {
+      console.error('[fetchPublishSettings] error:', e);
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [activeBusinessId]);
+
+  useEffect(() => {
+    if (sessionStatus === 'authenticated' && activeBusinessId) fetchPublishSettings();
+  }, [sessionStatus, activeBusinessId, fetchPublishSettings]);
+
+  const savePublishSettings = useCallback(async (overrides?: Partial<{ autoPublish: boolean; frequency: string; preferredTime: string; platforms: string[] }>) => {
+    if (!activeBusinessId || settingsSaving) return;
+    setSettingsSaving(true);
+    if (settingsToastTimer.current) clearTimeout(settingsToastTimer.current);
+    setSettingsToast(null);
+    try {
+      const payload = {
+        businessId: activeBusinessId,
+        autoPublish: overrides?.autoPublish ?? autoPublishEnabled,
+        frequency: overrides?.frequency ?? frequency,
+        preferredTime: overrides?.preferredTime ?? preferredTime,
+        platforms: overrides?.platforms ?? publishPlatforms,
+      };
+      const res = await fetch('/api/publish/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Save failed' }));
+        throw new Error(err.error || 'Save failed');
+      }
+      const data = await res.json();
+      setAutoPublishEnabled(data.autoPublish);
+      setFrequency(data.frequency);
+      setPreferredTime(data.preferredTime);
+      setPublishPlatforms(data.platforms);
+      setSettingsToast({ type: 'success', message: 'Publishing settings saved' });
+    } catch (e: any) {
+      setSettingsToast({ type: 'error', message: e.message || 'Failed to save settings' });
+    } finally {
+      setSettingsSaving(false);
+      settingsToastTimer.current = setTimeout(() => setSettingsToast(null), 4000);
+    }
+  }, [activeBusinessId, settingsSaving, autoPublishEnabled, frequency, preferredTime, publishPlatforms]);
+
+  const toggleAutoPublish = useCallback(async () => {
+    const newValue = !autoPublishEnabled;
+    setAutoPublishEnabled(newValue);
+    await savePublishSettings({ autoPublish: newValue });
+  }, [autoPublishEnabled, savePublishSettings]);
+
+  const togglePublishPlatform = useCallback((platformId: string) => {
+    setPublishPlatforms(prev => {
+      const next = prev.includes(platformId)
+        ? prev.filter(p => p !== platformId)
+        : [...prev, platformId];
+      return next;
+    });
+  }, []);
 
   // ── Fetch detail ───────────────────────────────────────────────────────────
 
@@ -554,7 +833,7 @@ export default function PublishingDashboard() {
   // ── Main layout ────────────────────────────────────────────────────────────
 
   return (
-    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8 relative">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8">
       {/* Active business banner */}
       {bizCtx.activeBusiness && (
         <ActiveBusinessBanner
@@ -563,55 +842,72 @@ export default function PublishingDashboard() {
           onSwitch={() => setShowPicker(true)}
         />
       )}
-      {/* ── Coming Soon Overlay ─────────────────────────────────────── */}
-      <div className="absolute inset-0 z-30 bg-white/70 backdrop-blur-[2px] flex items-start justify-center pt-32 pointer-events-auto rounded-xl">
-        <div className="text-center px-6 py-10 max-w-lg">
-          <div className="mx-auto w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mb-5 shadow-lg">
-            <Send className="w-7 h-7 text-white" />
-          </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Auto-Posting Coming Soon</h2>
-          <p className="text-gray-500 leading-relaxed">
-            We&apos;re building direct publishing to Facebook, Instagram, TikTok, and more.
-            For now, use the <span className="font-semibold text-blue-600">Social Posts</span> tab
-            to download your posts and publish them manually.
-          </p>
-          <div className="mt-6 flex items-center justify-center gap-3">
-            <a
-              href="/dashboard/social"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm"
-            >
-              Go to Social Posts
-              <ChevronRight className="w-4 h-4" />
-            </a>
-          </div>
-        </div>
-      </div>
-
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Tombstone Publish Queue</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Publish Queue</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Review, edit, and schedule Tombstone-generated posts for social platforms
+            Review, edit, and auto-publish your social posts via GHL
           </p>
         </div>
-        <button
-          onClick={fetchQueue}
-          disabled={queueLoading}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${queueLoading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowSettings(s => !s)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+              showSettings
+                ? 'bg-blue-50 border-blue-200 text-blue-700'
+                : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+            Auto-Publish Settings
+          </button>
+          <button
+            onClick={fetchQueue}
+            disabled={queueLoading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${queueLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Auto-Publish Settings Panel */}
+      {showSettings && (
+        <AutoPublishSettingsPanel
+          loading={settingsLoading}
+          saving={settingsSaving}
+          enabled={autoPublishEnabled}
+          frequency={frequency}
+          preferredTime={preferredTime}
+          platforms={publishPlatforms}
+          toast={settingsToast}
+          onToggleEnabled={toggleAutoPublish}
+          onFrequencyChange={(f) => setFrequency(f)}
+          onTimeChange={(t) => setPreferredTime(t)}
+          onTogglePlatform={togglePublishPlatform}
+          onSave={() => savePublishSettings()}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* ── Left: Content Queue ──────────────────────────────────────── */}
         <div className="lg:col-span-4 xl:col-span-3">
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-900">Content Queue</h2>
-              <span className="text-xs text-gray-400">{queue.length} items</span>
+            <div className="px-4 py-3 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-gray-900">Content Queue</h2>
+                <span className="text-xs text-gray-400">{queue.length} items</span>
+              </div>
+              {autoPublishEnabled && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[10px] text-emerald-600 font-medium">
+                    Auto-posting {FREQUENCY_OPTIONS.find(f => f.value === frequency)?.label || frequency}
+                  </span>
+                </div>
+              )}
             </div>
 
             {queueLoading ? (
@@ -942,8 +1238,8 @@ export default function PublishingDashboard() {
                   <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
                     <Link2 className="w-4 h-4" /> Connected Accounts
                   </h3>
-                  <span className="text-[10px] text-gray-400 font-medium bg-gray-100 px-2 py-0.5 rounded-full">
-                    Coming soon
+                  <span className="text-[10px] text-gray-500 font-medium bg-gray-50 px-2 py-0.5 rounded-full">
+                    via GHL
                   </span>
                 </div>
 
@@ -954,16 +1250,10 @@ export default function PublishingDashboard() {
                 ) : connectedAccounts.length === 0 ? (
                   <div className="py-6 text-center">
                     <Link2 className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                    <p className="text-sm text-gray-500">No connected accounts yet</p>
+                    <p className="text-sm text-gray-500">Accounts connected via GHL subtenant</p>
                     <p className="text-xs text-gray-400 mt-1">
-                      Social account connections will be available in a future update.
+                      Publishing is handled through your GHL Social Planner integration.
                     </p>
-                    <button
-                      disabled
-                      className="mt-3 px-4 py-1.5 text-xs font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed"
-                    >
-                      Connect Account
-                    </button>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -991,12 +1281,9 @@ export default function PublishingDashboard() {
                         </div>
                       );
                     })}
-                    <button
-                      disabled
-                      className="w-full mt-2 px-4 py-1.5 text-xs font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed"
-                    >
-                      Manage Accounts
-                    </button>
+                    <p className="text-xs text-gray-400 mt-2 text-center">
+                      Managed via GHL subtenant
+                    </p>
                   </div>
                 )}
               </div>
