@@ -152,6 +152,7 @@ export default function DashboardContent() {
                     businessCity: biz.businessCity,
                     businessState: biz.businessState,
                     businessZip: biz.businessZip,
+                    tombstoneBusinessId: (biz as any).tombstoneBusinessId ?? null,
                     createdAt: biz.createdAt,
                     updatedAt: biz.updatedAt,
                     _count: biz._count,

@@ -19,7 +19,16 @@ export async function GET(_request: NextRequest) {
     const businesses = await prisma.business.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
-      include: {
+      select: {
+        id: true,
+        websiteUrl: true,
+        businessName: true,
+        businessCity: true,
+        businessState: true,
+        businessZip: true,
+        tombstoneBusinessId: true,
+        createdAt: true,
+        updatedAt: true,
         analyses: {
           select: {
             id: true,

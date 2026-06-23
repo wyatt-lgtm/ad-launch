@@ -12,6 +12,8 @@ export interface BusinessInfo {
   businessCity: string | null;
   businessState: string | null;
   businessZip: string | null;
+  /** Tombstone integer business ID for backend API calls */
+  tombstoneBusinessId: number | null;
   createdAt: string;
   updatedAt: string;
   _count: { analyses: number };
@@ -99,6 +101,7 @@ export function useActiveBusiness(): UseActiveBusinessResult {
         businessCity: b.businessCity,
         businessState: b.businessState,
         businessZip: b.businessZip,
+        tombstoneBusinessId: b.tombstoneBusinessId ?? null,
         createdAt: b.createdAt,
         updatedAt: b.updatedAt,
         _count: b._count ?? { analyses: 0 },

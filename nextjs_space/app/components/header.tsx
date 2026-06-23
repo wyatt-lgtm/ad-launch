@@ -3,7 +3,7 @@
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send, Coins, Building2, FolderOpen } from 'lucide-react';
+import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send, Coins, Building2, FolderOpen, BarChart3 } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
@@ -30,6 +30,7 @@ export default function Header() {
     { href: '/dashboard/social', label: 'Social Posts', icon: Newspaper, matchPaths: ['/dashboard/social'] },
     { href: '/dashboard/social/publishing', label: 'Publish Queue', icon: Send, matchPaths: ['/dashboard/social/publishing'] },
     { href: '/dashboard/feeds', label: 'Content Feeds', icon: Rss, matchPaths: ['/dashboard/feeds'] },
+    { href: '/dashboard/marketing', label: 'Marketing', icon: BarChart3, matchPaths: ['/dashboard/marketing'] },
     { href: '/dashboard/credits', label: 'Credits', icon: Coins, matchPaths: ['/dashboard/credits'] },
     { href: '/dashboard/assets', label: 'Assets', icon: FolderOpen, matchPaths: ['/dashboard/assets'] },
   ];
