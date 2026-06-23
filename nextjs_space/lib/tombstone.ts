@@ -2024,13 +2024,13 @@ export async function getConceptWebsiteStatus(workflowId: string, finalTaskId?: 
 
   // Map tasks to concept-website step labels
   const stepLabels: Record<string, string> = {
-    'Research': 'Brand Asset Recon',
-    'Marketing': 'Website Strategy',
-    'Creative Strategy': 'Copy Deck',
-    'Creative Direction': 'Creative Contract',
+    'Research': 'Research & Competitor Evaluation',
+    'Marketing': 'Website Strategy Brief',
+    'Creative Strategy': 'Website War Room',
+    'Creative Direction': 'Direction Selection',
     'Asset Retrieval': 'Asset Retrieval',
     'Render Production': 'Image Generation',
-    'Code Execution': 'HTML Generation',
+    'Code Execution': 'Website Copywriting',
     'Strategy & Intelligence': 'Quality Review',
   };
 

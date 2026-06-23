@@ -90,7 +90,7 @@ function TerritoryCard({ territory, isSelected }: { territory: WebsiteTerritory;
           </span>
           {isSelected && (
             <span className="text-[10px] font-bold uppercase tracking-wider bg-violet-200 text-violet-700 px-2 py-0.5 rounded-full">
-              Selected
+              Top Recommendation
             </span>
           )}
         </div>
@@ -229,7 +229,7 @@ export default function WebsiteAgencyBrief({ workflowId }: { workflowId: string 
           {selected_territory && (
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-violet-600 mb-2 flex items-center gap-1">
-                <Trophy className="w-3.5 h-3.5" /> Selected Website Direction
+                <Trophy className="w-3.5 h-3.5" /> Top Recommendation
               </h4>
               <TerritoryCard territory={selected_territory} isSelected />
             </div>
@@ -291,7 +291,7 @@ export default function WebsiteAgencyBrief({ workflowId }: { workflowId: string 
                 className="text-xs font-medium text-gray-500 hover:text-violet-600 flex items-center gap-1 transition-colors"
               >
                 {showAllTerritories ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                {showAllTerritories ? 'Hide' : 'Show'} rejected directions ({otherTerritories.length})
+                {showAllTerritories ? 'Hide' : 'Show'} alternative directions ({otherTerritories.length})
               </button>
               {showAllTerritories && (
                 <div className="mt-2 space-y-2">
