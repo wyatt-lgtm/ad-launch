@@ -890,9 +890,6 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     );
   }
 
-  const sectionIcons = [Layout, Users, Briefcase, ArrowRight];
-  const sectionColors = ['bg-blue-600', 'bg-purple-600', 'bg-orange-500', 'bg-green-600'];
-
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
       {/* Header with Generate button and collapse toggle */}
@@ -1273,48 +1270,15 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         </div>
       )}
 
-      {/* Collapsible body */}
-      {expanded && (
+      {/* Locked overlay for unauthenticated users */}
+      {expanded && locked && (
         <div className="p-6 relative">
-          {locked && (
-            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
-              <div className="text-center">
-                <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
-                <p className="font-semibold text-gray-700">Register to unlock website concept</p>
-              </div>
+          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
+            <div className="text-center">
+              <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
+              <p className="font-semibold text-gray-700">Register to unlock website concept</p>
             </div>
-          )}
-
-          <div className="space-y-4">
-            {(data.sections ?? []).map((section: any, i: number) => (
-              <SectionCard
-                key={i}
-                section={section}
-                icon={sectionIcons[i] ?? Globe}
-                color={sectionColors[i] ?? 'bg-gray-600'}
-                index={i}
-                analysisId={analysisId}
-                workflowId={workflowRef.current?.workflowId}
-                showFeedback={!!generatedUrl && !generating}
-                onFeedbackAdded={loadFeedback}
-              />
-            ))}
           </div>
-
-          {/* Color Palette */}
-          {data.colorPalette?.length > 0 && (
-            <div className="mt-6">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Suggested Color Palette</h4>
-              <div className="flex gap-3">
-                {(data.colorPalette as any[]).map((c: any, i: number) => (
-                  <div key={i} className="flex flex-col items-center gap-1">
-                    <div className="w-10 h-10 rounded-lg shadow-sm border border-gray-200" style={{ backgroundColor: c.hex ?? '#ccc' }} />
-                    <span className="text-xs text-gray-500">{c.name ?? c.hex}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
