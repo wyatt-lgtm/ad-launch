@@ -12,12 +12,13 @@ import {
 } from 'lucide-react';
 import NextImage from 'next/image';
 import DefensibilityTab from './defensibility-tab';
+import OpenAIUsageTab from './openai-usage-tab';
 
 // ═══════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════
 
-type Tab = 'accounts' | 'businesses' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit' | 'credits' | 'defensibility';
+type Tab = 'accounts' | 'businesses' | 'usage' | 'resets' | 'agents' | 'tasks' | 'ads' | 'audit' | 'credits' | 'defensibility' | 'openai';
 
 interface Overview {
   users: { total: number; confirmed: number; unconfirmed: number; recentSignups: number };
@@ -103,6 +104,7 @@ export default function AdminDashboardMain() {
     { id: 'audit',    label: 'Agent Audit', icon: Eye },
     { id: 'credits',  label: 'Credits',      icon: Shield },
     { id: 'defensibility', label: 'Defensibility', icon: Zap },
+    { id: 'openai',         label: 'OpenAI Usage',   icon: BarChart3 },
   ];
 
   return (
@@ -179,6 +181,7 @@ export default function AdminDashboardMain() {
         {tab === 'audit' && <AuditTab />}
         {tab === 'credits' && <CreditsTab />}
         {tab === 'defensibility' && <DefensibilityTab />}
+        {tab === 'openai' && <OpenAIUsageTab />}
       </div>
     </div>
   );
