@@ -175,10 +175,23 @@ export default function SocialDashboard() {
   // Credit balance for gating
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
 
-  // Scouting mode
+  // Scouting mode — default synced from business's contentSourceMode
   type ScoutMode = 'local_only' | 'local_plus_interests' | 'interests_only';
-  const [scoutMode, setScoutMode] = useState<ScoutMode>('local_plus_interests');
+  const bizMode = bizCtx.activeBusiness?.contentSourceMode as ScoutMode | undefined;
+  const [scoutMode, setScoutMode] = useState<ScoutMode>(bizMode || 'local_plus_interests');
+  const [scoutModeSynced, setScoutModeSynced] = useState(false);
   const [missingLocation, setMissingLocation] = useState(false);
+
+  // Sync scoutMode from business contentSourceMode when it first becomes available
+  useEffect(() => {
+    if (bizMode && !scoutModeSynced) {
+      const validModes: ScoutMode[] = ['local_only', 'local_plus_interests', 'interests_only'];
+      if (validModes.includes(bizMode)) {
+        setScoutMode(bizMode);
+      }
+      setScoutModeSynced(true);
+    }
+  }, [bizMode, scoutModeSynced]);
 
   // Weekly Tip state
   const [showWeeklyTipForm, setShowWeeklyTipForm] = useState(false);
@@ -355,12 +368,16 @@ export default function SocialDashboard() {
       // Pass businessId if available so Clark Kent uses the right business
       if (activeBusinessId) scoutBody.businessId = activeBusinessId;
 
+      console.log('[Scout] Request:', JSON.stringify(scoutBody));
       const scoutRes = await fetch('/api/rss/clark-kent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(scoutBody),
       });
       const scoutData = await scoutRes.json();
+      console.log('[Scout] Response meta:', JSON.stringify(scoutData.meta));
+      console.log('[Scout] Interest brief categories:', scoutData.brief?.interestBrief?.categories?.length ?? 'null');
+      console.log('[Scout] Interest brief items:', scoutData.brief?.interestBrief?.summary?.totalItems ?? 'null');
       if (!scoutRes.ok) throw new Error(scoutData.error || 'Scout failed');
 
       // Save full brief for phase 2
@@ -437,19 +454,27 @@ export default function SocialDashboard() {
       setStoryCards(cards);
       setShowStoryPicker(true);
 
+      const industryCount = cards.filter(c => c.section === 'industry').length;
+      const localCount = cards.filter(c => c.section === 'local').length;
+      const eventCount = cards.filter(c => c.section === 'event').length;
+      console.log(`[Scout] Cards built: ${cards.length} total (local=${localCount}, industry=${industryCount}, events=${eventCount})`);
+
       if (cards.length > 0) {
         const sectionNames = [...new Set(cards.map(c => c.section))];
-        setScoutResult({
-          message: `Clark Kent found ${cards.length} stories across ${sectionNames.length} ${sectionNames.length === 1 ? 'category' : 'categories'}. Select up to ${MAX_STORIES} to turn into posts.`,
-          meta,
-        });
+        let message = `Clark Kent found ${cards.length} stories across ${sectionNames.length} ${sectionNames.length === 1 ? 'category' : 'categories'}. Select up to ${MAX_STORIES} to turn into posts.`;
+        // Warn if interests were expected but none found
+        if (includesInterests && industryCount === 0 && meta?.interestItemCount === 0) {
+          message += ' (No industry stories found — check your Content Sources settings.)';
+        }
+        setScoutResult({ message, meta });
       } else if (includesLocal && !hasLocation) {
-        // Local-only mode with no location
         setScoutResult({
           message: 'No location found on your business profile. Complete your profile to discover local stories.',
           meta,
         });
       } else {
+        const debugHint = meta ? ` [mode=${meta.contentSourceMode}, biz=${meta.businessId || 'none'}, interests=${meta.includeInterests}, interestItems=${meta.interestItemCount ?? '?'}]` : '';
+        console.warn('[Scout] No stories found.', debugHint);
         setScoutResult({
           message: 'No stories found for the selected scouting mode. Try a different mode or check your content settings.',
           meta,

@@ -9,6 +9,7 @@ export interface BusinessInfo {
   businessName: string | null;
   /** Derived from websiteUrl — e.g. "blazinghog.com" */
   businessDomain: string;
+  contentSourceMode?: string;
   businessCity: string | null;
   businessState: string | null;
   businessZip: string | null;
@@ -98,6 +99,7 @@ export function useActiveBusiness(): UseActiveBusinessResult {
         websiteUrl: b.websiteUrl,
         businessName: b.businessName,
         businessDomain: extractDomain(b.websiteUrl || ''),
+        contentSourceMode: b.contentSourceMode || 'local_plus_interests',
         businessCity: b.businessCity,
         businessState: b.businessState,
         businessZip: b.businessZip,

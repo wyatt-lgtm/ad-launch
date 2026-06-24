@@ -83,6 +83,8 @@ export async function generateInterestFeedBrief(
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - days);
 
+  console.log(`[InterestFeedBrief] Querying feeds: industries=[${enabledIndustries.join(',')}], cutoff=${cutoffDate.toISOString()}, maxPerFeed=${maxItemsPerCategory}`);
+
   const feeds = await prisma.rssFeed.findMany({
     where: {
       geoScope: 'national',
@@ -109,6 +111,8 @@ export async function generateInterestFeedBrief(
       },
     },
   });
+
+  console.log(`[InterestFeedBrief] Found ${feeds.length} feeds, total items: ${feeds.reduce((s, f) => s + f.items.length, 0)}`);
 
   // 3. Group items by industry
   const industryMap = new Map<string, {

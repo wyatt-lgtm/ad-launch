@@ -172,11 +172,19 @@ export async function POST(req: NextRequest) {
     let interestBrief: InterestFeedBrief | null = null;
     if (includeInterests && resolvedBusinessId) {
       try {
+        console.log(`[Clark Kent] Calling generateInterestFeedBrief for business=${resolvedBusinessId}`);
         interestBrief = await generateInterestFeedBrief(resolvedBusinessId, { days: 5 });
-        if (interestBrief.summary.totalItems === 0) interestBrief = null;
-      } catch (err) {
-        console.error('[Clark Kent] Interest feed brief error:', err);
+        console.log(`[Clark Kent] Interest brief result: totalItems=${interestBrief.summary.totalItems}, categories=${interestBrief.summary.totalCategories}, feeds=${interestBrief.summary.feedsMatched}`);
+        if (interestBrief.summary.totalItems === 0) {
+          console.log('[Clark Kent] Interest brief returned 0 items — setting to null');
+          interestBrief = null;
+        }
+      } catch (err: any) {
+        console.error('[Clark Kent] Interest feed brief error:', err?.message || err);
+        console.error('[Clark Kent] Interest feed stack:', err?.stack);
       }
+    } else {
+      console.log(`[Clark Kent] Skipping interest feeds — includeInterests=${includeInterests}, resolvedBusinessId=${resolvedBusinessId || 'NONE'}`);
     }
 
     // ── Gather upcoming events ─────────────────────────────────────────
@@ -225,7 +233,10 @@ export async function POST(req: NextRequest) {
         rssDiagnostics: rssBrief?.diagnostics ?? null,
         interestItemCount: interestBrief?.summary.totalItems ?? 0,
         interestCategoryCount: interestBrief?.summary.totalCategories ?? 0,
+        interestFeedsMatched: interestBrief?.summary.feedsMatched ?? 0,
         eventCount: upcomingEvents.length,
+        includeLocal,
+        includeInterests,
       },
     });
   } catch (error: any) {

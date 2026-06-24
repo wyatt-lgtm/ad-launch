@@ -26,6 +26,7 @@ export async function GET(_request: NextRequest) {
         businessCity: true,
         businessState: true,
         businessZip: true,
+        contentSourceMode: true,
         tombstoneBusinessId: true,
         createdAt: true,
         updatedAt: true,
