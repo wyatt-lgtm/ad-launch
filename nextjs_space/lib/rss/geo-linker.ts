@@ -9,7 +9,10 @@
  *   4. Known-domain registry for deterministic discovery
  *   5. Backfill FeedGeo for existing feeds that lack geo links
  */
-import { prisma } from '@/lib/db';
+// Use rssPrisma (tombstone DB) for all RSS/geo operations.
+// The primary app DB has a copy of these tables but Scout reads
+// from tombstone, so writes must go there too.
+import { rssPrisma as prisma } from '@/lib/rss-db';
 import { getZipsByCity, getZipsByCounty, getZipsByState, getZipDetails } from './geo-lookup';
 import type { DiscoveredFeed } from './discovery';
 import { canonicalizeFeedUrl } from './discovery';

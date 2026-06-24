@@ -12,7 +12,9 @@
  *   4. State-level (e.g., "all ZIPs in Montana")
  *   5. City-level (e.g., "Colorado Springs, CO")
  */
-import { prisma } from '@/lib/db';
+// Use rssPrisma (tombstone DB) — geo tables are identical in both DBs
+// but RSS reads come from tombstone, so geo lookups should too.
+import { rssPrisma as prisma } from '@/lib/rss-db';
 
 // ── Haversine distance (miles) ────────────────────────────────────────────
 const R_MILES = 3958.8;
