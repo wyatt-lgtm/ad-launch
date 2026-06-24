@@ -11,6 +11,7 @@
  *   - "interests_only"      → sole content source
  */
 import { prisma } from '@/lib/db';
+import { rssPrisma } from '@/lib/rss-db';
 
 export interface InterestFeedBrief {
   generatedAt: string;
@@ -85,7 +86,9 @@ export async function generateInterestFeedBrief(
 
   console.log(`[InterestFeedBrief] Querying feeds: industries=[${enabledIndustries.join(',')}], cutoff=${cutoffDate.toISOString()}, maxPerFeed=${maxItemsPerCategory}`);
 
-  const feeds = await prisma.rssFeed.findMany({
+  // Use rssPrisma for RSS content queries — in production, RssItem rows
+  // live in tombstone_db while BusinessFeedPreference lives in ad_launch_DB.
+  const feeds = await rssPrisma.rssFeed.findMany({
     where: {
       geoScope: 'national',
       status: 'active',

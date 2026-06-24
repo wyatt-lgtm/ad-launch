@@ -12,6 +12,7 @@
  *   4. Return a structured content brief payload
  */
 import { prisma } from '@/lib/db';
+import { rssPrisma } from '@/lib/rss-db';
 import { getZipsByRadius, getZipsByCounty, getZipsByCity, getZipDetails } from './geo-lookup';
 import type { TradeAreaRequest, TradeAreaItem, TradeAreaResponse } from './types';
 import { discoverValidateAndLink, type DiscoveryResult } from './geo-linker';
@@ -153,7 +154,7 @@ export async function getTradeAreaItems(
   }
 
   // Get unique feed IDs from FeedGeo
-  const feedGeos = await prisma.feedGeo.findMany({
+  const feedGeos = await rssPrisma.feedGeo.findMany({
     where: feedGeoWhere,
     select: { feedId: true, confidence: true, coverageType: true },
     distinct: ['feedId'],
@@ -176,7 +177,7 @@ export async function getTradeAreaItems(
   }
 
   // Also include national-scope and state-scope feeds
-  const globalFeeds = await prisma.rssFeed.findMany({
+  const globalFeeds = await rssPrisma.rssFeed.findMany({
     where: {
       status: 'active',
       OR: [
@@ -211,7 +212,7 @@ export async function getTradeAreaItems(
     itemWhere.usedInPost = false;
   }
 
-  const rawItems = await prisma.rssItem.findMany({
+  const rawItems = await rssPrisma.rssItem.findMany({
     where: itemWhere,
     select: {
       id: true,
@@ -527,14 +528,14 @@ export async function generateContentBriefWithFallback(
 
   // ── Level 5: National-only fallback ─────────────────────────────────────
   if (allItems.length < SCOUT_MIN_LOCAL_ITEMS) {
-    const nationalFeeds = await prisma.rssFeed.findMany({
+    const nationalFeeds = await rssPrisma.rssFeed.findMany({
       where: { status: 'active', geoScope: 'national' },
       select: { id: true },
     });
     if (nationalFeeds.length > 0) {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - SCOUT_LOCAL_NEWS_LOOKBACK_DAYS);
-      const nationalItems = await prisma.rssItem.findMany({
+      const nationalItems = await rssPrisma.rssItem.findMany({
         where: {
           feedId: { in: nationalFeeds.map(f => f.id) },
           filterStatus: 'approved',
