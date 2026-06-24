@@ -150,6 +150,7 @@ export default function SocialDashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const autoScout = searchParams.get('scout') === '1';
+  const fromFeeds = searchParams.get('fromFeeds') === '1';
   const bizCtx = useActiveBusiness();
   const [showPicker, setShowPicker] = useState(false);
 
@@ -498,6 +499,76 @@ export default function SocialDashboard() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoScout, loading, sessionStatus, bizCtx.activeBusiness]);
+
+  // Auto-trigger generation when arriving from Content Feeds with ?fromFeeds=1
+  const fromFeedsFired = useRef(false);
+  useEffect(() => {
+    if (fromFeeds && !loading && !fromFeedsFired.current && sessionStatus === 'authenticated' && bizCtx.activeBusiness) {
+      fromFeedsFired.current = true;
+      router.replace('/dashboard/social', { scroll: false });
+      try {
+        const raw = sessionStorage.getItem('feedScoutPayload');
+        if (raw) {
+          sessionStorage.removeItem('feedScoutPayload');
+          const payload = JSON.parse(raw);
+          const { brief, selectedIds, contentSourceMode } = payload;
+          if (brief && selectedIds?.length > 0) {
+            // Set brief data and trigger generation directly
+            setScoutBriefData(brief);
+            const selectedSet = new Set<string>(selectedIds);
+            setSelectedStoryIds(selectedSet);
+            // Build stories array from selected IDs (same logic as generateFromSelected)
+            const stories: { headline: string; source?: string; category?: string; type: string; link?: string }[] = [];
+            if (brief.interestBrief?.categories?.length > 0) {
+              for (const cat of brief.interestBrief.categories) {
+                for (const h of (cat.headlines || [])) {
+                  const hid = h.id || `${cat.industry}-${h.title?.slice(0, 20)}`;
+                  if (selectedSet.has(hid)) {
+                    stories.push({ headline: h.title, source: h.source, category: cat.label, type: 'interest', link: h.link });
+                  }
+                }
+              }
+            }
+            if (brief.rssBrief?.headlines?.length > 0) {
+              for (const h of brief.rssBrief.headlines) {
+                const hid = h.id || `local-${h.title?.slice(0, 20)}`;
+                if (selectedSet.has(hid)) {
+                  stories.push({ headline: h.title, source: h.source, category: 'Local News', type: 'local_news', link: h.link });
+                }
+              }
+            }
+            if (brief.upcomingEvents?.length > 0) {
+              for (const e of brief.upcomingEvents) {
+                const eid = e.id || `event-${e.name?.slice(0, 20)}`;
+                if (selectedSet.has(eid)) {
+                  stories.push({ headline: e.name, source: e.ideas || `${e.date}`, category: 'Events', type: 'event' });
+                }
+              }
+            }
+            if (stories.length > 0) {
+              const clampedStories = stories.slice(0, 3);
+              const enrichedBrief = {
+                ...brief,
+                stories: clampedStories,
+                scoutSummary: `Generating ${clampedStories.length} individual post${clampedStories.length !== 1 ? 's' : ''} from selected stories.`,
+              };
+              setGenerating(true);
+              setGenerationClickedAt(new Date().toISOString());
+              sendToTombstone(enrichedBrief, null, new Date().toISOString())
+                .catch(err => {
+                  console.error('[FromFeeds] Generation error:', err);
+                  setScoutError(err.message);
+                })
+                .finally(() => setGenerating(false));
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[FromFeeds] Failed to parse feed scout payload:', e);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromFeeds, loading, sessionStatus, bizCtx.activeBusiness]);
 
   // Phase 2: Build filtered summary and send to Tombstone
   const generateFromSelected = async () => {
