@@ -14,6 +14,7 @@ import GoogleAdsCopy from '../../../components/google-ads-copy';
 import WebsiteConcept from '../../../components/website-concept';
 // BudgetRecommendations removed per user request
 import RegistrationModal from '../../../components/registration-modal';
+import LiveActivityLog from '../../../components/live-activity-log';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 
@@ -25,6 +26,12 @@ interface TaskItem {
   description: string;
   status: 'waiting' | 'active' | 'complete' | 'error';
   rawStatus: string;
+  // Timing fields for live activity log
+  created_at?: string | null;
+  claimed_at?: string | null;
+  heartbeat_at?: string | null;
+  updated_at?: string | null;
+  retry_count?: number;
 }
 
 interface Ad {
@@ -1568,8 +1575,11 @@ export default function AnalysisTracker({ analysisId }: { analysisId: string }) 
             </div>
           )}
 
+          {/* Live activity log */}
+          <LiveActivityLog tasks={tasks} />
+
           {/* Generating posts badge */}
-          <div className="mt-6 text-center">
+          <div className="mt-4 text-center">
             <span className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">
               <Sparkles className="w-4 h-4" />
               Generating 3 unique posts
