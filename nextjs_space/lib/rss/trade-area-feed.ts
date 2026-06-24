@@ -401,8 +401,10 @@ export interface BriefDiagnostics {
   countyFips: string | null;
   /** 2-digit state FIPS resolved from the center ZIP (e.g. "29") */
   stateFips: string | null;
-  /** How county identity was resolved: 'fips' (preferred) or 'name_fallback' */
-  geoResolutionMethod: 'fips' | 'name_fallback' | 'none';
+  /** How countyFips/stateFips were resolved (always from geo tables when ZIP is valid) */
+  resolvedGeoMethod: 'zip_fips_dataset' | 'none';
+  /** How the Level 3 county cascade resolved — only set when L3 actually runs */
+  countyCascadeResolutionMethod: 'fips' | 'name_fallback' | 'not_run_zip_radius_succeeded' | 'not_run_city_succeeded' | 'not_run_no_geo' | 'not_reached';
   deduplicatedItems: number;
   rejectedItems: { reason: string; count: number }[];
 }
@@ -454,7 +456,8 @@ export async function generateContentBriefWithFallback(
     requestedLocation: { zip: centerZip, city: geo.city || null, county: geo.county || null, state: geo.state || null },
     countyFips: null,
     stateFips: null,
-    geoResolutionMethod: 'none',
+    resolvedGeoMethod: 'none',
+    countyCascadeResolutionMethod: 'not_reached',
     deduplicatedItems: 0,
     rejectedItems: [],
   };
@@ -481,6 +484,9 @@ export async function generateContentBriefWithFallback(
         resolvedStateFips = details.stateFips ?? null;
         diagnostics.countyFips = resolvedCountyFips;
         diagnostics.stateFips = resolvedStateFips;
+        if (resolvedCountyFips || resolvedStateFips) {
+          diagnostics.resolvedGeoMethod = 'zip_fips_dataset';
+        }
       }
     } catch (err) {
       console.warn('[trade-area-feed] Could not resolve ZIP details:', err);
@@ -554,7 +560,7 @@ export async function generateContentBriefWithFallback(
         countyFipsList: [resolvedCountyFips],
         ...options, ...cascadeOpts, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
       });
-      diagnostics.geoResolutionMethod = 'fips';
+      diagnostics.countyCascadeResolutionMethod = 'fips';
       console.log(`[trade-area-feed] L3 county via FIPS(${resolvedCountyFips}): ${countyResult.meta.feedsMatched} feeds, ${countyResult.items.length} items raw`);
     } else {
       // Fallback: use county name (legacy path)
@@ -562,7 +568,7 @@ export async function generateContentBriefWithFallback(
         counties: [`${resolvedCounty}, ${resolvedState}`],
         ...options, ...cascadeOpts, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
       });
-      diagnostics.geoResolutionMethod = 'name_fallback';
+      diagnostics.countyCascadeResolutionMethod = 'name_fallback';
       console.warn(`[trade-area-feed] L3 county via NAME fallback(${resolvedCounty}, ${resolvedState}): countyFips was null`);
     }
     diagnostics.levelsAttempted.push({
@@ -574,6 +580,19 @@ export async function generateContentBriefWithFallback(
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
       diagnostics.fallbackLevel = 'county';
     }
+  }
+
+  // Set countyCascadeResolutionMethod if L3 was never entered
+  if (diagnostics.countyCascadeResolutionMethod === 'not_reached') {
+    if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS) {
+      // L3 skipped because an earlier level already had enough items
+      diagnostics.countyCascadeResolutionMethod = diagnostics.fallbackLevel === 'zip_radius'
+        ? 'not_run_zip_radius_succeeded'
+        : 'not_run_city_succeeded';
+    } else if (!resolvedCountyFips && !resolvedCounty) {
+      diagnostics.countyCascadeResolutionMethod = 'not_run_no_geo';
+    }
+    // else: L3 condition was met but didn't fire — shouldn't happen, leave as not_reached
   }
 
   // ── Level 4: State (full lookback) ──────────────────────────────────────
