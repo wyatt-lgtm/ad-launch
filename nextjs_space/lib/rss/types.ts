@@ -120,6 +120,7 @@ export interface TradeAreaRequest {
   minConfidence?: number;   // Min geo confidence (default 0.3)
   excludeInferred?: boolean;
   excludeUsed?: boolean;    // Skip items already used in posts
+  excludeNational?: boolean; // When true (local_only mode), omit geoScope='national' feeds
 }
 
 export interface TradeAreaItem {
@@ -138,6 +139,7 @@ export interface TradeAreaItem {
   geoConfidence: number;
   coverageType: CoverageType;
   relevanceScore: number | null;
+  feedGeoScope?: string; // The feed's own geoScope (local/city/county/state/national)
 }
 
 export interface TradeAreaResponse {

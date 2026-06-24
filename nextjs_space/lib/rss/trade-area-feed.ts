@@ -63,6 +63,7 @@ export async function getTradeAreaItems(
     minConfidence = 0.3,
     excludeInferred = false,
     excludeUsed = false,
+    excludeNational = false,
   } = request;
 
   // ── Step 1: Resolve all ZIP IDs in the trade area ─────────────────────
@@ -176,24 +177,33 @@ export async function getTradeAreaItems(
     };
   }
 
-  // Also include national-scope and state-scope feeds
-  const globalFeeds = await rssPrisma.rssFeed.findMany({
-    where: {
-      status: 'active',
-      OR: [
-        { geoScope: 'national' },
-        {
-          geoScope: { in: ['state', 'weather'] },
-          pilotState: states?.length ? { in: states } : undefined,
-        },
-      ],
-    },
-    select: { id: true },
-  });
-  for (const f of globalFeeds) {
-    if (!feedConfidenceMap.has(f.id)) {
-      feedConfidenceMap.set(f.id, { confidence: 0.5, coverageType: 'inferred' });
-      feedIds.push(f.id);
+  // Also include state/weather feeds (and national-scope feeds unless excluded)
+  const globalFeedOr: any[] = [];
+  if (!excludeNational) {
+    globalFeedOr.push({ geoScope: 'national' });
+  }
+  if (states?.length) {
+    globalFeedOr.push({
+      geoScope: { in: ['state', 'weather'] },
+      pilotState: { in: states },
+    });
+  }
+  if (globalFeedOr.length > 0) {
+    const globalFeeds = await rssPrisma.rssFeed.findMany({
+      where: {
+        status: 'active',
+        OR: globalFeedOr,
+      },
+      select: { id: true, geoScope: true },
+    });
+    for (const f of globalFeeds) {
+      if (!feedConfidenceMap.has(f.id)) {
+        feedConfidenceMap.set(f.id, { confidence: 0.5, coverageType: 'inferred' });
+        feedIds.push(f.id);
+      }
+    }
+    if (excludeNational) {
+      console.log(`[trade-area-feed] excludeNational=true → skipped national feeds, included ${globalFeeds.length} state/weather feeds`);
     }
   }
 
@@ -230,6 +240,7 @@ export async function getTradeAreaItems(
           title: true,
           sourceType: true,
           sourceQuality: true,
+          geoScope: true,
         },
       },
     },
@@ -294,6 +305,7 @@ export async function getTradeAreaItems(
     geoConfidence: s.geoConfidence,
     coverageType: s.coverageType as any,
     relevanceScore: s.item.relevanceScore,
+    feedGeoScope: (s.item.feed as any).geoScope ?? undefined,
   }));
 
   const uniqueFeeds = new Set(items.map(i => i.feedId));
@@ -319,7 +331,7 @@ export async function getItemsByRadius(
   const tradeArea = await getZipsByRadius(centerZip, radiusMiles);
   return getTradeAreaItems({
     zips: tradeArea.zips.map(z => z.code),
-    ...options,
+    ...options, // passes through excludeNational when present
   });
 }
 
@@ -468,10 +480,13 @@ export async function generateContentBriefWithFallback(
     return added;
   };
 
+  // Propagate excludeNational into every cascade-level query
+  const cascadeOpts = briefOptions.excludeNational ? { excludeNational: true } : {};
+
   // ── Level 1: ZIP radius ─────────────────────────────────────────────────
   if (centerZip) {
     const zipResult = await getItemsByRadius(centerZip, radiusMiles, {
-      ...options, limit, days: initialDays,
+      ...options, ...cascadeOpts, limit, days: initialDays,
     });
     diagnostics.levelsAttempted.push({
       level: 'zip_radius', feedsFound: zipResult.meta.feedsMatched,
@@ -486,7 +501,7 @@ export async function generateContentBriefWithFallback(
     const cityDays = Math.min(initialDays * 2, SCOUT_LOCAL_NEWS_LOOKBACK_DAYS);
     const cityResult = await getTradeAreaItems({
       cities: [`${resolvedCity}, ${resolvedState}`],
-      ...options, limit, days: cityDays,
+      ...options, ...cascadeOpts, limit, days: cityDays,
     });
     diagnostics.levelsAttempted.push({
       level: 'city', feedsFound: cityResult.meta.feedsMatched,
@@ -502,7 +517,7 @@ export async function generateContentBriefWithFallback(
   if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && resolvedCounty && resolvedState) {
     const countyResult = await getTradeAreaItems({
       counties: [`${resolvedCounty}, ${resolvedState}`],
-      ...options, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+      ...options, ...cascadeOpts, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
     });
     diagnostics.levelsAttempted.push({
       level: 'county', feedsFound: countyResult.meta.feedsMatched,
@@ -518,7 +533,7 @@ export async function generateContentBriefWithFallback(
   if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && resolvedState) {
     const stateResult = await getTradeAreaItems({
       states: [resolvedState],
-      ...options, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+      ...options, ...cascadeOpts, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
     });
     diagnostics.levelsAttempted.push({
       level: 'state', feedsFound: stateResult.meta.feedsMatched,
@@ -545,6 +560,22 @@ export async function generateContentBriefWithFallback(
     }
     allItems.length = 0;
     allItems.push(...capped);
+  }
+
+  // ── Defensive filter: strip any national-scoped feeds that leaked through ──
+  if (briefOptions.excludeNational) {
+    const beforeCount = allItems.length;
+    const filtered = allItems.filter(i => {
+      const fgs = i.feedGeoScope;
+      return fgs !== 'national';
+    });
+    const removed = beforeCount - filtered.length;
+    if (removed > 0) {
+      console.log(`[trade-area-feed] Defensive filter removed ${removed} national-scoped items in local_only mode`);
+      diagnostics.deduplicatedItems += removed;
+      allItems.length = 0;
+      allItems.push(...filtered);
+    }
   }
 
   // ── Level 5: National-only fallback ─────────────────────────────────────
@@ -723,7 +754,7 @@ export async function generateContentBriefWithFallback(
       id: i.id, title: i.title, source: i.feedTitle, sourceType: i.feedSourceType,
       pubDate: i.pubDate, link: i.link, geoConfidence: i.geoConfidence,
       localityLevel: i.localityLevel,
-      feedGeoScope: i.localityLevel,
+      feedGeoScope: i.feedGeoScope || i.localityLevel,
     })),
     patterns,
     diagnostics,

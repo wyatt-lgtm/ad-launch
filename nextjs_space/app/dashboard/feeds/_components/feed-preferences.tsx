@@ -366,7 +366,9 @@ export default function FeedPreferences() {
 
         for (const h of brief.rssBrief.headlines.slice(0, 12)) {
           const level = h.localityLevel || 'unknown';
-          const isLocalItem = LOCAL_LEVELS.has(level);
+          // feedGeoScope reflects the feed's actual scope; national feeds are not local even if cascade assigned them a local level
+          const feedActualScope = (h as any).feedGeoScope || level;
+          const isLocalItem = LOCAL_LEVELS.has(level) && feedActualScope !== 'national';
           if (isLocalItem) {
             // Build locality-aware label
             let relevanceLabel = 'Local trade area news';

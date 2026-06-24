@@ -442,6 +442,219 @@ describe('Business Switch State Clearing', () => {
   });
 });
 
+// ── getTradeAreaItems excludeNational Tests ──────────────────────────────
+
+describe('getTradeAreaItems excludeNational', () => {
+  // Simulates the globalFeedOr query construction from getTradeAreaItems
+  function buildGlobalFeedQuery(opts: { excludeNational?: boolean; states?: string[] }) {
+    const globalFeedOr: any[] = [];
+    if (!opts.excludeNational) {
+      globalFeedOr.push({ geoScope: 'national' });
+    }
+    if (opts.states?.length) {
+      globalFeedOr.push({
+        geoScope: { in: ['state', 'weather'] },
+        pilotState: { in: opts.states },
+      });
+    }
+    return globalFeedOr;
+  }
+
+  test('excludeNational=true omits geoScope=national from query', () => {
+    const orClauses = buildGlobalFeedQuery({ excludeNational: true, states: ['MO'] });
+    const hasNational = orClauses.some((c: any) => c.geoScope === 'national');
+    expect(hasNational).toBe(false);
+    // But state/weather feeds are still included
+    const hasState = orClauses.some((c: any) => c.geoScope?.in?.includes('state'));
+    expect(hasState).toBe(true);
+  });
+
+  test('excludeNational=false includes geoScope=national in query', () => {
+    const orClauses = buildGlobalFeedQuery({ excludeNational: false, states: ['MO'] });
+    const hasNational = orClauses.some((c: any) => c.geoScope === 'national');
+    expect(hasNational).toBe(true);
+  });
+
+  test('excludeNational=true with no states produces empty OR', () => {
+    const orClauses = buildGlobalFeedQuery({ excludeNational: true });
+    expect(orClauses).toHaveLength(0);
+  });
+
+  test('default (no excludeNational) includes national feeds', () => {
+    const orClauses = buildGlobalFeedQuery({ states: ['CO'] });
+    const hasNational = orClauses.some((c: any) => c.geoScope === 'national');
+    expect(hasNational).toBe(true);
+  });
+
+  test('state/weather feeds only match specified pilotState', () => {
+    const orClauses = buildGlobalFeedQuery({ excludeNational: true, states: ['MO'] });
+    const stateClause = orClauses.find((c: any) => c.geoScope?.in?.includes('state'));
+    expect(stateClause?.pilotState?.in).toEqual(['MO']);
+    expect(stateClause?.pilotState?.in).not.toContain('CO');
+  });
+});
+
+// ── Cascade-level excludeNational propagation Tests ──────────────────────
+
+describe('Cascade excludeNational Propagation', () => {
+  // Simulates cascadeOpts construction from generateContentBriefWithFallback
+  function buildCascadeOpts(briefOptions: { excludeNational?: boolean }) {
+    return briefOptions.excludeNational ? { excludeNational: true } : {};
+  }
+
+  test('local_only mode sets excludeNational in cascadeOpts', () => {
+    const opts = buildCascadeOpts({ excludeNational: true });
+    expect(opts).toEqual({ excludeNational: true });
+  });
+
+  test('local_plus_interests mode does NOT set excludeNational', () => {
+    const opts = buildCascadeOpts({});
+    expect(opts).toEqual({});
+    expect(opts).not.toHaveProperty('excludeNational');
+  });
+
+  test('cascadeOpts merges into ZIP level query', () => {
+    const baseOpts = { days: 5, limit: 30 };
+    const cascadeOpts = buildCascadeOpts({ excludeNational: true });
+    const merged = { ...baseOpts, ...cascadeOpts };
+    expect(merged.excludeNational).toBe(true);
+    expect(merged.days).toBe(5);
+  });
+
+  test('cascadeOpts merges into city level query', () => {
+    const baseOpts = { days: 10, limit: 30 };
+    const cascadeOpts = buildCascadeOpts({ excludeNational: true });
+    const merged = { cities: ['ST. LOUIS, MO'], ...baseOpts, ...cascadeOpts };
+    expect(merged.excludeNational).toBe(true);
+    expect(merged.cities).toEqual(['ST. LOUIS, MO']);
+  });
+
+  test('cascadeOpts merges into county level query', () => {
+    const baseOpts = { days: 14, limit: 30 };
+    const cascadeOpts = buildCascadeOpts({ excludeNational: true });
+    const merged = { counties: ['ST. LOUIS CITY, MO'], ...baseOpts, ...cascadeOpts };
+    expect(merged.excludeNational).toBe(true);
+  });
+
+  test('cascadeOpts merges into state level query', () => {
+    const baseOpts = { days: 14, limit: 30 };
+    const cascadeOpts = buildCascadeOpts({ excludeNational: true });
+    const merged = { states: ['MO'], ...baseOpts, ...cascadeOpts };
+    expect(merged.excludeNational).toBe(true);
+    expect(merged.states).toEqual(['MO']);
+  });
+});
+
+// ── Defensive Output Filtering Tests ─────────────────────────────────────
+
+describe('Defensive National Feed Filtering', () => {
+  // Simulates the defensive filter in generateContentBriefWithFallback
+  function applyDefensiveFilter(items: { localityLevel: string; feedGeoScope?: string }[], excludeNational: boolean) {
+    if (!excludeNational) return items;
+    return items.filter(i => i.feedGeoScope !== 'national');
+  }
+
+  test('filters out national-scoped feeds in local_only mode', () => {
+    const items = [
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'Farm Progress' },
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'ESPN' },
+      { localityLevel: 'state', feedGeoScope: 'state', title: 'MO Weather' },
+      { localityLevel: 'city', feedGeoScope: 'local', title: 'STLtoday' },
+    ];
+    const filtered = applyDefensiveFilter(items, true);
+    expect(filtered).toHaveLength(2);
+    expect(filtered.map(i => (i as any).title)).toEqual(['MO Weather', 'STLtoday']);
+  });
+
+  test('does NOT filter in non-local_only mode', () => {
+    const items = [
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'Farm Progress' },
+      { localityLevel: 'state', feedGeoScope: 'state', title: 'MO Weather' },
+    ];
+    const filtered = applyDefensiveFilter(items, false);
+    expect(filtered).toHaveLength(2);
+  });
+
+  test('Gus\'s Pretzels / St. Louis / MO / Local Only rejects Farm Progress, ESPN, PCWorld, etc.', () => {
+    // Simulates the Gus's Pretzels scenario: state-level cascade returns national feeds
+    const stateItems = [
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'Farm Progress' },
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'ESPN' },
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'PCWorld' },
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'Car and Driver' },
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'MarketWatch' },
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'Yahoo Sports' },
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'Grocery Dive' },
+      { localityLevel: 'state', feedGeoScope: 'national', title: 'J.P. Morgan' },
+    ];
+    const filtered = applyDefensiveFilter(stateItems, true);
+    expect(filtered).toHaveLength(0);
+    const nationalNames = ['Farm Progress', 'ESPN', 'PCWorld', 'Car and Driver', 'MarketWatch', 'Yahoo Sports', 'Grocery Dive', 'J.P. Morgan'];
+    for (const name of nationalNames) {
+      expect(filtered.find(i => (i as any).title === name)).toBeUndefined();
+    }
+  });
+
+  test('Local Only still allows MO state and weather feeds with pilotState=MO', () => {
+    const items = [
+      { localityLevel: 'state', feedGeoScope: 'state', title: 'Missouri State News' },
+      { localityLevel: 'state', feedGeoScope: 'weather', title: 'NWS St. Louis' },
+    ];
+    const filtered = applyDefensiveFilter(items, true);
+    expect(filtered).toHaveLength(2);
+  });
+
+  test('empty result when no local stories exist returns clean empty', () => {
+    const items: { localityLevel: string; feedGeoScope?: string }[] = [];
+    const filtered = applyDefensiveFilter(items, true);
+    expect(filtered).toHaveLength(0);
+  });
+});
+
+// ── Frontend feedGeoScope Classification Tests ───────────────────────────
+
+describe('Frontend feedGeoScope Classification', () => {
+  const LOCAL_LEVELS = new Set(['zip', 'zip_radius', 'city', 'county', 'state']);
+
+  function classifyWithFeedGeoScope(h: { localityLevel?: string; feedGeoScope?: string }) {
+    const level = h.localityLevel || 'unknown';
+    const feedActualScope = h.feedGeoScope || level;
+    const isLocal = LOCAL_LEVELS.has(level) && feedActualScope !== 'national';
+    return isLocal ? 'local' : 'industry';
+  }
+
+  test('state-level item with feedGeoScope=national → industry (not local)', () => {
+    expect(classifyWithFeedGeoScope({ localityLevel: 'state', feedGeoScope: 'national' })).toBe('industry');
+  });
+
+  test('state-level item with feedGeoScope=state → local', () => {
+    expect(classifyWithFeedGeoScope({ localityLevel: 'state', feedGeoScope: 'state' })).toBe('local');
+  });
+
+  test('city-level item with feedGeoScope=local → local', () => {
+    expect(classifyWithFeedGeoScope({ localityLevel: 'city', feedGeoScope: 'local' })).toBe('local');
+  });
+
+  test('national localityLevel always → industry', () => {
+    expect(classifyWithFeedGeoScope({ localityLevel: 'national', feedGeoScope: 'national' })).toBe('industry');
+  });
+
+  test('weather feed with feedGeoScope=weather → local', () => {
+    expect(classifyWithFeedGeoScope({ localityLevel: 'state', feedGeoScope: 'weather' })).toBe('local');
+  });
+
+  test('Local + Interests: national stories in Industry Stories only', () => {
+    const items = [
+      { localityLevel: 'city', feedGeoScope: 'local' },
+      { localityLevel: 'state', feedGeoScope: 'national' },
+    ];
+    const local = items.filter(i => classifyWithFeedGeoScope(i) === 'local');
+    const industry = items.filter(i => classifyWithFeedGeoScope(i) === 'industry');
+    expect(local).toHaveLength(1);
+    expect(industry).toHaveLength(1);
+  });
+});
+
 // ── Local Only Source Classification & Label Tests (Section 9) ──────────
 
 describe('Local Only Source Classification', () => {
