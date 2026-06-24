@@ -70,6 +70,9 @@ export default function FeedPreferences() {
   // Scout Stories state
   const [scouting, setScouting] = useState(false);
   const lastSavedRef = useRef<Set<string>>(new Set());
+  // Race-condition guard: increments on every scout call + business switch
+  const scoutRunRef = useRef(0);
+  const scoutBusinessIdRef = useRef<string | null>(null);
 
   // Story picker state (scout results shown on THIS page)
   interface StoryCard {
@@ -148,13 +151,17 @@ export default function FeedPreferences() {
 
   useEffect(() => {
     loadSettings();
-    // Clear stale scout results when business changes
+    // Clear ALL stale scout results when business changes
+    scoutRunRef.current++; // Invalidate any in-flight scout requests
+    scoutBusinessIdRef.current = bizCtx.activeBusiness?.id || null;
     setShowStoryPicker(false);
     setStoryCards([]);
     setSelectedStoryIds(new Set());
     setSelectionError(null);
     setScoutResult(null);
     setScoutBriefData(null);
+    setScouting(false);
+    console.log('[FeedPrefs] Business changed — cleared all scout state, runId now', scoutRunRef.current, 'bizId=', bizCtx.activeBusiness?.id);
   }, [loadSettings]);
 
   // Load scout email settings when business changes
@@ -276,6 +283,11 @@ export default function FeedPreferences() {
     setSelectedStoryIds(new Set());
     setSelectionError(null);
 
+    // Capture run ID + business ID at call time for race-condition protection
+    const thisRunId = ++scoutRunRef.current;
+    const activeBusinessId = bizCtx.activeBusiness?.id || null;
+    scoutBusinessIdRef.current = activeBusinessId;
+
     try {
       // Auto-save if anything changed
       if (needsSave()) {
@@ -287,8 +299,13 @@ export default function FeedPreferences() {
         }
       }
 
+      // Guard: if business changed during save, abort
+      if (scoutRunRef.current !== thisRunId) {
+        console.log('[FeedScout] Aborted — business changed during save (run', thisRunId, 'vs', scoutRunRef.current, ')');
+        return;
+      }
+
       // Call Clark Kent scout API directly
-      const activeBusinessId = bizCtx.activeBusiness?.id;
       const scoutBody: Record<string, any> = { contentSourceMode: contentMode };
       if (activeBusinessId) scoutBody.businessId = activeBusinessId;
 
@@ -297,6 +314,7 @@ export default function FeedPreferences() {
       console.log('[FeedScout] activeBusiness:', bizCtx.activeBusiness?.businessName, bizCtx.activeBusiness?.businessCity, bizCtx.activeBusiness?.businessState);
       console.log('[FeedScout] contentMode:', contentMode);
       console.log('[FeedScout] selectedCategories:', Array.from(selected));
+      console.log('[FeedScout] runId:', thisRunId);
       const scoutRes = await fetch('/api/rss/clark-kent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -305,6 +323,18 @@ export default function FeedPreferences() {
       const scoutData = await scoutRes.json();
       console.log('[FeedScout] Response meta:', JSON.stringify(scoutData.meta));
       if (!scoutRes.ok) throw new Error(scoutData.error || 'Scout failed');
+
+      // ── Race condition guard: discard if business changed during fetch ──
+      if (scoutRunRef.current !== thisRunId) {
+        console.warn('[FeedScout] Discarding stale response — business changed (run', thisRunId, 'vs current', scoutRunRef.current, ')');
+        return;
+      }
+      // ── Business ID mismatch guard ──
+      const responseBizId = scoutData.meta?.businessId;
+      if (responseBizId && activeBusinessId && responseBizId !== activeBusinessId) {
+        console.warn('[FeedScout] Discarding response — businessId mismatch:', responseBizId, 'vs active', activeBusinessId);
+        return;
+      }
 
       setScoutBriefData(scoutData.brief);
       const brief = scoutData.brief;
@@ -459,8 +489,12 @@ export default function FeedPreferences() {
           meta,
         });
       } else {
+        const cityName = brief?.tradeArea?.city || bizCtx.activeBusiness?.businessCity || '';
+        const emptyMsg = cityName
+          ? `No local stories found for ${cityName} yet. Tombstone is checking for local sources in this area.`
+          : 'No stories found for the selected scouting mode. Try a different mode or check your content settings.';
         setScoutResult({
-          message: 'No stories found for the selected scouting mode. Try a different mode or check your content settings.',
+          message: emptyMsg,
           meta,
         });
       }

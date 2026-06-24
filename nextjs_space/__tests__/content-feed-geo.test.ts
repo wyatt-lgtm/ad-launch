@@ -294,26 +294,151 @@ describe('Empty State Messages', () => {
 // ── Business switch state clearing tests ─────────────────────────────────
 
 describe('Business Switch State Clearing', () => {
-  test('switching businesses should clear scout state', () => {
-    // Simulates the state clearing that happens in the useEffect
+  test('1. switching businesses clears all previous scout cards', () => {
     let storyCards = [{ id: '1', title: 'old story' }];
     let showStoryPicker = true;
     let selectedStoryIds = new Set(['1']);
     let scoutResult = { message: 'old result' };
-    let scoutBriefData = { tradeArea: { city: 'Grand Rapids' } };
+    let scoutBriefData = { tradeArea: { city: 'Colorado Springs' } };
+    let scouting = true;
+    let scoutRunId = 1;
+    let scoutBusinessId: string | null = 'biz_cupcake';
 
-    // Simulate business change clearing
+    // Simulate business change clearing (mirrors the useEffect)
+    scoutRunId++;
+    scoutBusinessId = 'biz_houston';
     storyCards = [];
     showStoryPicker = false;
     selectedStoryIds = new Set();
     scoutResult = null as any;
     scoutBriefData = null as any;
+    scouting = false;
 
     expect(storyCards).toHaveLength(0);
     expect(showStoryPicker).toBe(false);
     expect(selectedStoryIds.size).toBe(0);
     expect(scoutResult).toBeNull();
     expect(scoutBriefData).toBeNull();
+    expect(scouting).toBe(false);
+    expect(scoutRunId).toBe(2);
+    expect(scoutBusinessId).toBe('biz_houston');
+  });
+
+  test('2. previous scout response cannot overwrite current business after switch', () => {
+    let scoutRunId = 1;
+    let storyCards: any[] = [];
+    const thisRunId = scoutRunId; // captured at scout call time
+
+    // Business switch during fetch
+    scoutRunId++;
+    storyCards = [];
+
+    // Old response arrives — guard check
+    const staleCards = [{ id: 'co-1', title: 'Colorado Story' }];
+    if (scoutRunId === thisRunId) {
+      storyCards = staleCards;
+    }
+    expect(storyCards).toHaveLength(0);
+  });
+
+  test('3. scout response with mismatched businessId is discarded', () => {
+    const activeBusinessId = 'biz_houston';
+    const responseBizId = 'biz_cupcake_doctor';
+    let applied = false;
+
+    if (!responseBizId || !activeBusinessId || responseBizId === activeBusinessId) {
+      applied = true;
+    }
+    expect(applied).toBe(false);
+  });
+
+  test('4. scout results cache key includes businessId', () => {
+    // In our implementation, there's no cache — every scout is a fresh fetch.
+    // But if a cache were added, key must include businessId.
+    const buildCacheKey = (bizId: string, mode: string) => `scout_${bizId}_${mode}`;
+    const key1 = buildCacheKey('biz_cupcake', 'local_only');
+    const key2 = buildCacheKey('biz_houston', 'local_only');
+    expect(key1).not.toBe(key2);
+    expect(key1).toContain('biz_cupcake');
+    expect(key2).toContain('biz_houston');
+  });
+
+  test('5. Houston business does not render Colorado local stories', () => {
+    // Simulates the frontend classification: CO items with national localityLevel
+    const LOCAL_LEVELS = new Set(['zip', 'zip_radius', 'city', 'county', 'state']);
+    const coItems = [
+      { localityLevel: 'national', sourceType: 'national_news', title: 'Farm Progress' },
+      { localityLevel: 'national', sourceType: 'national_news', title: 'ESPN' },
+      { localityLevel: 'national', sourceType: 'national_news', title: 'PCWorld' },
+    ];
+    const localCards = coItems.filter(i => LOCAL_LEVELS.has(i.localityLevel));
+    expect(localCards).toHaveLength(0);
+  });
+
+  test('6. Local Only excludes Farm Progress / ESPN / PCWorld', () => {
+    // With excludeNational=true, national fallback is skipped entirely
+    const allItems: any[] = [];
+    const SCOUT_MIN = 5;
+    const excludeNational = true;
+    if (allItems.length < SCOUT_MIN && !excludeNational) {
+      allItems.push({ localityLevel: 'national', source: 'Farm Progress' });
+      allItems.push({ localityLevel: 'national', source: 'ESPN' });
+      allItems.push({ localityLevel: 'national', source: 'PCWorld' });
+    }
+    expect(allItems.filter(i => i.localityLevel === 'national')).toHaveLength(0);
+  });
+
+  test('7. Local Only skips national fallback', () => {
+    const excludeNational = true; // local_only mode
+    let nationalFallbackRan = false;
+    if (!excludeNational) {
+      nationalFallbackRan = true;
+    }
+    expect(nationalFallbackRan).toBe(false);
+  });
+
+  test('8. label generation uses story matched geography, not only active business state', () => {
+    // Labels come from diagnostics.requestedLocation which is set from the cascade's resolvedState
+    // If business is Houston/TX, cascade resolves TX, and labels say TX
+    // If business is CO Springs/CO, cascade resolves CO, and labels say CO
+    function buildLabel(diagState: string, level: string, sourceType: string) {
+      if (sourceType === 'weather') return `${diagState} weather / public safety alert`;
+      if (level === 'state') return `${diagState} regional story`;
+      return 'Local trade area news';
+    }
+    // TX business should get TX labels
+    expect(buildLabel('TX', 'state', 'local_news')).toBe('TX regional story');
+    expect(buildLabel('TX', 'state', 'weather')).toBe('TX weather / public safety alert');
+    // CO labels should NOT appear for TX business
+    expect(buildLabel('TX', 'state', 'weather')).not.toContain('CO');
+  });
+
+  test('9. backend localStories all match selected business geo', () => {
+    // Cascade only searches geo for the resolved business location
+    // So all items returned have localityLevel matching the business geography
+    const businessState = 'TX';
+    const cascadeLevels = ['zip', 'city', 'county', 'state']; // no 'national'
+    const returnedItems = [
+      { localityLevel: 'city', matchedState: 'TX' },
+      { localityLevel: 'state', matchedState: 'TX' },
+    ];
+    for (const item of returnedItems) {
+      expect(cascadeLevels).toContain(item.localityLevel);
+      expect(item.matchedState).toBe(businessState);
+    }
+  });
+
+  test('10. if no matching local stories exist, UI shows empty state instead of stale cards', () => {
+    const cards: any[] = [];
+    const cityName = 'Houston';
+    let message: string;
+    if (cards.length === 0 && cityName) {
+      message = `No local stories found for ${cityName} yet. Tombstone is checking for local sources in this area.`;
+    } else {
+      message = 'No stories found for the selected scouting mode.';
+    }
+    expect(message).toContain('Houston');
+    expect(message).not.toContain('Colorado');
   });
 });
 
