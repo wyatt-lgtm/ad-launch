@@ -98,18 +98,18 @@ export default function SeoInsights({ data, locked = false }: SeoInsightsProps) 
       {/* Header with score */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-4 flex items-center justify-between cursor-pointer hover:from-emerald-600 hover:to-teal-600 transition-all"
+        className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-3 sm:px-6 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between cursor-pointer hover:from-emerald-600 hover:to-teal-600 transition-all gap-3"
       >
-        <div className="flex items-center gap-3">
-          <TrendingUp className="w-5 h-5 text-white" />
-          <div className="text-left">
-            <h3 className="text-lg font-bold text-white">SEO Audit Report</h3>
-            <p className="text-emerald-100 text-sm">
+        <div className="flex items-center gap-3 min-w-0">
+          <TrendingUp className="w-5 h-5 text-white flex-shrink-0" />
+          <div className="text-left min-w-0">
+            <h3 className="text-base sm:text-lg font-bold text-white">SEO Audit Report</h3>
+            <p className="text-emerald-100 text-sm break-words">
               Technical analysis of {data.websiteUrl ?? 'your website'}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-shrink-0">
           {hasAudit && (
             <div className="flex items-center gap-2 bg-white/20 rounded-full px-4 py-1.5">
               <span className="text-white font-black text-lg">{audit.score}</span>

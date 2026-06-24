@@ -40,18 +40,18 @@ export default function GoogleAdsCopy({ data, locked = false, collapsed = false 
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full bg-gradient-to-r from-blue-600 to-cyan-500 px-6 py-4 flex items-center justify-between cursor-pointer hover:from-blue-700 hover:to-cyan-600 transition-all"
+        className="w-full bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between cursor-pointer hover:from-blue-700 hover:to-cyan-600 transition-all gap-3"
       >
-        <div className="flex items-center gap-3">
-          <Search className="w-5 h-5 text-white" />
-          <div className="text-left">
-            <h3 className="text-lg font-bold text-white">Google Search Ad Copy</h3>
-            <p className="text-blue-100 text-sm">
+        <div className="flex items-center gap-3 min-w-0">
+          <Search className="w-5 h-5 text-white flex-shrink-0" />
+          <div className="text-left min-w-0">
+            <h3 className="text-base sm:text-lg font-bold text-white">Google Search Ad Copy</h3>
+            <p className="text-blue-100 text-sm break-words">
               Ready-to-use headlines, descriptions & keywords for {data.businessName ?? 'your business'}
             </p>
           </div>
         </div>
-        {expanded ? <ChevronUp className="w-5 h-5 text-white" /> : <ChevronDown className="w-5 h-5 text-white" />}
+        {expanded ? <ChevronUp className="w-5 h-5 text-white flex-shrink-0" /> : <ChevronDown className="w-5 h-5 text-white flex-shrink-0" />}
       </button>
 
       {expanded && <div className="p-6 relative">

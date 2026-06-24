@@ -902,15 +902,15 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
       {/* Header with Generate button and collapse toggle */}
-      <div className="bg-gradient-to-r from-violet-600 to-fuchsia-500 px-6 py-4 flex items-center justify-between">
+      <div className="bg-gradient-to-r from-violet-600 to-fuchsia-500 px-4 py-3 sm:px-6 sm:py-4 flex flex-col sm:flex-row sm:items-center gap-3">
         <button
           onClick={() => setExpanded(!expanded)}
           className="flex items-center gap-3 flex-1 min-w-0 text-left"
         >
           <Globe className="w-5 h-5 text-white flex-shrink-0" />
-          <div className="min-w-0">
-            <h3 className="text-lg font-bold text-white">Website Concept</h3>
-            <p className="text-violet-100 text-sm">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-base sm:text-lg font-bold text-white">Website Concept</h3>
+            <p className="text-violet-100 text-sm break-words">
               Ready-to-use website copy for {data.businessName ?? 'your business'}
             </p>
           </div>
@@ -919,7 +919,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         <button
           onClick={(e) => { e.stopPropagation(); handleGenerateButtonClick(); }}
           disabled={generating || locked}
-          className="flex-shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-white/20 hover:bg-white/30 text-white rounded-xl font-semibold transition-all disabled:opacity-50 text-sm border border-white/30 ml-3"
+          className="w-full sm:w-auto flex-shrink-0 inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-white/20 hover:bg-white/30 text-white rounded-xl font-semibold transition-all disabled:opacity-50 text-sm border border-white/30 min-h-[44px]"
         >
           {generating ? (
             <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
