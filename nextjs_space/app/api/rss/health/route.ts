@@ -7,7 +7,6 @@ import { rssPrisma } from '@/lib/rss-db';
 
 /* ─── helpers ──────────────────────────────────────────────────────── */
 
-/** Sanitise a Prisma / pg error into a safe triplet (no credentials) */
 function sanitiseError(err: unknown): {
   errorName: string;
   errorCode: string | null;
@@ -20,16 +19,11 @@ function sanitiseError(err: unknown): {
   const name: string = e.constructor?.name ?? e.name ?? 'Error';
   const code: string | null = e.code ?? e.errorCode ?? null;
   let msg: string = e.message ?? String(e);
-
-  // Strip anything that looks like a connection string
   msg = msg.replace(/postgresql:\/\/[^\s]+/gi, '<redacted-url>');
-  // Strip IP:port combos
   msg = msg.replace(/\d{1,3}(\.\d{1,3}){3}:\d+/g, '<redacted-host>');
-
   return { errorName: name, errorCode: code, errorMessage: msg };
 }
 
-/** Run `SELECT current_database()` on a PrismaClient and return the name */
 async function currentDatabase(client: any): Promise<string | null> {
   try {
     const rows: any[] = await client.$queryRawUnsafe('SELECT current_database() AS db');
@@ -39,7 +33,18 @@ async function currentDatabase(client: any): Promise<string | null> {
   }
 }
 
-/** Recent approved items (last 7 days) */
+async function tableExists(client: any, tableName: string): Promise<boolean> {
+  try {
+    const rows: any[] = await client.$queryRawUnsafe(
+      "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1) AS \"exists\"",
+      tableName
+    );
+    return rows?.[0]?.exists === true;
+  } catch {
+    return false;
+  }
+}
+
 async function recentApprovedCount(client: any): Promise<number> {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 7);
@@ -50,13 +55,6 @@ async function recentApprovedCount(client: any): Promise<number> {
 
 /* ─── route ────────────────────────────────────────────────────────── */
 
-/**
- * GET /api/rss/health
- *
- * Diagnostic endpoint reporting RSS content health across both databases.
- * Exposes sanitised connection errors, current_database(), feed/item counts,
- * approved recent items, and newest pubDate.
- */
 export async function GET() {
   const start = Date.now();
 
@@ -88,33 +86,57 @@ export async function GET() {
   let rssApprovedCount = -1;
   let rssRecentApproved = -1;
   let rssNewest: Date | null = null;
+  let hasRssFeedTable = false;
+  let hasRssItemTable = false;
+  let hasFeedGeoTable = false;
 
   try {
-    [rssDbName, rssFeedCount, rssItemCount, rssApprovedCount, rssRecentApproved, rssNewest] =
-      await Promise.all([
-        currentDatabase(rssPrisma),
-        rssPrisma.rssFeed.count(),
-        rssPrisma.rssItem.count(),
-        rssPrisma.rssItem.count({ where: { filterStatus: 'approved' } }),
-        recentApprovedCount(rssPrisma),
-        rssPrisma.rssItem
-          .findFirst({ orderBy: { pubDate: 'desc' }, select: { pubDate: true } })
-          .then((r: any) => r?.pubDate ?? null),
-      ]);
+    // Table existence checks
+    [hasRssFeedTable, hasRssItemTable, hasFeedGeoTable] = await Promise.all([
+      tableExists(rssPrisma, 'RssFeed'),
+      tableExists(rssPrisma, 'RssItem'),
+      tableExists(rssPrisma, 'FeedGeo'),
+    ]);
+
+    // Data counts (only if tables exist)
+    if (hasRssFeedTable && hasRssItemTable) {
+      [rssDbName, rssFeedCount, rssItemCount, rssApprovedCount, rssRecentApproved, rssNewest] =
+        await Promise.all([
+          currentDatabase(rssPrisma),
+          rssPrisma.rssFeed.count(),
+          rssPrisma.rssItem.count(),
+          rssPrisma.rssItem.count({ where: { filterStatus: 'approved' } }),
+          recentApprovedCount(rssPrisma),
+          rssPrisma.rssItem
+            .findFirst({ orderBy: { pubDate: 'desc' }, select: { pubDate: true } })
+            .then((r: any) => r?.pubDate ?? null),
+        ]);
+    } else {
+      rssDbName = await currentDatabase(rssPrisma);
+    }
   } catch (err) {
     rssError = sanitiseError(err);
   }
 
   // ── 3. Evaluate health ───────────────────────────────────────────
   const tombstoneConfigured = !!process.env.TOMBSTONE_DATABASE_URL;
-  const usingDifferentDb = tombstoneConfigured;
   let status: 'healthy' | 'warning' | 'unhealthy' = 'healthy';
   const issues: string[] = [];
+
+  // Schema existence checks
+  if (!rssError && (!hasRssFeedTable || !hasRssItemTable || !hasFeedGeoTable)) {
+    status = 'unhealthy';
+    const missing = [
+      !hasRssFeedTable && 'RssFeed',
+      !hasRssItemTable && 'RssItem',
+      !hasFeedGeoTable && 'FeedGeo',
+    ].filter(Boolean);
+    issues.push(`rss_schema_missing: tables not found — ${missing.join(', ')}. Run migration 039_restore_rss_intelligence_tables.sql`);
+  }
 
   if (rssError) {
     status = 'unhealthy';
     issues.push(`RSS DB connection failed: ${rssError.errorName} ${rssError.errorCode ?? ''} — ${rssError.errorMessage}`);
-    // Actionable hints
     const msg = rssError.errorMessage.toLowerCase();
     const code = (rssError.errorCode ?? '').toLowerCase();
     if (msg.includes('ssl') || msg.includes('sslmode') || code === '08006') {
@@ -127,10 +149,10 @@ export async function GET() {
       issues.push('HINT: Hostname not resolvable — verify TOMBSTONE_DATABASE_URL and redeploy with clear build cache');
     }
   } else {
-    if (rssItemCount === 0) {
+    if (rssItemCount === 0 && hasRssItemTable) {
       status = 'unhealthy';
-      issues.push('RSS DB has 0 items — content pipeline may not be running');
-    } else if (rssApprovedCount === 0) {
+      issues.push('rss_ingestion_needed: RssItem table exists but has 0 rows — run RSS ingestion');
+    } else if (rssApprovedCount === 0 && rssItemCount > 0) {
       status = 'warning';
       issues.push('RSS DB has items but 0 approved — content filter may be too strict');
     }
@@ -163,7 +185,7 @@ export async function GET() {
     issues,
     config: {
       tombstoneConfigured,
-      usingDifferentDb,
+      usingDifferentDb: tombstoneConfigured,
       primaryCurrentDatabase: primaryDbName,
       rssCurrentDatabase: rssDbName,
     },
@@ -176,6 +198,9 @@ export async function GET() {
     },
     rssDb: {
       label: tombstoneConfigured ? 'tombstone_db (RSS content)' : 'same as primary',
+      hasRssFeedTable,
+      hasRssItemTable,
+      hasFeedGeoTable,
       feedCount: rssFeedCount,
       itemCount: rssItemCount,
       approvedItemCount: rssApprovedCount,
