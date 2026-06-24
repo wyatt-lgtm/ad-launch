@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
     const includeInterests = contentSourceMode !== 'local_only';
 
     console.log(`[Clark Kent] mode=${contentSourceMode} businessId=${resolvedBusinessId || 'none'} includeLocal=${includeLocal} includeInterests=${includeInterests}`);
+    console.log(`[ScoutTrace] route_hit=true contentSourceMode=${contentSourceMode} includeLocal=${includeLocal} includeInterests=${includeInterests} resolvedBusinessId=${resolvedBusinessId || 'NONE'}`);
 
     // ── Resolve geographic context (ZIP, city, state) ────────────────
     let businessZip: string | null = directZip || null;
@@ -170,21 +171,34 @@ export async function POST(req: NextRequest) {
 
     // ── Gather interest/national feed brief (if mode includes interests) ─
     let interestBrief: InterestFeedBrief | null = null;
+    let interestQueryCalled = false;
+    let interestSkipReason: string | null = null;
+    let interestQueryError: string | null = null;
     if (includeInterests && resolvedBusinessId) {
       try {
+        interestQueryCalled = true;
         console.log(`[Clark Kent] Calling generateInterestFeedBrief for business=${resolvedBusinessId}`);
+        console.log(`[ScoutTrace] interestQueryCalled=true businessId=${resolvedBusinessId}`);
         interestBrief = await generateInterestFeedBrief(resolvedBusinessId, { days: 5 });
         console.log(`[Clark Kent] Interest brief result: totalItems=${interestBrief.summary.totalItems}, categories=${interestBrief.summary.totalCategories}, feeds=${interestBrief.summary.feedsMatched}`);
+        console.log(`[ScoutTrace] interestQueryResultCount=${interestBrief.summary.totalItems} categories=${interestBrief.summary.totalCategories} feeds=${interestBrief.summary.feedsMatched}`);
+        if (interestBrief.categories?.length > 0) {
+          console.log(`[ScoutTrace] interestCategories=${JSON.stringify(interestBrief.categories.map(c => ({ industry: c.industry, label: c.label, items: c.itemCount })))}`);
+        }
         if (interestBrief.summary.totalItems === 0) {
           console.log('[Clark Kent] Interest brief returned 0 items — setting to null');
+          interestSkipReason = 'zero_items_returned';
           interestBrief = null;
         }
       } catch (err: any) {
         console.error('[Clark Kent] Interest feed brief error:', err?.message || err);
         console.error('[Clark Kent] Interest feed stack:', err?.stack);
+        interestQueryError = err?.message || String(err);
+        interestSkipReason = 'query_error';
       }
     } else {
-      console.log(`[Clark Kent] Skipping interest feeds — includeInterests=${includeInterests}, resolvedBusinessId=${resolvedBusinessId || 'NONE'}`);
+      interestSkipReason = !includeInterests ? 'mode_excludes_interests' : 'no_business_id';
+      console.log(`[Clark Kent] Skipping interest feeds — includeInterests=${includeInterests}, resolvedBusinessId=${resolvedBusinessId || 'NONE'}, reason=${interestSkipReason}`);
     }
 
     // ── Gather upcoming events ─────────────────────────────────────────
@@ -218,6 +232,9 @@ export async function POST(req: NextRequest) {
       `Events: ${upcomingEvents.length}, ` +
       `Trade area: ${tradeArea.city}, ${tradeArea.state} ${tradeArea.zip}`);
 
+    console.log(`[ScoutTrace] industryStoriesInBrief=${brief.interestBrief?.categories?.length ?? 0} upcomingEventsInBrief=${brief.upcomingEvents?.length ?? 0} localStoriesInBrief=${brief.rssBrief?.summary?.totalItems ?? 0}`);
+    console.log(`[ScoutTrace] responseKeys=${Object.keys(brief).join(',')} interestBriefIsNull=${brief.interestBrief === null}`);
+
     return NextResponse.json({
       brief,
       meta: {
@@ -234,6 +251,9 @@ export async function POST(req: NextRequest) {
         interestItemCount: interestBrief?.summary.totalItems ?? 0,
         interestCategoryCount: interestBrief?.summary.totalCategories ?? 0,
         interestFeedsMatched: interestBrief?.summary.feedsMatched ?? 0,
+        interestQueryCalled,
+        interestSkipReason,
+        interestQueryError,
         eventCount: upcomingEvents.length,
         includeLocal,
         includeInterests,

@@ -286,6 +286,9 @@ export default function FeedPreferences() {
       if (activeBusinessId) scoutBody.businessId = activeBusinessId;
 
       console.log('[FeedScout] Request:', JSON.stringify(scoutBody));
+      console.log('[FeedScout] activeBusinessId:', activeBusinessId);
+      console.log('[FeedScout] contentMode:', contentMode);
+      console.log('[FeedScout] selectedCategories:', Array.from(selected));
       const scoutRes = await fetch('/api/rss/clark-kent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -302,6 +305,16 @@ export default function FeedPreferences() {
       const tradeCity = brief?.tradeArea?.city || '';
       const includesLocal = contentMode !== 'interests_only';
       const includesInterests = contentMode !== 'local_only';
+
+      // ── Scout diagnostic logging ──────────────────
+      console.log('[ScoutCards] responseKeys=', Object.keys(scoutData));
+      console.log('[ScoutCards] briefKeys=', Object.keys(brief || {}));
+      console.log('[ScoutCards] interestBrief=', brief?.interestBrief ? 'present' : 'NULL');
+      console.log('[ScoutCards] interestBrief.categories count=', brief?.interestBrief?.categories?.length ?? 0);
+      console.log('[ScoutCards] rssBrief headlines count=', brief?.rssBrief?.headlines?.length ?? 0);
+      console.log('[ScoutCards] upcomingEvents count=', brief?.upcomingEvents?.length ?? 0);
+      console.log('[ScoutCards] meta=', JSON.stringify(meta));
+      console.log('[ScoutCards] includesInterests=', includesInterests, 'includesLocal=', includesLocal);
 
       // Local RSS stories
       if (includesLocal && brief?.rssBrief?.headlines?.length > 0) {
@@ -320,24 +333,36 @@ export default function FeedPreferences() {
         }
       }
 
-      // Industry/interest stories
-      if (includesInterests && brief?.interestBrief?.categories?.length > 0) {
-        for (const cat of brief.interestBrief.categories) {
-          for (const h of (cat.headlines || []).slice(0, 3)) {
+      // Industry/interest stories — robust field reading with fallbacks
+      const interestData = brief?.interestBrief ?? brief?.industryStories ?? brief?.interestStories ?? null;
+      const interestCategories = interestData?.categories ?? [];
+      console.log('[ScoutCards] interestData source:', brief?.interestBrief ? 'interestBrief' : brief?.industryStories ? 'industryStories' : brief?.interestStories ? 'interestStories' : 'NONE');
+      console.log('[ScoutCards] interestCategories count:', interestCategories.length);
+      if (includesInterests && interestCategories.length > 0) {
+        for (const cat of interestCategories) {
+          const items = cat.headlines || cat.items || [];
+          console.log(`[ScoutCards]   category=${cat.industry || cat.label} headlineCount=${items.length}`);
+          for (const h of items.slice(0, 3)) {
             cards.push({
-              id: h.id || `${cat.industry}-${h.title?.slice(0, 20)}`,
-              title: h.title,
-              source: h.source,
+              id: h.id || `${cat.industry}-${(h.title || '').slice(0, 20)}`,
+              title: h.title || '(untitled)',
+              source: h.source || cat.label || 'Interest Feed',
               sourceType: 'industry',
               section: 'industry',
               pubDate: h.pubDate || '',
-              summary: `Industry news in ${cat.label}`,
-              relevance: `Matches your selected interest: ${cat.label}`,
+              summary: `Industry news in ${cat.label || cat.industry || 'Interest'}`,
+              relevance: `Matches your selected interest: ${cat.label || cat.industry || 'Interest'}`,
               link: h.link || '',
-              category: cat.label,
+              category: cat.label || cat.industry,
             });
           }
         }
+      } else if (includesInterests) {
+        console.warn('[ScoutCards] includesInterests=true but no interest categories found in response');
+        console.warn('[ScoutCards] meta.interestQueryCalled:', meta?.interestQueryCalled);
+        console.warn('[ScoutCards] meta.interestSkipReason:', meta?.interestSkipReason);
+        console.warn('[ScoutCards] meta.interestQueryError:', meta?.interestQueryError);
+        console.warn('[ScoutCards] meta.interestItemCount:', meta?.interestItemCount);
       }
 
       // Upcoming events
@@ -357,7 +382,14 @@ export default function FeedPreferences() {
         }
       }
 
-      console.log(`[FeedScout] Cards built: ${cards.length} total`);
+      const localCount = cards.filter(c => c.section === 'local').length;
+      const industryCount = cards.filter(c => c.section === 'industry').length;
+      const eventCount = cards.filter(c => c.section === 'event').length;
+      console.log(`[ScoutCards] builtLocalCards=${localCount} builtIndustryCards=${industryCount} builtEventCards=${eventCount} total=${cards.length}`);
+      if (includesInterests && industryCount === 0) {
+        console.warn('[ScoutCards] WARNING: includesInterests=true but builtIndustryCards=0');
+        console.warn('[ScoutCards] interestBrief dump:', JSON.stringify(brief?.interestBrief, null, 2));
+      }
       setStoryCards(cards);
       setShowStoryPicker(true);
 
@@ -612,6 +644,8 @@ export default function FeedPreferences() {
         const eventCards = storyCards.filter(c => c.section === 'event');
         const includesLocal = contentMode !== 'interests_only';
         const includesInterests = contentMode !== 'local_only';
+        // Diagnostic: detect when interest stories were expected but missing
+        const interestDiag = includesInterests && industryCards.length === 0 ? scoutResult?.meta : null;
         const sections = [
           ...(includesLocal ? [{ key: 'local', label: '📍 Local Stories', cards: localCards }] : []),
           ...(includesInterests ? [{ key: 'industry', label: '🏢 Industry Stories', cards: industryCards }] : []),
@@ -639,6 +673,23 @@ export default function FeedPreferences() {
               {sections.map(sec => (
                 <div key={sec.key} className="px-5 py-4">
                   <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">{sec.label}</p>
+                  {sec.cards.length === 0 && sec.key === 'industry' && interestDiag && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-2">
+                      <p className="text-xs text-amber-800 font-medium">⚠ No industry stories were displayed.</p>
+                      <p className="text-xs text-amber-700 mt-1">Scout expected interest stories for your selected categories. Check browser console for diagnostics.</p>
+                      <details className="mt-2">
+                        <summary className="text-[10px] text-amber-600 cursor-pointer">Debug info</summary>
+                        <pre className="text-[10px] text-gray-500 mt-1 overflow-x-auto">{JSON.stringify({
+                          interestQueryCalled: interestDiag?.interestQueryCalled,
+                          interestItemCount: interestDiag?.interestItemCount,
+                          interestCategoryCount: interestDiag?.interestCategoryCount,
+                          interestSkipReason: interestDiag?.interestSkipReason,
+                          interestQueryError: interestDiag?.interestQueryError,
+                          contentSourceMode: interestDiag?.contentSourceMode,
+                        }, null, 2)}</pre>
+                      </details>
+                    </div>
+                  )}
                   {sec.cards.length === 0 && (
                     <p className="text-xs text-gray-400 italic py-2">No stories found in this category.</p>
                   )}
