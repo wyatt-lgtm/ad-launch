@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import {
   LayoutDashboard, Globe, Loader2, Sparkles, ChevronRight,
   MapPin, Building2, Image as ImageIcon, FileText, Plus,
+  Zap, CheckCircle2, AlertCircle,
 } from 'lucide-react';
 import UrlInputForm from '../../components/url-input-form';
 import CreditBadge from '../../components/credit-badge';
@@ -22,6 +23,11 @@ interface BusinessItem {
   businessCity: string | null;
   businessState: string | null;
   businessZip: string | null;
+  ghlLocationId: string | null;
+  ghlSubtenantId: string | null;
+  ghlProvisioningStatus: string | null;
+  ghlProvisionedAt: string | null;
+  ghlProvisioningError: string | null;
   createdAt: string;
   updatedAt: string;
   _count: { analyses: number };
@@ -42,6 +48,27 @@ export default function DashboardContent() {
   const [loading, setLoading] = useState(true);
   const [showNewAnalysis, setShowNewAnalysis] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [provisioningIds, setProvisioningIds] = useState<Set<string>>(new Set());
+
+  const handleProvisionGhl = async (bizId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // don't trigger card click
+    setProvisioningIds(prev => new Set(prev).add(bizId));
+    try {
+      const res = await fetch(`/api/businesses/${bizId}/ghl/provision`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setToastMsg(data.alreadyProvisioned ? 'GHL tenant already connected' : 'GHL tenant created successfully!');
+        // Refresh business list to get updated GHL status
+        await fetchBusinesses();
+      } else {
+        setToastMsg(`GHL provisioning failed: ${data.detail || data.error || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      setToastMsg('GHL provisioning failed: Network error');
+    }
+    setProvisioningIds(prev => { const s = new Set(prev); s.delete(bizId); return s; });
+    setTimeout(() => setToastMsg(null), 5000);
+  };
 
   useEffect(() => {
     if (sessionStatus === 'unauthenticated') {
@@ -191,6 +218,44 @@ export default function DashboardContent() {
                     {locationStr}{biz.businessZip ? ` ${biz.businessZip}` : ''}
                   </div>
                 )}
+
+                {/* GHL Tenant Status */}
+                <div className="mb-3" onClick={e => e.stopPropagation()}>
+                  {biz.ghlProvisioningStatus === 'provisioned' ? (
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg px-2.5 py-1.5 w-fit">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      GHL Tenant Connected
+                    </div>
+                  ) : biz.ghlProvisioningStatus === 'failed' ? (
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg px-2.5 py-1.5">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        GHL Failed
+                      </div>
+                      <button
+                        onClick={(e) => handleProvisionGhl(biz.id, e)}
+                        disabled={provisioningIds.has(biz.id)}
+                        className="text-xs font-medium text-blue-600 hover:text-blue-700 underline"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : provisioningIds.has(biz.id) || biz.ghlProvisioningStatus === 'pending' ? (
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 w-fit">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Provisioning GHL Tenant…
+                    </div>
+                  ) : (
+                    <button
+                      onClick={(e) => handleProvisionGhl(biz.id, e)}
+                      disabled={provisioningIds.has(biz.id)}
+                      className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg px-2.5 py-1.5 transition-colors"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      Create GHL Tenant
+                    </button>
+                  )}
+                </div>
 
                 {/* Credits */}
                 <div className="mb-3" onClick={e => e.stopPropagation()}>

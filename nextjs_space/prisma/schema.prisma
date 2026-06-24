@@ -72,6 +72,13 @@ model Business {
   socialConnections   SocialConnection[]
   scheduledPosts      ScheduledPost[]
 
+  // ── GoHighLevel tenant provisioning ─────────────────────────────
+  ghlLocationId         String?          // GHL location ID returned by provisioning API
+  ghlSubtenantId        String?          // GHL sub-account / subtenant ID
+  ghlProvisioningStatus String?          // pending | provisioned | failed
+  ghlProvisionedAt      DateTime?
+  ghlProvisioningError  String?
+
   @@unique([userId, websiteUrl])
   @@index([userId])
 }

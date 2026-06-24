@@ -15,6 +15,12 @@ export interface BusinessInfo {
   businessZip: string | null;
   /** Tombstone integer business ID for backend API calls */
   tombstoneBusinessId: number | null;
+  /** GoHighLevel provisioning state */
+  ghlLocationId?: string | null;
+  ghlSubtenantId?: string | null;
+  ghlProvisioningStatus?: string | null;
+  ghlProvisionedAt?: string | null;
+  ghlProvisioningError?: string | null;
   createdAt: string;
   updatedAt: string;
   _count: { analyses: number };

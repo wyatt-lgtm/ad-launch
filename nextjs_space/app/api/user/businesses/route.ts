@@ -28,6 +28,11 @@ export async function GET(_request: NextRequest) {
         businessZip: true,
         contentSourceMode: true,
         tombstoneBusinessId: true,
+        ghlLocationId: true,
+        ghlSubtenantId: true,
+        ghlProvisioningStatus: true,
+        ghlProvisionedAt: true,
+        ghlProvisioningError: true,
         createdAt: true,
         updatedAt: true,
         analyses: {

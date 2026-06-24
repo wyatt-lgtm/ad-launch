@@ -85,6 +85,83 @@ export async function sendGHLEmail(contactId: string, subject: string, htmlBody:
   }
 }
 
+// ── GHL Location / Sub-account Provisioning ─────────────────────────
+
+interface ProvisionInput {
+  businessName: string;
+  businessAddr?: string | null;
+  businessCity?: string | null;
+  businessState?: string | null;
+  businessZip?: string | null;
+  businessPhone?: string | null;
+  websiteUrl?: string | null;
+  ownerEmail?: string | null;
+}
+
+export interface ProvisionResult {
+  success: boolean;
+  locationId?: string;
+  subtenantId?: string;
+  error?: string;
+}
+
+/**
+ * Provision a GHL Location (sub-account) for a business.
+ * Uses the master / agency API token with POST /locations.
+ *
+ * This is idempotent on the caller side — the API route checks
+ * whether the business already has ghlLocationId before calling.
+ */
+export async function provisionGhlLocation(input: ProvisionInput): Promise<ProvisionResult> {
+  const creds = getCredentials('master');
+  if (!creds.token) {
+    return { success: false, error: 'GHL master API token not configured' };
+  }
+
+  try {
+    const body: Record<string, any> = {
+      name: input.businessName,
+      companyId: creds.locationId, // parent company / agency ID
+    };
+    if (input.businessAddr) body.address = input.businessAddr;
+    if (input.businessCity) body.city = input.businessCity;
+    if (input.businessState) body.state = input.businessState;
+    if (input.businessZip) body.postalCode = input.businessZip;
+    if (input.businessPhone) body.phone = input.businessPhone;
+    if (input.websiteUrl) body.website = input.websiteUrl;
+    if (input.ownerEmail) body.email = input.ownerEmail;
+
+    const res = await fetch(`${GHL_BASE_URL}/locations`, {
+      method: 'POST',
+      headers: getHeaders('master'),
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const errMsg = data?.message || data?.msg || JSON.stringify(data) || `HTTP ${res.status}`;
+      console.error('[GHL] provision location failed:', res.status, errMsg);
+      return { success: false, error: errMsg };
+    }
+
+    const locationId = data?.location?.id ?? data?.id ?? null;
+    // Some GHL API versions nest a "subAccount" or use the location id itself
+    const subtenantId = data?.location?.companyId ?? data?.subAccountId ?? locationId;
+
+    if (!locationId) {
+      console.error('[GHL] provision response missing location id:', data);
+      return { success: false, error: 'GHL API did not return a location ID' };
+    }
+
+    console.log('[GHL] location provisioned:', locationId);
+    return { success: true, locationId, subtenantId: subtenantId ?? undefined };
+  } catch (err: any) {
+    console.error('[GHL] provision location error:', err?.message);
+    return { success: false, error: err?.message ?? 'Unknown provisioning error' };
+  }
+}
+
 export async function sendConfirmationEmail(email: string, confirmationToken: string, baseUrl: string) {
   const contactResult = await createGHLContact(email);
   const confirmLink = `${baseUrl}/confirm?token=${confirmationToken}`;
