@@ -185,6 +185,39 @@ export async function getZipsByState(stateCode: string): Promise<TradeAreaSummar
   return { zipCount: results.length, zips: results, queryType: 'state' };
 }
 
+/**
+ * Expand a city name into all common spelling variants.
+ * Handles: St. ↔ Saint, St ↔ Saint, Ft. ↔ Fort, Mt. ↔ Mount
+ */
+export function expandCityNameVariants(name: string): string[] {
+  const upper = name.toUpperCase().trim();
+  const variants = new Set<string>([upper]);
+
+  // St. Louis → SAINT LOUIS, ST LOUIS, ST. LOUIS
+  // Each group generates: abbreviated with period, abbreviated without, and full word
+  const groups: [RegExp, string, string, string][] = [
+    // pattern, full form, abbrev with period, abbrev without period
+    [/\bST\.?\s/g, 'SAINT ', 'ST. ', 'ST '],
+    [/\bSAINT\s/g, 'SAINT ', 'ST. ', 'ST '],
+    [/\bFT\.?\s/g, 'FORT ', 'FT. ', 'FT '],
+    [/\bFORT\s/g, 'FORT ', 'FT. ', 'FT '],
+    [/\bMT\.?\s/g, 'MOUNT ', 'MT. ', 'MT '],
+    [/\bMOUNT\s/g, 'MOUNT ', 'MT. ', 'MT '],
+  ];
+  for (const [pat, full, abbrevDot, abbrevNoDot] of groups) {
+    if (pat.test(upper)) {
+      // Reset lastIndex after test
+      pat.lastIndex = 0;
+      for (const rep of [full, abbrevDot, abbrevNoDot]) {
+        pat.lastIndex = 0;
+        const alt = upper.replace(pat, rep).trim();
+        if (alt !== upper) variants.add(alt);
+      }
+    }
+  }
+  return Array.from(variants);
+}
+
 // ── 5. City lookup ────────────────────────────────────────────────────────
 export async function getZipsByCity(
   cityName: string,
@@ -196,8 +229,12 @@ export async function getZipsByCity(
   const counties = await prisma.geoCounty.findMany({ where: { stateId: state.id }, select: { id: true } });
   const countyIds = counties.map(c => c.id);
 
+  // Expand city name variants to handle St./Saint, Ft./Fort, Mt./Mount
+  const nameVariants = expandCityNameVariants(cityName);
+  console.log(`[geo-lookup] City lookup: input="${cityName}" variants=${JSON.stringify(nameVariants)} state=${stateCode}`);
+
   const cities = await prisma.geoCity.findMany({
-    where: { name: cityName.toUpperCase(), countyId: { in: countyIds } },
+    where: { name: { in: nameVariants }, countyId: { in: countyIds } },
     include: { cityZips: { include: { zip: true } } },
   });
 
@@ -354,8 +391,9 @@ export async function lookupCityState(
   const countyIds = counties.map(c => c.id);
   if (countyIds.length === 0) return null;
 
+  const nameVariants = expandCityNameVariants(cityName);
   const cities = await prisma.geoCity.findMany({
-    where: { name: cityName.toUpperCase(), countyId: { in: countyIds } },
+    where: { name: { in: nameVariants }, countyId: { in: countyIds } },
     include: { cityZips: { include: { zip: true } }, county: true },
   });
   if (cities.length === 0) return null;

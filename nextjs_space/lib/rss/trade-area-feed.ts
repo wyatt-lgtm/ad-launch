@@ -457,7 +457,7 @@ export async function generateContentBriefWithFallback(
     }
   }
 
-  console.log(`[trade-area-feed] Geo cascade: ZIP=${centerZip} City=${resolvedCity} County=${resolvedCounty} State=${resolvedState}`);
+  console.log(`[trade-area-feed] Geo cascade: ZIP=${centerZip} City=${resolvedCity} County=${resolvedCounty} State=${resolvedState} excludeNational=${briefOptions.excludeNational ?? false}`);
 
   // Helper: normalize title for de-dup (lowercase, strip punctuation, collapse whitespace)
   const normTitle = (t: string) => (t || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -492,7 +492,8 @@ export async function generateContentBriefWithFallback(
       level: 'zip_radius', feedsFound: zipResult.meta.feedsMatched,
       itemsFound: zipResult.items.length, lookbackDays: initialDays,
     });
-    addItems(zipResult.items, 'zip');
+    const zipAdded = addItems(zipResult.items, 'zip');
+    console.log(`[trade-area-feed] L1 zip_radius: ${zipResult.meta.feedsMatched} feeds, ${zipResult.items.length} items raw, ${zipAdded} added (${allItems.length} total)`);
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS) diagnostics.fallbackLevel = 'zip_radius';
   }
 
@@ -507,7 +508,8 @@ export async function generateContentBriefWithFallback(
       level: 'city', feedsFound: cityResult.meta.feedsMatched,
       itemsFound: cityResult.items.length, lookbackDays: cityDays,
     });
-    addItems(cityResult.items, 'city');
+    const cityAdded = addItems(cityResult.items, 'city');
+    console.log(`[trade-area-feed] L2 city(${resolvedCity}): ${cityResult.meta.feedsMatched} feeds, ${cityResult.items.length} items raw, ${cityAdded} added (${allItems.length} total)`);
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
       diagnostics.fallbackLevel = 'city';
     }
@@ -523,7 +525,8 @@ export async function generateContentBriefWithFallback(
       level: 'county', feedsFound: countyResult.meta.feedsMatched,
       itemsFound: countyResult.items.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
     });
-    addItems(countyResult.items, 'county');
+    const countyAdded = addItems(countyResult.items, 'county');
+    console.log(`[trade-area-feed] L3 county(${resolvedCounty}): ${countyResult.meta.feedsMatched} feeds, ${countyResult.items.length} items raw, ${countyAdded} added (${allItems.length} total)`);
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
       diagnostics.fallbackLevel = 'county';
     }
@@ -539,7 +542,8 @@ export async function generateContentBriefWithFallback(
       level: 'state', feedsFound: stateResult.meta.feedsMatched,
       itemsFound: stateResult.items.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
     });
-    addItems(stateResult.items, 'state');
+    const stateAdded = addItems(stateResult.items, 'state');
+    console.log(`[trade-area-feed] L4 state(${resolvedState}): ${stateResult.meta.feedsMatched} feeds, ${stateResult.items.length} items raw, ${stateAdded} added (${allItems.length} total)`);
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
       diagnostics.fallbackLevel = 'state';
     }
