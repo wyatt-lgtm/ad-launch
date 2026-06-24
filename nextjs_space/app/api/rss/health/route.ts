@@ -24,9 +24,10 @@ export async function GET() {
     ]);
 
     // --- RSS DB (tombstone_db when TOMBSTONE_DATABASE_URL is set) ---
+    let rssDbError: string | null = null;
     const [rssFeedCount, rssItemCount, rssApprovedCount, rssNewest] = await Promise.all([
-      rssPrisma.rssFeed.count().catch(() => -1),
-      rssPrisma.rssItem.count().catch(() => -1),
+      rssPrisma.rssFeed.count().catch((e: any) => { rssDbError = e.message ?? String(e); return -1; }),
+      rssPrisma.rssItem.count().catch((e: any) => { rssDbError = rssDbError ?? e.message ?? String(e); return -1; }),
       rssPrisma.rssItem.count({ where: { filterStatus: 'approved' } }).catch(() => -1),
       rssPrisma.rssItem.findFirst({ orderBy: { pubDate: 'desc' }, select: { pubDate: true } }).catch(() => null),
     ]);
@@ -68,6 +69,7 @@ export async function GET() {
       config: {
         tombstoneConfigured,
         usingDifferentDb,
+        ...(rssDbError ? { rssDbConnectionError: rssDbError } : {}),
       },
       primaryDb: {
         label: 'ad_launch_DB (auth/businesses)',
