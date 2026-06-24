@@ -31,6 +31,8 @@ model User {
   generationRuns    GenerationRun[]
   uploadedAssets    BusinessAsset[]
   siteFeedback      SiteFeedback[]   @relation("SiteFeedbackUser")
+  scheduledPosts    ScheduledPost[]  @relation("ScheduledPostUser")
+  approvedPosts     ScheduledPost[]  @relation("ScheduledPostApprover")
 }
 
 model Business {
@@ -67,6 +69,8 @@ model Business {
   assets              BusinessAsset[]
   locations           BusinessLocation[]
   publishSettings     PublishSettings?
+  socialConnections   SocialConnection[]
+  scheduledPosts      ScheduledPost[]
 
   @@unique([userId, websiteUrl])
   @@index([userId])
@@ -781,6 +785,7 @@ model SocialPost {
   business        Business?      @relation(fields: [businessId], references: [id])
   generationRun   GenerationRun? @relation(fields: [generationRunId], references: [id])
   user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scheduledPosts  ScheduledPost[]
 
   @@index([userId])
   @@index([status])
@@ -861,10 +866,90 @@ model PublishSettings {
   preferredTime   String   @default("10:00")     // HH:mm in user's local time
   timezone        String   @default("America/Denver")
   platforms       String[] @default([])
+  // Scheduler onboarding fields
+  postingGoal     String?  // more_calls, website_visits, reviews, repeat_customers, brand_awareness, recruiting
+  approvalMode    String   @default("review_first") // review_first, auto_after_approval, full_autopilot
+  cadence         String   @default("standard")  // light, standard, growth, custom
+  preferredDays   String[] @default([])  // mon, tue, wed, thu, fri, sat, sun
+  preferredTimes  String[] @default([])  // HH:mm values
+  defaultChannels String[] @default([])  // facebook, google_business, instagram, linkedin
+  autopilotEnabled Boolean @default(false)
+  onboardingComplete Boolean @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([autoPublish])
+}
+
+model SocialConnection {
+  id                  String    @id @default(cuid())
+  businessId          String
+  platform            String    // facebook, google_business, instagram, linkedin, tiktok
+  externalAccountId   String?   // e.g. FB page ID, GMB location ID
+  displayName         String?   // e.g. "My Restaurant - Facebook Page"
+  profileUrl          String?   // Link to the social profile
+  accessToken         String?   // Encrypted token for publishing
+  refreshToken        String?   // For OAuth refresh flows
+  tokenExpiresAt      DateTime? // When the access token expires
+  permissionsStatus   String    @default("pending") // pending, connected, expired, revoked, error
+  lastCheckedAt       DateTime? // Last time we verified the connection
+  lastPublishedAt     DateTime? // Last time we published through this connection
+  errorMessage        String?   // Last error if connection failed
+  isActive            Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  business            Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, platform])
+  @@index([businessId])
+  @@index([platform])
+  @@index([permissionsStatus])
+}
+
+model ScheduledPost {
+  id                  String    @id @default(cuid())
+  businessId          String
+  userId              String
+  socialPostId        String?   // Links to existing SocialPost if sourced from generation
+  // Content (copied from or independent of SocialPost)
+  caption             String
+  imageUrl            String?
+  hashtags            String[]  @default([])
+  cta                 String?
+  platforms           String[]  @default([]) // which platforms to post on
+  // Scheduling
+  scheduledFor        DateTime  // When the post should go out
+  timezone            String    @default("America/Denver")
+  // Approval workflow
+  status              String    @default("needs_approval") // draft, needs_approval, approved, scheduled, publishing, published, failed, paused, revision_requested
+  approvalRequired    Boolean   @default(true)
+  approvedById        String?   // User who approved
+  approvedAt          DateTime?
+  // Revision tracking
+  revisionRequestText String?
+  revisionRequestedAt DateTime?
+  revisionCount       Int       @default(0)
+  // Publishing
+  publishedAt         DateTime?
+  failureReason       String?
+  publishAttempts     Int       @default(0)
+  // Content lane/source info
+  lane                String?   // website, news, holiday
+  sourceType          String?   // generation, user_draft, carousel
+  // Metadata
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  business            Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user                User      @relation("ScheduledPostUser", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy          User?     @relation("ScheduledPostApprover", fields: [approvedById], references: [id])
+  socialPost          SocialPost? @relation(fields: [socialPostId], references: [id])
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, scheduledFor])
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledFor])
 }

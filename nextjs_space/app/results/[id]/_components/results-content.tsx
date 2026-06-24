@@ -1,8 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Download, Sparkles, Image as ImageIcon, Loader2, AlertCircle, Globe, ThumbsUp, MessageCircle, Share2, MoreHorizontal, Building2, Newspaper, CalendarHeart } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Download, Sparkles, Image as ImageIcon, Loader2, AlertCircle, Globe, ThumbsUp, MessageCircle, Share2, MoreHorizontal, Building2, Newspaper, CalendarHeart, Calendar, CheckCircle2 } from 'lucide-react';
+import dynamic from 'next/dynamic';
+
+const SchedulingWizard = dynamic(() => import('../../../components/scheduling-wizard'), { ssr: false });
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import SeoInsights from '../../../components/seo-insights';
@@ -317,6 +320,13 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
         <GoogleAdsCopy data={googleAdsData} locked={false} collapsed={true} />
       </div>
 
+      {/* Schedule Posts CTA */}
+      <SchedulePostsCTA
+        ads={ads}
+        analysis={analysis}
+        businessName={businessName}
+      />
+
       {/* Generate More CTA */}
       <div className="text-center bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl p-8">
         <Sparkles className="w-8 h-8 text-white mx-auto mb-3" />
@@ -327,5 +337,93 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// ─── Schedule Posts CTA Component ────────────────────────────────
+
+function SchedulePostsCTA({ ads, analysis, businessName }: { ads: Ad[]; analysis: any; businessName: string }) {
+  const [showWizard, setShowWizard] = useState(false);
+  const [scheduled, setScheduled] = useState(false);
+  const [scheduledCount, setScheduledCount] = useState(0);
+  const router = useRouter();
+
+  const businessId = analysis?.businessId;
+  if (!businessId || ads.length === 0) return null;
+
+  // Convert ads to the format the wizard expects (using socialPost IDs if available)
+  const wizardPosts = ads.filter(a => a.imageUrl).map(a => ({
+    id: a.id,
+    caption: a.caption ?? '',
+    imageUrl: a.imageUrl,
+    hashtags: [] as string[],
+    cta: a.headline ?? null,
+    lane: a.lane ?? null,
+    sourceType: 'generation' as const,
+  }));
+
+  if (scheduled) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-8 text-center bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl p-8"
+      >
+        <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto mb-3" />
+        <h2 className="text-xl font-bold text-gray-900 mb-2">
+          {scheduledCount} Post{scheduledCount > 1 ? 's' : ''} Scheduled!
+        </h2>
+        <p className="text-gray-600 mb-6">
+          Your AI marketing team has your schedule locked in. You can review and manage posts from your dashboard.
+        </p>
+        <button
+          onClick={() => router.push('/dashboard/social/schedule')}
+          className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition-all shadow-sm"
+        >
+          View Schedule Dashboard
+        </button>
+      </motion.div>
+    );
+  }
+
+  return (
+    <>
+      <div className="mb-8 text-center bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-2xl p-8">
+        <Calendar className="w-10 h-10 text-indigo-600 mx-auto mb-3" />
+        <h2 className="text-xl font-bold text-gray-900 mb-2">
+          Ready to put these posts to work?
+        </h2>
+        <p className="text-gray-600 mb-6">
+          Your AI marketing team created {ads.length} post{ads.length > 1 ? 's' : ''} for <span className="font-medium">{businessName}</span>.
+          Let us schedule them so you don&apos;t have to think about it.
+        </p>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <button
+            onClick={() => setShowWizard(true)}
+            className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-sm flex items-center gap-2"
+          >
+            <Calendar className="w-5 h-5" />
+            Schedule These Posts
+          </button>
+          <span className="text-sm text-gray-400">or download them above</span>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {showWizard && (
+          <SchedulingWizard
+            businessId={businessId}
+            businessName={businessName}
+            posts={wizardPosts}
+            onComplete={(result) => {
+              setShowWizard(false);
+              setScheduled(true);
+              setScheduledCount(result.scheduledCount);
+            }}
+            onCancel={() => setShowWizard(false)}
+          />
+        )}
+      </AnimatePresence>
+    </>
   );
 }

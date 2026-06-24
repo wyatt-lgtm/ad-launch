@@ -3,7 +3,7 @@
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send, Coins, Building2, FolderOpen, BarChart3 } from 'lucide-react';
+import { Rocket, LogOut, LayoutDashboard, LogIn, Search, Newspaper, Rss, Send, Coins, Building2, FolderOpen, BarChart3, CalendarClock } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
@@ -29,6 +29,7 @@ export default function Header() {
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, matchPaths: ['/dashboard'] },
     { href: '/dashboard/social', label: 'Social Posts', icon: Newspaper, matchPaths: ['/dashboard/social'] },
     { href: '/dashboard/social/publishing', label: 'Publish Queue', icon: Send, matchPaths: ['/dashboard/social/publishing'] },
+    { href: '/dashboard/social/schedule', label: 'Schedule', icon: CalendarClock, matchPaths: ['/dashboard/social/schedule'] },
     { href: '/dashboard/feeds', label: 'Content Feeds', icon: Rss, matchPaths: ['/dashboard/feeds'] },
     { href: '/dashboard/marketing', label: 'Marketing', icon: BarChart3, matchPaths: ['/dashboard/marketing'] },
     { href: '/dashboard/credits', label: 'Credits', icon: Coins, matchPaths: ['/dashboard/credits'] },
@@ -45,11 +46,11 @@ export default function Header() {
     return paths.some(p => pathname?.startsWith(p));
   };
 
-  // Need to resolve /dashboard/social vs /dashboard/social/publishing
-  // publishing is more specific, so check it first
+  // Need to resolve /dashboard/social vs /dashboard/social/publishing or /schedule
+  // sub-routes are more specific, so check them first
   const getActiveClass = (item: NavItem): string => {
-    // Special: for /dashboard/social, only match if NOT on /dashboard/social/publishing
-    if (item.href === '/dashboard/social' && pathname?.startsWith('/dashboard/social/publishing')) {
+    // Special: for /dashboard/social, only match if NOT on sub-routes
+    if (item.href === '/dashboard/social' && (pathname?.startsWith('/dashboard/social/publishing') || pathname?.startsWith('/dashboard/social/schedule'))) {
       return 'hover:bg-gray-100 text-gray-700';
     }
     if (isActive(item)) {
@@ -59,7 +60,7 @@ export default function Header() {
   };
 
   const getMobileActiveClass = (item: NavItem): string => {
-    if (item.href === '/dashboard/social' && pathname?.startsWith('/dashboard/social/publishing')) {
+    if (item.href === '/dashboard/social' && (pathname?.startsWith('/dashboard/social/publishing') || pathname?.startsWith('/dashboard/social/schedule'))) {
       return 'hover:bg-gray-100 text-gray-700';
     }
     if (isActive(item)) {
