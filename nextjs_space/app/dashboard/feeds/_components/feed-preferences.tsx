@@ -324,15 +324,46 @@ export default function FeedPreferences() {
       console.log('[ScoutCards] meta=', JSON.stringify(meta));
       console.log('[ScoutCards] includesInterests=', includesInterests, 'includesLocal=', includesLocal);
 
-      // Local RSS stories — classify by localityLevel
+      // Local RSS stories — classify by localityLevel + sourceType
       // Only truly local items (zip, city, county, state) go under "local".
       // National-scope items from the RSS brief are re-classified as industry/interest.
       const LOCAL_LEVELS = new Set(['zip', 'zip_radius', 'city', 'county', 'state']);
       if (includesLocal && brief?.rssBrief?.headlines?.length > 0) {
+        // Resolve county name from diagnostics if available
+        const diagLoc = brief.rssBrief?.diagnostics?.requestedLocation;
+        const tradeCounty = diagLoc?.county || '';
+        const tradeState = diagLoc?.state || brief?.tradeArea?.state || '';
+
         for (const h of brief.rssBrief.headlines.slice(0, 12)) {
           const level = h.localityLevel || 'unknown';
           const isLocalItem = LOCAL_LEVELS.has(level);
           if (isLocalItem) {
+            // Build locality-aware label
+            let relevanceLabel = 'Local trade area news';
+            if (h.sourceType === 'weather') {
+              relevanceLabel = tradeState
+                ? `${tradeState} weather / public safety alert`
+                : 'Weather / public safety alert';
+            } else if (level === 'zip' || level === 'zip_radius' || level === 'city') {
+              relevanceLabel = tradeCity
+                ? `Relevant to your ${tradeCity} trade area`
+                : 'Local trade area news';
+            } else if (level === 'county') {
+              relevanceLabel = tradeCounty
+                ? `Relevant to ${tradeCounty} County`
+                : 'County-level regional story';
+            } else if (level === 'state') {
+              relevanceLabel = tradeState
+                ? `${tradeState} regional story`
+                : 'State-level regional story';
+            }
+
+            const summaryText = h.sourceType === 'weather'
+              ? `Weather alert from ${h.source}`
+              : level === 'state'
+                ? `Regional news from ${h.source}`
+                : `Local news from ${h.source}`;
+
             cards.push({
               id: h.id || `local-${h.title?.slice(0, 20)}`,
               title: h.title,
@@ -340,8 +371,8 @@ export default function FeedPreferences() {
               sourceType: 'local',
               section: 'local',
               pubDate: h.pubDate || '',
-              summary: `${h.sourceType === 'weather' ? 'Weather alert' : 'Local news'} from ${h.source}`,
-              relevance: tradeCity ? `Relevant to your ${tradeCity} trade area` : 'Local trade area news',
+              summary: summaryText,
+              relevance: relevanceLabel,
               link: h.link || '',
             });
           } else {

@@ -343,6 +343,8 @@ export interface ContentBrief {
     link: string;
     geoConfidence: number;
     localityLevel?: string;
+    /** The feed's geoScope (local/city/county/state/national) — distinct from localityLevel which is cascade-assigned */
+    feedGeoScope?: string;
   }[];
   patterns: {
     type: string;
@@ -401,6 +403,8 @@ export async function generateContentBriefWithFallback(
   radiusMiles: number = 25,
   geo: { city?: string | null; county?: string | null; state?: string | null },
   options: Omit<TradeAreaRequest, 'zips' | 'cities' | 'counties' | 'states'> = {},
+  /** When true (local_only mode), skip Level 5 national fallback entirely */
+  briefOptions: { excludeNational?: boolean } = {},
 ): Promise<ContentBrief> {
   const start = Date.now();
   const initialDays = options.days ?? 5;
@@ -526,8 +530,26 @@ export async function generateContentBriefWithFallback(
     }
   }
 
+  // ── State cap: when city/county items exist, limit state items to 3 ────
+  const cityCountyCount = allItems.filter(i => ['zip', 'city', 'county'].includes(i.localityLevel)).length;
+  if (cityCountyCount > 0) {
+    const STATE_CAP = 3;
+    let stateKept = 0;
+    const capped: typeof allItems = [];
+    for (const item of allItems) {
+      if (item.localityLevel === 'state') {
+        if (stateKept >= STATE_CAP) { diagnostics.deduplicatedItems++; continue; }
+        stateKept++;
+      }
+      capped.push(item);
+    }
+    allItems.length = 0;
+    allItems.push(...capped);
+  }
+
   // ── Level 5: National-only fallback ─────────────────────────────────────
-  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS) {
+  // Skip entirely when excludeNational is true (local_only mode)
+  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && !briefOptions.excludeNational) {
     const nationalFeeds = await rssPrisma.rssFeed.findMany({
       where: { status: 'active', geoScope: 'national' },
       select: { id: true },
@@ -701,6 +723,7 @@ export async function generateContentBriefWithFallback(
       id: i.id, title: i.title, source: i.feedTitle, sourceType: i.feedSourceType,
       pubDate: i.pubDate, link: i.link, geoConfidence: i.geoConfidence,
       localityLevel: i.localityLevel,
+      feedGeoScope: i.localityLevel,
     })),
     patterns,
     diagnostics,

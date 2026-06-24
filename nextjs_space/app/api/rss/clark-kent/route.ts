@@ -187,6 +187,7 @@ export async function POST(req: NextRequest) {
           radius,
           { city: businessCity, state: businessState },
           { days: 5, limit: 30 },
+          { excludeNational: contentSourceMode === 'local_only' },
         );
         if (rssBrief.summary.totalItems === 0) rssBrief = null;
       } catch (err) {
@@ -323,10 +324,29 @@ function buildScoutSummary(
       lines.push('');
       const fallbackNote = rssBrief.diagnostics?.fallbackLevel && rssBrief.diagnostics.fallbackLevel !== 'zip_radius'
         ? ` [geo fallback: ${rssBrief.diagnostics.fallbackLevel}]` : '';
-      lines.push(`LOCAL NEWS (${rssBrief.summary.totalItems} items from ${rssBrief.summary.feedsMatched} feeds)${fallbackNote}:`);
-      for (const h of rssBrief.headlines.slice(0, 12)) {
-        const level = h.localityLevel ? ` [${h.localityLevel}]` : '';
-        lines.push(`  • [${h.sourceType}] "${h.title}" — ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})${level}`);
+      // Separate local items from any national fallback that made it through
+      const localHeadlines = rssBrief.headlines.filter(h => {
+        const lvl = h.localityLevel || 'unknown';
+        return ['zip', 'zip_radius', 'city', 'county', 'state'].includes(lvl);
+      });
+      const nationalHeadlines = rssBrief.headlines.filter(h => {
+        const lvl = h.localityLevel || 'unknown';
+        return !['zip', 'zip_radius', 'city', 'county', 'state'].includes(lvl);
+      });
+
+      if (localHeadlines.length > 0) {
+        lines.push(`LOCAL NEWS (${localHeadlines.length} items from local/regional feeds)${fallbackNote}:`);
+        for (const h of localHeadlines.slice(0, 12)) {
+          const level = h.localityLevel ? ` [${h.localityLevel}]` : '';
+          lines.push(`  \u2022 [${h.sourceType}] "${h.title}" \u2014 ${h.source} (${h.pubDate?.split('T')[0] || 'recent'})${level}`);
+        }
+      }
+      if (nationalHeadlines.length > 0) {
+        lines.push('');
+        lines.push(`NATIONAL FALLBACK (${nationalHeadlines.length} items — not truly local):`);
+        for (const h of nationalHeadlines.slice(0, 6)) {
+          lines.push(`  \u2022 [${h.sourceType}] "${h.title}" \u2014 ${h.source} (${h.pubDate?.split('T')[0] || 'recent'}) [national]`);
+        }
       }
       if (rssBrief.summary.topCategories.length > 0) {
         lines.push('');

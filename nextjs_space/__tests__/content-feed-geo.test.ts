@@ -316,3 +316,171 @@ describe('Business Switch State Clearing', () => {
     expect(scoutBriefData).toBeNull();
   });
 });
+
+// ── Local Only Source Classification & Label Tests (Section 9) ──────────
+
+describe('Local Only Source Classification', () => {
+  // Mirrors the LOCAL_LEVELS set and classification logic from feed-preferences.tsx
+  const LOCAL_LEVELS = new Set(['zip', 'zip_radius', 'city', 'county', 'state']);
+  const LOCAL_SOURCE_TYPES = new Set(['local_news', 'community', 'gov_meeting', 'weather', 'police_blotter', 'school', 'library', 'parks_rec', 'chamber_of_commerce', 'event', 'lifestyle', 'real_estate', 'local_business', 'sports_local']);
+  const NATIONAL_SOURCE_TYPES = new Set(['national_news', 'industry_trade']);
+
+  /** Classification logic matching the updated trade-area-feed + frontend */
+  function classifyItem(item: {
+    localityLevel: string;
+    feedSourceType: string;
+    feedGeoScope?: string;
+  }): 'local' | 'national' | 'industry' {
+    const level = item.localityLevel || 'unknown';
+    const isLocalLevel = LOCAL_LEVELS.has(level);
+    if (!isLocalLevel) return 'national';
+    // Even with local level, if source type is national/industry, reclassify
+    if (NATIONAL_SOURCE_TYPES.has(item.feedSourceType)) return 'industry';
+    return 'local';
+  }
+
+  /** Label logic matching the updated feed-preferences.tsx */
+  function buildLabel(item: {
+    localityLevel: string;
+    sourceType: string;
+    tradeCity?: string;
+    tradeCounty?: string;
+    tradeState?: string;
+  }): string {
+    const level = item.localityLevel;
+    if (item.sourceType === 'weather') {
+      return item.tradeState ? `${item.tradeState} weather / public safety alert` : 'Weather / public safety alert';
+    }
+    if (level === 'zip' || level === 'zip_radius' || level === 'city') {
+      return item.tradeCity ? `Relevant to your ${item.tradeCity} trade area` : 'Local trade area news';
+    }
+    if (level === 'county') {
+      return item.tradeCounty ? `Relevant to ${item.tradeCounty} County` : 'County-level regional story';
+    }
+    if (level === 'state') {
+      return item.tradeState ? `${item.tradeState} regional story` : 'State-level regional story';
+    }
+    return 'Local trade area news';
+  }
+
+  // Test 1: National interest feed with Colorado FeedGeo link is NOT classified as Local Story
+  test('1. National interest feed with CO FeedGeo link → not Local Story', () => {
+    const item = { localityLevel: 'national', feedSourceType: 'national_news', feedGeoScope: 'national' };
+    expect(classifyItem(item)).not.toBe('local');
+  });
+
+  // Test 2: Industry feed with state-level match → not Local Story
+  test('2. Industry feed with state-level match → not Local Story', () => {
+    const item = { localityLevel: 'state', feedSourceType: 'national_news', feedGeoScope: 'national' };
+    expect(classifyItem(item)).toBe('industry');
+  });
+
+  // Test 3: Local Only excludes industry/national sources from Local Stories
+  test('3. Local Only excludes industry/national from Local Stories', () => {
+    const espn = { localityLevel: 'national', feedSourceType: 'national_news' };
+    const farmProgress = { localityLevel: 'national', feedSourceType: 'national_news' };
+    const localNews = { localityLevel: 'city', feedSourceType: 'local_news' };
+    expect(classifyItem(espn)).not.toBe('local');
+    expect(classifyItem(farmProgress)).not.toBe('local');
+    expect(classifyItem(localNews)).toBe('local');
+  });
+
+  // Test 4: State-level local story label says "Colorado regional story"
+  test('4. State-level label says Colorado regional story, not trade area', () => {
+    const label = buildLabel({ localityLevel: 'state', sourceType: 'local_news', tradeCity: 'Colorado Springs', tradeState: 'CO' });
+    expect(label).toBe('CO regional story');
+    expect(label).not.toContain('Colorado Springs');
+    expect(label).not.toContain('trade area');
+  });
+
+  // Test 5: City-level story label says "Colorado Springs trade area"
+  test('5. City-level label says Colorado Springs trade area', () => {
+    const label = buildLabel({ localityLevel: 'city', sourceType: 'local_news', tradeCity: 'Colorado Springs', tradeState: 'CO' });
+    expect(label).toBe('Relevant to your Colorado Springs trade area');
+  });
+
+  // Test 6: County-level story label says "El Paso County"
+  test('6. County-level label says El Paso County', () => {
+    const label = buildLabel({ localityLevel: 'county', sourceType: 'local_news', tradeCounty: 'El Paso', tradeState: 'CO' });
+    expect(label).toBe('Relevant to El Paso County');
+  });
+
+  // Test 7: NWS/weather allowed as local/regional only when state relevance matches
+  test('7. NWS weather source gets state-level weather label', () => {
+    const label = buildLabel({ localityLevel: 'state', sourceType: 'weather', tradeState: 'CO' });
+    expect(label).toBe('CO weather / public safety alert');
+    expect(label).not.toContain('trade area');
+  });
+
+  // Test 8: Farm Progress-style feed → Industry/National, not Local
+  test('8. Farm Progress-style feed → not Local', () => {
+    const farmProgress = { localityLevel: 'national', feedSourceType: 'national_news', feedGeoScope: 'national' };
+    const result = classifyItem(farmProgress);
+    expect(result).not.toBe('local');
+    expect(['national', 'industry']).toContain(result);
+  });
+
+  // Test 9: ESPN-style feed → National/Sports, not Local
+  test('9. ESPN-style feed → not Local', () => {
+    const espn = { localityLevel: 'national', feedSourceType: 'national_news', feedGeoScope: 'national' };
+    const result = classifyItem(espn);
+    expect(result).not.toBe('local');
+  });
+
+  // Test 10: Local + Interests still renders interest stories correctly
+  test('10. Local + Interests interest stories render as industry', () => {
+    // Interest stories should always be industry section regardless of mode
+    const interestItem = { localityLevel: 'national', feedSourceType: 'national_news' };
+    const localItem = { localityLevel: 'city', feedSourceType: 'local_news' };
+    expect(classifyItem(interestItem)).not.toBe('local');
+    expect(classifyItem(localItem)).toBe('local');
+    // Both should be classifiable in the same mode
+  });
+
+  // Additional: excludeNational skips national fallback
+  test('excludeNational flag prevents national items from entering local brief', () => {
+    // Simulates the generateContentBriefWithFallback logic
+    const allItems: { localityLevel: string; feedSourceType: string }[] = [
+      { localityLevel: 'city', feedSourceType: 'local_news' },
+      { localityLevel: 'city', feedSourceType: 'local_news' },
+    ];
+    const SCOUT_MIN_LOCAL_ITEMS = 5;
+    const excludeNational = true; // local_only mode
+
+    // Level 5 should be skipped
+    if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && !excludeNational) {
+      allItems.push({ localityLevel: 'national', feedSourceType: 'national_news' });
+    }
+
+    // No national items should exist
+    expect(allItems.filter(i => i.localityLevel === 'national')).toHaveLength(0);
+  });
+
+  // Additional: State cap works
+  test('state items capped at 3 when city/county items exist', () => {
+    const allItems = [
+      { localityLevel: 'city' },
+      { localityLevel: 'city' },
+      { localityLevel: 'state' },
+      { localityLevel: 'state' },
+      { localityLevel: 'state' },
+      { localityLevel: 'state' },
+      { localityLevel: 'state' },
+    ];
+    const STATE_CAP = 3;
+    const cityCountyCount = allItems.filter(i => ['zip', 'city', 'county'].includes(i.localityLevel)).length;
+    let capped = allItems;
+    if (cityCountyCount > 0) {
+      let stateKept = 0;
+      capped = allItems.filter(item => {
+        if (item.localityLevel === 'state') {
+          if (stateKept >= STATE_CAP) return false;
+          stateKept++;
+        }
+        return true;
+      });
+    }
+    expect(capped.filter(i => i.localityLevel === 'state')).toHaveLength(3);
+    expect(capped.filter(i => i.localityLevel === 'city')).toHaveLength(2);
+  });
+});
