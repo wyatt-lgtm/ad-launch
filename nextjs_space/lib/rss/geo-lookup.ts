@@ -154,6 +154,49 @@ export async function getZipsByCounty(
   return { zipCount: results.length, zips: results, queryType: 'county' };
 }
 
+// ── 3b. County lookup by FIPS (canonical) ────────────────────────────────
+/**
+ * Get all ZIPs in a county using the full 5-digit FIPS code.
+ * This is the canonical county identity — preferred over name-based matching.
+ */
+export async function getZipsByCountyFips(
+  countyFips: string
+): Promise<TradeAreaSummary> {
+  const county = await prisma.geoCounty.findFirst({
+    where: { fipsCode: countyFips },
+    include: { state: { select: { code: true } } },
+  });
+  if (!county) {
+    console.warn(`[geo-lookup] getZipsByCountyFips: no county found for FIPS=${countyFips}`);
+    return { zipCount: 0, zips: [], queryType: 'county' };
+  }
+
+  const cities = await prisma.geoCity.findMany({
+    where: { countyId: county.id },
+    include: { cityZips: { include: { zip: true } } },
+  });
+
+  const seen = new Set<string>();
+  const results: GeoZipResult[] = [];
+  for (const city of cities) {
+    for (const cz of city.cityZips) {
+      if (seen.has(cz.zip.code)) continue;
+      seen.add(cz.zip.code);
+      results.push({
+        id: cz.zip.id,
+        code: cz.zip.code,
+        latitude: cz.zip.latitude,
+        longitude: cz.zip.longitude,
+        city: city.name,
+        county: county.name,
+        state: county.state.code,
+      });
+    }
+  }
+
+  return { zipCount: results.length, zips: results, queryType: 'county' };
+}
+
 // ── 4. State lookup ───────────────────────────────────────────────────────
 export async function getZipsByState(stateCode: string): Promise<TradeAreaSummary> {
   const state = await prisma.geoState.findUnique({ where: { code: stateCode.toUpperCase() } });
@@ -286,6 +329,7 @@ export async function getZipDetails(zipCode: string) {
     county: primaryLink?.city.county.name ?? null,
     countyFips: primaryLink?.city.county.fipsCode ?? null,
     state: primaryLink?.city.county.state.code ?? null,
+    stateFips: primaryLink?.city.county.state.fipsCode ?? null,
     stateName: primaryLink?.city.county.state.name ?? null,
     allCities: zip.cityZips.map(cz => ({
       name: cz.city.name,

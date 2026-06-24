@@ -112,7 +112,8 @@ export type ContentCategory = keyof typeof CONTENT_CATEGORIES;
 export interface TradeAreaRequest {
   zips?: string[];          // Direct ZIP codes
   cities?: string[];        // City names (resolved to ZIPs)
-  counties?: string[];      // County names (resolved to ZIPs)
+  counties?: string[];      // County names (resolved to ZIPs) — legacy name-based path
+  countyFipsList?: string[];// County FIPS codes (5-char, e.g. "29510") — preferred FIPS-based path
   states?: string[];        // State codes — use sparingly
   limit?: number;           // Max items (default 20)
   days?: number;            // Look back N days (default 7)

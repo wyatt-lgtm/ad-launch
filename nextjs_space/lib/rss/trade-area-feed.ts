@@ -13,7 +13,7 @@
  */
 import { prisma } from '@/lib/db';
 import { rssPrisma } from '@/lib/rss-db';
-import { getZipsByRadius, getZipsByCounty, getZipsByCity, getZipDetails } from './geo-lookup';
+import { getZipsByRadius, getZipsByCounty, getZipsByCountyFips, getZipsByCity, getZipDetails } from './geo-lookup';
 import type { TradeAreaRequest, TradeAreaItem, TradeAreaResponse } from './types';
 import { discoverValidateAndLink, type DiscoveryResult } from './geo-linker';
 
@@ -56,6 +56,7 @@ export async function getTradeAreaItems(
     zips: directZips,
     cities,
     counties,
+    countyFipsList,
     states,
     limit = 30,
     days = 7,
@@ -99,7 +100,21 @@ export async function getTradeAreaItems(
     }
   }
 
-  // County-based
+  // County-based (FIPS-preferred path)
+  if (countyFipsList?.length) {
+    for (const fips of countyFipsList) {
+      const result = await getZipsByCountyFips(fips);
+      for (const z of result.zips) {
+        zipIdSet.add(z.id);
+        zipCodeSet.add(z.code);
+      }
+      if (result.zips.length === 0) {
+        console.warn(`[trade-area-feed] No ZIPs found for countyFips=${fips}`);
+      }
+    }
+  }
+
+  // County-based (legacy name fallback)
   if (counties?.length) {
     for (const countySpec of counties) {
       const parts = countySpec.split(',').map(s => s.trim());
@@ -382,6 +397,12 @@ export interface BriefDiagnostics {
   finalItemCount: number;
   queryTimeMs: number;
   requestedLocation: { zip: string | null; city: string | null; county: string | null; state: string | null };
+  /** Full 5-char county FIPS resolved from the center ZIP (e.g. "29510") */
+  countyFips: string | null;
+  /** 2-digit state FIPS resolved from the center ZIP (e.g. "29") */
+  stateFips: string | null;
+  /** How county identity was resolved: 'fips' (preferred) or 'name_fallback' */
+  geoResolutionMethod: 'fips' | 'name_fallback' | 'none';
   deduplicatedItems: number;
   rejectedItems: { reason: string; count: number }[];
 }
@@ -431,6 +452,9 @@ export async function generateContentBriefWithFallback(
     finalItemCount: 0,
     queryTimeMs: 0,
     requestedLocation: { zip: centerZip, city: geo.city || null, county: geo.county || null, state: geo.state || null },
+    countyFips: null,
+    stateFips: null,
+    geoResolutionMethod: 'none',
     deduplicatedItems: 0,
     rejectedItems: [],
   };
@@ -443,21 +467,27 @@ export async function generateContentBriefWithFallback(
   let resolvedCity = geo.city?.toUpperCase() || null;
   let resolvedCounty = geo.county?.toUpperCase() || null;
   let resolvedState = geo.state?.toUpperCase() || null;
+  let resolvedCountyFips: string | null = null;
+  let resolvedStateFips: string | null = null;
 
-  if (centerZip && (!resolvedCity || !resolvedCounty || !resolvedState)) {
+  if (centerZip) {
     try {
       const details = await getZipDetails(centerZip);
       if (details) {
         if (!resolvedCity) resolvedCity = details.primaryCity;
         if (!resolvedCounty) resolvedCounty = details.county;
         if (!resolvedState) resolvedState = details.state;
+        resolvedCountyFips = details.countyFips ?? null;
+        resolvedStateFips = details.stateFips ?? null;
+        diagnostics.countyFips = resolvedCountyFips;
+        diagnostics.stateFips = resolvedStateFips;
       }
     } catch (err) {
       console.warn('[trade-area-feed] Could not resolve ZIP details:', err);
     }
   }
 
-  console.log(`[trade-area-feed] Geo cascade: ZIP=${centerZip} City=${resolvedCity} County=${resolvedCounty} State=${resolvedState} excludeNational=${briefOptions.excludeNational ?? false}`);
+  console.log(`[trade-area-feed] Geo cascade: ZIP=${centerZip} City=${resolvedCity} County=${resolvedCounty} countyFips=${resolvedCountyFips} stateFips=${resolvedStateFips} State=${resolvedState} excludeNational=${briefOptions.excludeNational ?? false}`);
 
   // Helper: normalize title for de-dup (lowercase, strip punctuation, collapse whitespace)
   const normTitle = (t: string) => (t || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -515,18 +545,32 @@ export async function generateContentBriefWithFallback(
     }
   }
 
-  // ── Level 3: County (full lookback) ─────────────────────────────────────
-  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && resolvedCounty && resolvedState) {
-    const countyResult = await getTradeAreaItems({
-      counties: [`${resolvedCounty}, ${resolvedState}`],
-      ...options, ...cascadeOpts, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
-    });
+  // ── Level 3: County (full lookback) — FIPS-preferred, name fallback ──────
+  if (allItems.length < SCOUT_MIN_LOCAL_ITEMS && (resolvedCountyFips || (resolvedCounty && resolvedState))) {
+    let countyResult: TradeAreaResponse;
+    if (resolvedCountyFips) {
+      // Preferred: use FIPS code for unambiguous county identity
+      countyResult = await getTradeAreaItems({
+        countyFipsList: [resolvedCountyFips],
+        ...options, ...cascadeOpts, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+      });
+      diagnostics.geoResolutionMethod = 'fips';
+      console.log(`[trade-area-feed] L3 county via FIPS(${resolvedCountyFips}): ${countyResult.meta.feedsMatched} feeds, ${countyResult.items.length} items raw`);
+    } else {
+      // Fallback: use county name (legacy path)
+      countyResult = await getTradeAreaItems({
+        counties: [`${resolvedCounty}, ${resolvedState}`],
+        ...options, ...cascadeOpts, limit, days: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
+      });
+      diagnostics.geoResolutionMethod = 'name_fallback';
+      console.warn(`[trade-area-feed] L3 county via NAME fallback(${resolvedCounty}, ${resolvedState}): countyFips was null`);
+    }
     diagnostics.levelsAttempted.push({
       level: 'county', feedsFound: countyResult.meta.feedsMatched,
       itemsFound: countyResult.items.length, lookbackDays: SCOUT_LOCAL_NEWS_LOOKBACK_DAYS,
     });
     const countyAdded = addItems(countyResult.items, 'county');
-    console.log(`[trade-area-feed] L3 county(${resolvedCounty}): ${countyResult.meta.feedsMatched} feeds, ${countyResult.items.length} items raw, ${countyAdded} added (${allItems.length} total)`);
+    console.log(`[trade-area-feed] L3 county: ${countyAdded} added (${allItems.length} total)`);
     if (allItems.length >= SCOUT_MIN_LOCAL_ITEMS && diagnostics.fallbackLevel === 'none') {
       diagnostics.fallbackLevel = 'county';
     }
