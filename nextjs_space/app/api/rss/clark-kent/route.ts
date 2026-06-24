@@ -71,25 +71,38 @@ export async function POST(req: NextRequest) {
     // ── Resolve business + contentSourceMode ──────────────────────────
     let resolvedBusinessId = businessId || null;
     let contentSourceMode: ContentSourceMode = 'local_plus_interests';
+    // Business-scoped geo fields — populated from the canonical business record
+    let bizGeoCity: string | null = null;
+    let bizGeoState: string | null = null;
+    let bizGeoZip: string | null = null;
+    let bizGeoName: string | null = null;
 
     if (resolvedBusinessId) {
       const biz = await prisma.business.findUnique({
         where: { id: resolvedBusinessId },
-        select: { id: true, contentSourceMode: true, userId: true },
+        select: { id: true, contentSourceMode: true, userId: true, businessName: true, businessCity: true, businessState: true, businessZip: true },
       });
       if (biz && biz.userId === userId) {
         contentSourceMode = (biz.contentSourceMode || 'local_plus_interests') as ContentSourceMode;
+        bizGeoCity = biz.businessCity;
+        bizGeoState = biz.businessState;
+        bizGeoZip = biz.businessZip;
+        bizGeoName = biz.businessName;
       }
     } else {
       // Fallback: find most recently updated business for this user
       const biz = await prisma.business.findFirst({
         where: { userId },
         orderBy: { updatedAt: 'desc' },
-        select: { id: true, contentSourceMode: true },
+        select: { id: true, contentSourceMode: true, businessName: true, businessCity: true, businessState: true, businessZip: true },
       });
       if (biz) {
         resolvedBusinessId = biz.id;
         contentSourceMode = (biz.contentSourceMode || 'local_plus_interests') as ContentSourceMode;
+        bizGeoCity = biz.businessCity;
+        bizGeoState = biz.businessState;
+        bizGeoZip = biz.businessZip;
+        bizGeoName = biz.businessName;
       }
     }
 
@@ -102,53 +115,67 @@ export async function POST(req: NextRequest) {
     const includeLocal = contentSourceMode !== 'interests_only';
     const includeInterests = contentSourceMode !== 'local_only';
 
-    console.log(`[Clark Kent] mode=${contentSourceMode} businessId=${resolvedBusinessId || 'none'} includeLocal=${includeLocal} includeInterests=${includeInterests}`);
+    console.log(`[Clark Kent] mode=${contentSourceMode} businessId=${resolvedBusinessId || 'none'} bizName=${bizGeoName || 'none'} includeLocal=${includeLocal} includeInterests=${includeInterests}`);
+    console.log(`[Clark Kent] business_geo city=${bizGeoCity || 'none'} state=${bizGeoState || 'none'} zip=${bizGeoZip || 'none'}`);
     console.log(`[ScoutTrace] route_hit=true contentSourceMode=${contentSourceMode} includeLocal=${includeLocal} includeInterests=${includeInterests} resolvedBusinessId=${resolvedBusinessId || 'NONE'}`);
 
     // ── Resolve geographic context (ZIP, city, state) ────────────────
+    // Priority: 1) direct ZIP param, 2) business record geo, 3) business-scoped analysis, 4) analysisId param
+    // CRITICAL: geo resolution is BUSINESS-scoped, not user-scoped, to prevent cross-business contamination
     let businessZip: string | null = directZip || null;
     let businessCity: string | null = null;
     let businessState: string | null = null;
 
     if (includeLocal) {
-      if (analysisId) {
+      // Step 1: Use the canonical business record's geo fields (populated during business setup)
+      if (bizGeoZip) {
+        businessZip = bizGeoZip;
+        businessCity = bizGeoCity;
+        businessState = bizGeoState;
+        console.log(`[Clark Kent] geo from business record: city=${businessCity} state=${businessState} zip=${businessZip}`);
+      }
+
+      // Step 2: If business record has no ZIP, check analysis for THIS specific business
+      if (!businessZip && resolvedBusinessId) {
+        const bizAnalysis = await prisma.analysis.findFirst({
+          where: {
+            businessId: resolvedBusinessId,
+            businessZip: { not: null },
+            geoConfirmed: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { businessZip: true, businessCity: true, businessState: true },
+        });
+        if (bizAnalysis?.businessZip) {
+          businessZip = bizAnalysis.businessZip;
+          businessCity = bizAnalysis.businessCity;
+          businessState = bizAnalysis.businessState;
+          console.log(`[Clark Kent] geo from business-scoped analysis: city=${businessCity} state=${businessState} zip=${businessZip}`);
+        }
+      }
+
+      // Step 3: If an explicit analysisId was provided, use it as override
+      if (!businessZip && analysisId) {
         const analysis = await prisma.analysis.findUnique({
           where: { id: analysisId },
           select: { businessZip: true, businessCity: true, businessState: true },
         });
-        if (analysis) {
-          businessZip = analysis.businessZip || businessZip;
+        if (analysis?.businessZip) {
+          businessZip = analysis.businessZip;
           businessCity = analysis.businessCity;
           businessState = analysis.businessState;
+          console.log(`[Clark Kent] geo from explicit analysisId: city=${businessCity} state=${businessState} zip=${businessZip}`);
         }
       }
 
-      if (!businessZip) {
-        const recentAnalysis = await prisma.analysis.findFirst({
-          where: { userId, businessZip: { not: null }, geoConfirmed: true },
-          orderBy: { createdAt: 'desc' },
-          select: { id: true, businessZip: true, businessCity: true, businessState: true },
-        });
-        if (recentAnalysis) {
-          businessZip = recentAnalysis.businessZip;
-          businessCity = recentAnalysis.businessCity;
-          businessState = recentAnalysis.businessState;
-        }
+      // Step 4: Use business city/state even without ZIP (for city-level fallback)
+      if (!businessZip && !businessCity && bizGeoCity) {
+        businessCity = bizGeoCity;
+        businessState = bizGeoState;
+        console.log(`[Clark Kent] geo city/state from business record (no ZIP): city=${businessCity} state=${businessState}`);
       }
 
-      // Fallback: look up ZIP from the user's Business records
-      if (!businessZip) {
-        const bizWithZip = await prisma.business.findFirst({
-          where: { userId, businessZip: { not: null } },
-          orderBy: { updatedAt: 'desc' },
-          select: { businessZip: true, businessCity: true, businessState: true },
-        });
-        if (bizWithZip?.businessZip) {
-          businessZip = bizWithZip.businessZip;
-          businessCity = bizWithZip.businessCity;
-          businessState = bizWithZip.businessState;
-        }
-      }
+      console.log(`[Clark Kent] final resolved geo: city=${businessCity || 'none'} state=${businessState || 'none'} zip=${businessZip || 'none'}`);
     }
 
     // ── Gather local RSS intelligence (if mode includes local) ────────
@@ -240,6 +267,7 @@ export async function POST(req: NextRequest) {
       meta: {
         contentSourceMode,
         businessId: resolvedBusinessId,
+        businessName: bizGeoName || null,
         hasLocation: !!(businessZip || businessCity),
         zip: tradeArea.zip,
         city: tradeArea.city,

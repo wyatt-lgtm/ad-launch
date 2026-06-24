@@ -148,6 +148,13 @@ export default function FeedPreferences() {
 
   useEffect(() => {
     loadSettings();
+    // Clear stale scout results when business changes
+    setShowStoryPicker(false);
+    setStoryCards([]);
+    setSelectedStoryIds(new Set());
+    setSelectionError(null);
+    setScoutResult(null);
+    setScoutBriefData(null);
   }, [loadSettings]);
 
   // Load scout email settings when business changes
@@ -287,6 +294,7 @@ export default function FeedPreferences() {
 
       console.log('[FeedScout] Request:', JSON.stringify(scoutBody));
       console.log('[FeedScout] activeBusinessId:', activeBusinessId);
+      console.log('[FeedScout] activeBusiness:', bizCtx.activeBusiness?.businessName, bizCtx.activeBusiness?.businessCity, bizCtx.activeBusiness?.businessState);
       console.log('[FeedScout] contentMode:', contentMode);
       console.log('[FeedScout] selectedCategories:', Array.from(selected));
       const scoutRes = await fetch('/api/rss/clark-kent', {
@@ -316,20 +324,40 @@ export default function FeedPreferences() {
       console.log('[ScoutCards] meta=', JSON.stringify(meta));
       console.log('[ScoutCards] includesInterests=', includesInterests, 'includesLocal=', includesLocal);
 
-      // Local RSS stories
+      // Local RSS stories — classify by localityLevel
+      // Only truly local items (zip, city, county, state) go under "local".
+      // National-scope items from the RSS brief are re-classified as industry/interest.
+      const LOCAL_LEVELS = new Set(['zip', 'zip_radius', 'city', 'county', 'state']);
       if (includesLocal && brief?.rssBrief?.headlines?.length > 0) {
-        for (const h of brief.rssBrief.headlines.slice(0, 8)) {
-          cards.push({
-            id: h.id || `local-${h.title?.slice(0, 20)}`,
-            title: h.title,
-            source: h.source,
-            sourceType: 'local',
-            section: 'local',
-            pubDate: h.pubDate || '',
-            summary: `${h.sourceType === 'weather' ? 'Weather alert' : 'Local news'} from ${h.source}`,
-            relevance: tradeCity ? `Relevant to your ${tradeCity} trade area` : 'Local trade area news',
-            link: h.link || '',
-          });
+        for (const h of brief.rssBrief.headlines.slice(0, 12)) {
+          const level = h.localityLevel || 'unknown';
+          const isLocalItem = LOCAL_LEVELS.has(level);
+          if (isLocalItem) {
+            cards.push({
+              id: h.id || `local-${h.title?.slice(0, 20)}`,
+              title: h.title,
+              source: h.source,
+              sourceType: 'local',
+              section: 'local',
+              pubDate: h.pubDate || '',
+              summary: `${h.sourceType === 'weather' ? 'Weather alert' : 'Local news'} from ${h.source}`,
+              relevance: tradeCity ? `Relevant to your ${tradeCity} trade area` : 'Local trade area news',
+              link: h.link || '',
+            });
+          } else {
+            // National-scope item from RSS — reclassify as industry
+            cards.push({
+              id: h.id || `national-${h.title?.slice(0, 20)}`,
+              title: h.title,
+              source: h.source,
+              sourceType: 'national',
+              section: 'industry',
+              pubDate: h.pubDate || '',
+              summary: `National news from ${h.source}`,
+              relevance: 'National interest story',
+              link: h.link || '',
+            });
+          }
         }
       }
 
@@ -644,11 +672,13 @@ export default function FeedPreferences() {
         const eventCards = storyCards.filter(c => c.section === 'event');
         const includesLocal = contentMode !== 'interests_only';
         const includesInterests = contentMode !== 'local_only';
+        // In local_only mode, if national items leaked from RSS fallback, show them separately
+        const hasNationalFromRss = !includesInterests && industryCards.length > 0;
         // Diagnostic: detect when interest stories were expected but missing
         const interestDiag = includesInterests && industryCards.length === 0 ? scoutResult?.meta : null;
         const sections = [
           ...(includesLocal ? [{ key: 'local', label: '📍 Local Stories', cards: localCards }] : []),
-          ...(includesInterests ? [{ key: 'industry', label: '🏢 Industry Stories', cards: industryCards }] : []),
+          ...((includesInterests || hasNationalFromRss) ? [{ key: 'industry', label: includesInterests ? '🏢 Industry Stories' : '🌐 National Stories', cards: industryCards }] : []),
           { key: 'event', label: '🎉 Upcoming Events', cards: eventCards },
         ];
 
@@ -690,8 +720,12 @@ export default function FeedPreferences() {
                       </details>
                     </div>
                   )}
-                  {sec.cards.length === 0 && (
-                    <p className="text-xs text-gray-400 italic py-2">No stories found in this category.</p>
+                  {sec.cards.length === 0 && sec.key !== 'industry' && (
+                    <p className="text-xs text-gray-400 italic py-2">
+                      {sec.key === 'local' && (scoutBriefData?.tradeArea?.city || bizCtx.activeBusiness?.businessCity)
+                        ? `No local stories found for ${scoutBriefData?.tradeArea?.city || bizCtx.activeBusiness?.businessCity} yet. Local feed discovery may be needed for this area.`
+                        : 'No stories found in this category.'}
+                    </p>
                   )}
                   <div className="space-y-2">
                     {sec.cards.map(card => {
