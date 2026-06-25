@@ -39,10 +39,16 @@ export interface GhlAccountsResult {
   statusCode?: number;
 }
 
+export interface GhlMediaItem {
+  url: string;                   // Full public URL of the media file
+  type: string;                  // MIME type (e.g. 'image/png', 'image/jpeg', 'video/mp4')
+}
+
 export interface GhlCreatePostPayload {
   accountIds: string[];          // GHL Social Planner account IDs to post to
+  userId: string;                // GHL user ID (required by API)
   summary?: string;              // Post caption/body text
-  mediaUrls?: string[];          // Array of media URLs (images)
+  media?: GhlMediaItem[];        // Array of media objects with url + type
   type: 'post';                  // Post type
   status?: 'draft' | 'scheduled' | 'in_review';
   scheduleDate?: string;         // ISO date for scheduling
@@ -97,6 +103,37 @@ function sanitizeError(raw: string): string {
 }
 
 // ── Account Lookup ───────────────────────────────────────────────────
+
+/**
+ * GET /users/?locationId=:locationId
+ *
+ * Returns the first admin user for the given GHL location.
+ * GHL requires a userId in post payloads.
+ */
+export async function lookupGhlUserId(
+  locationId: string,
+  apiToken: string
+): Promise<{ userId: string | null; userName: string | null; error?: string }> {
+  try {
+    const res = await fetchWithTimeout(
+      `${GHL_BASE_URL}/users/?locationId=${encodeURIComponent(locationId)}`,
+      { method: 'GET', headers: ghlHeaders(apiToken) }
+    );
+    if (!res.ok) {
+      return { userId: null, userName: null, error: `GHL users API returned ${res.status}` };
+    }
+    const data = await res.json().catch(() => ({ users: [] }));
+    const users = data?.users || [];
+    // Prefer admin users
+    const admin = users.find((u: any) => u.roles?.role === 'admin' && !u.deleted);
+    const fallback = users.find((u: any) => !u.deleted);
+    const pick = admin || fallback;
+    if (!pick) return { userId: null, userName: null, error: 'No users found in GHL location' };
+    return { userId: pick.id, userName: pick.name };
+  } catch (err: any) {
+    return { userId: null, userName: null, error: err.message };
+  }
+}
 
 /**
  * GET /social-media-posting/:locationId/accounts
@@ -239,6 +276,7 @@ export async function createGhlSocialPost(
 
   const body: Record<string, any> = {
     accountIds: payload.accountIds,
+    userId: payload.userId,
     type: payload.type || 'post',
   };
 
@@ -246,8 +284,11 @@ export async function createGhlSocialPost(
     body.summary = payload.summary;
   }
 
-  if (payload.mediaUrls && payload.mediaUrls.length > 0) {
-    body.mediaUrls = payload.mediaUrls;
+  // GHL expects `media` as an array of { url, type } objects — NOT `mediaUrls`
+  if (payload.media && payload.media.length > 0) {
+    body.media = payload.media;
+  } else {
+    body.media = []; // GHL requires media to be present (even if empty)
   }
 
   // For immediate post, omit scheduleDate and set no status (GHL defaults to immediate)

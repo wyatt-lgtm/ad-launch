@@ -9,9 +9,11 @@ import {
   listGhlSocialAccounts,
   selectGhlAccount,
   createGhlSocialPost,
+  lookupGhlUserId,
   createTraceId,
   traceStep,
   type GhlTraceStep,
+  type GhlMediaItem,
 } from '@/lib/ghl-social-planner';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -218,22 +220,47 @@ export async function POST(req: NextRequest, context: RouteContext) {
       });
     }
 
-    // ── Build post payload ───────────────────────────────────────────
-    const mediaUrls: string[] = [];
+    // ── Resolve image URLs to full public URLs ──────────────────────
+    const rawMediaPaths: string[] = [];
     if (post.imageUrl) {
-      mediaUrls.push(post.imageUrl);
+      rawMediaPaths.push(post.imageUrl);
     } else if (Array.isArray(carouselUrls) && carouselUrls.length > 0) {
-      mediaUrls.push(...carouselUrls);
+      rawMediaPaths.push(...carouselUrls);
     }
 
+    const media: GhlMediaItem[] = [];
+    for (const rawPath of rawMediaPaths) {
+      const resolvedUrl = await resolveMediaUrl(rawPath);
+      if (resolvedUrl) {
+        media.push({ url: resolvedUrl, type: inferMimeType(rawPath) });
+      } else {
+        console.warn(`[post-now] [${publishTraceId}] Could not resolve media: ${rawPath}`);
+      }
+    }
+    trace.push(traceStep('MEDIA_RESOLVED', `${media.length}/${rawMediaPaths.length} resolved`));
+
+    if (media.length === 0 && rawMediaPaths.length > 0) {
+      return fail(publishTraceId, trace, 'Could not resolve any media URLs for the post.', 422, post.id);
+    }
+
+    // ── Lookup GHL userId ────────────────────────────────────────────
+    trace.push(traceStep('GHL_USER_LOOKUP_REQUESTED'));
+    const userLookup = await lookupGhlUserId(business.ghlLocationId, business.ghlApiToken);
+    if (!userLookup.userId) {
+      return fail(publishTraceId, trace, `Could not find a GHL user for this location. ${userLookup.error || ''}`, 422, post.id);
+    }
+    trace.push(traceStep('GHL_USER_RESOLVED', `userId=${userLookup.userId} name=${userLookup.userName}`));
+
+    // ── Build post payload ───────────────────────────────────────────
     const ghlPayload = {
       accountIds: [account.id],
+      userId: userLookup.userId,
       summary: finalCaption,
-      mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+      media,
       type: 'post' as const,
     };
 
-    trace.push(traceStep('POST_PAYLOAD_BUILT', `caption_len=${finalCaption.length} media_count=${mediaUrls.length} account=${account.name}`));
+    trace.push(traceStep('POST_PAYLOAD_BUILT', `caption_len=${finalCaption.length} media_count=${media.length} account=${account.name}`));
 
     // Log the payload for diagnostics (no secrets)
     console.log(`[post-now] [${publishTraceId}] Creating GHL post:`, {
@@ -244,7 +271,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
       accountName: account.name,
       platform: account.platform,
       captionLength: finalCaption.length,
-      mediaCount: mediaUrls.length,
+      mediaCount: media.length,
+      ghlUserId: userLookup.userId,
       landingPageApplied,
     });
 
@@ -338,6 +366,48 @@ export async function POST(req: NextRequest, context: RouteContext) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
+
+/** Infer MIME type from file path/extension for GHL media objects. */
+function inferMimeType(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+    mp4: 'video/mp4', mov: 'video/quicktime', avi: 'video/x-msvideo',
+  };
+  return map[ext] || 'image/png';
+}
+
+/**
+ * Resolves a relative artifact path (e.g. "renders/task_1735/...") to a full public URL.
+ * If the path is already a full URL, returns it as-is.
+ */
+async function resolveMediaUrl(rawPath: string): Promise<string | null> {
+  if (!rawPath) return null;
+  if (rawPath.startsWith('http://') || rawPath.startsWith('https://')) return rawPath;
+
+  // Strip r2:// prefix if present
+  let cleanPath = rawPath;
+  if (cleanPath.startsWith('r2://')) {
+    const withoutScheme = cleanPath.slice(5);
+    const slashIdx = withoutScheme.indexOf('/');
+    cleanPath = slashIdx >= 0 ? withoutScheme.slice(slashIdx + 1) : withoutScheme;
+  }
+
+  try {
+    const res = await fetch(
+      `${TOMBSTONE_URL}/artifacts/resolve?artifact_path=${encodeURIComponent(cleanPath)}`,
+      { cache: 'no-store' }
+    );
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    return data?.artifact_url ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function fail(
   traceId: string,
