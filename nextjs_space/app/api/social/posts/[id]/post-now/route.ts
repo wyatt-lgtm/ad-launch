@@ -10,6 +10,7 @@ import {
   selectGhlAccount,
   createGhlSocialPost,
   lookupGhlUserId,
+  uploadMediaToGhl,
   createTraceId,
   traceStep,
   type GhlTraceStep,
@@ -220,7 +221,11 @@ export async function POST(req: NextRequest, context: RouteContext) {
       });
     }
 
-    // ── Resolve image URLs to full public URLs ──────────────────────
+    // ── Resolve + Upload images to GHL Media Library ──────────────
+    // GHL accepts external URLs in post payloads but does NOT reliably
+    // forward them to Facebook. Only GHL-hosted media (assets.cdn.filesafe.space)
+    // consistently appears in final Facebook posts.
+    // Flow: signed R2 URL → download → upload to GHL CDN → use GHL URL in post
     const rawMediaPaths: string[] = [];
     if (post.imageUrl) {
       rawMediaPaths.push(post.imageUrl);
@@ -229,18 +234,41 @@ export async function POST(req: NextRequest, context: RouteContext) {
     }
 
     const media: GhlMediaItem[] = [];
-    for (const rawPath of rawMediaPaths) {
+    let mediaUploadFailed = false;
+    let mediaFailureReason = '';
+
+    for (let i = 0; i < rawMediaPaths.length; i++) {
+      const rawPath = rawMediaPaths[i];
       const resolvedUrl = await resolveMediaUrl(rawPath);
-      if (resolvedUrl) {
-        media.push({ url: resolvedUrl, type: inferMimeType(rawPath) });
-      } else {
+      if (!resolvedUrl) {
         console.warn(`[post-now] [${publishTraceId}] Could not resolve media: ${rawPath}`);
+        mediaUploadFailed = true;
+        mediaFailureReason = `Could not resolve artifact path: ${rawPath}`;
+        continue;
       }
+
+      // Extract filename for GHL
+      const fileName = rawPath.split('/').pop() || `post_${post.id}_${i}.png`;
+
+      trace.push(traceStep('GHL_MEDIA_UPLOAD_REQUESTED', `file=${fileName}`));
+      const uploadResult = await uploadMediaToGhl(business.ghlApiToken, resolvedUrl, fileName);
+
+      if (!uploadResult.success || !uploadResult.url) {
+        console.error(`[post-now] [${publishTraceId}] GHL media upload failed: ${uploadResult.error}`);
+        trace.push(traceStep('GHL_MEDIA_UPLOAD_FAILED', uploadResult.error || 'unknown'));
+        mediaUploadFailed = true;
+        mediaFailureReason = uploadResult.error || 'GHL media upload returned no URL';
+        continue;
+      }
+
+      trace.push(traceStep('GHL_MEDIA_UPLOAD_SUCCEEDED', `ghlUrl=${uploadResult.url}`));
+      media.push({ url: uploadResult.url, type: inferMimeType(rawPath) });
     }
-    trace.push(traceStep('MEDIA_RESOLVED', `${media.length}/${rawMediaPaths.length} resolved`));
+
+    trace.push(traceStep('MEDIA_RESOLVED', `${media.length}/${rawMediaPaths.length} uploaded to GHL CDN`));
 
     if (media.length === 0 && rawMediaPaths.length > 0) {
-      return fail(publishTraceId, trace, 'Could not resolve any media URLs for the post.', 422, post.id);
+      return fail(publishTraceId, trace, `Could not upload any media to GHL. ${mediaFailureReason}`, 422, post.id);
     }
 
     // ── Lookup GHL userId ────────────────────────────────────────────
@@ -313,6 +341,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
     // ── Success! ─────────────────────────────────────────────────────
     trace.push(traceStep('GHL_CREATE_POST_SUCCEEDED', `postId=${createResult.postId || 'none'} status=${createResult.status}`));
 
+    const textPublished = true;
+    const mediaAttached = media.length > 0;
     const finalStatus = createResult.postId ? 'published_by_ghl' : 'published_unverified';
 
     const updated = await prisma.socialPost.update({
@@ -330,6 +360,12 @@ export async function POST(req: NextRequest, context: RouteContext) {
           statusCode: createResult.statusCode,
           postId: createResult.postId,
           status: createResult.status,
+          textPublished,
+          mediaAttached,
+          mediaCount: media.length,
+          mediaUploadFailed: mediaUploadFailed && media.length > 0,
+          mediaFailureReason: mediaUploadFailed ? mediaFailureReason : null,
+          mediaHostedOnGhl: media.length > 0,
         }).slice(0, 1000),
         ...(finalCaption !== post.caption ? { caption: finalCaption } : {}),
       },
@@ -348,6 +384,13 @@ export async function POST(req: NextRequest, context: RouteContext) {
         publishedAt: updated.publishedAt,
         platforms: updated.platforms,
         ghlPostId: createResult.postId,
+      },
+      mediaStatus: {
+        textPublished,
+        mediaAttached,
+        mediaCount: media.length,
+        mediaHostedOnGhl: media.length > 0,
+        mediaUploadFailed: mediaUploadFailed && media.length > 0,
       },
       publishTraceId,
       diagnostics: buildDiagnostics(publishTraceId, business, account, landingPageApplied, createResult.postId || null, null, trace),

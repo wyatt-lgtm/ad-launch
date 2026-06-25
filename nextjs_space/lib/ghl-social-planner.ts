@@ -258,6 +258,116 @@ export function selectGhlAccount(
   };
 }
 
+// ── Media Upload ────────────────────────────────────────────────────
+
+export interface GhlMediaUploadResult {
+  success: boolean;
+  fileId?: string;
+  url?: string;        // GHL CDN URL (assets.cdn.filesafe.space)
+  error?: string;
+}
+
+/**
+ * POST /medias/upload-file
+ *
+ * Downloads an image from a source URL and uploads it to GHL Media Library.
+ * Returns a permanent GHL CDN URL that Facebook can reliably fetch.
+ *
+ * This is necessary because GHL accepts external URLs in post payloads but
+ * does not reliably forward them to Facebook. Only GHL-hosted media
+ * (assets.cdn.filesafe.space) consistently appears in final Facebook posts.
+ */
+export async function uploadMediaToGhl(
+  apiToken: string,
+  sourceUrl: string,
+  fileName: string
+): Promise<GhlMediaUploadResult> {
+  try {
+    // Step 1: Download image from source URL (30s timeout for large images)
+    const downloadRes = await fetchWithTimeout(sourceUrl, { method: 'GET' }, 30_000);
+    if (!downloadRes.ok) {
+      return { success: false, error: `Failed to download source image: HTTP ${downloadRes.status}` };
+    }
+
+    const imageBuffer = Buffer.from(await downloadRes.arrayBuffer());
+    if (imageBuffer.length === 0) {
+      return { success: false, error: 'Downloaded image is empty (0 bytes)' };
+    }
+
+    // Detect content type from response or file extension
+    const contentType = downloadRes.headers.get('content-type') || inferMimeFromName(fileName);
+
+    // Step 2: Upload to GHL media library as multipart/form-data
+    const boundary = `----LaunchOS${Date.now()}`;
+    const parts: Buffer[] = [];
+
+    // 'hosted' field
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="hosted"\r\n\r\nfalse\r\n`
+    ));
+
+    // 'file' field
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${contentType}\r\n\r\n`
+    ));
+    parts.push(imageBuffer);
+    parts.push(Buffer.from('\r\n'));
+
+    // 'name' field
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="name"\r\n\r\n${fileName}\r\n`
+    ));
+
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
+
+    const body = Buffer.concat(parts);
+
+    const uploadRes = await fetchWithTimeout(`${GHL_BASE_URL}/medias/upload-file`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Version': GHL_API_VERSION,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
+    }, 30_000);
+
+    const uploadText = await uploadRes.text().catch(() => '');
+    let uploadData: any = {};
+    try { uploadData = JSON.parse(uploadText); } catch { uploadData = { raw: uploadText.slice(0, 500) }; }
+
+    if (!uploadRes.ok) {
+      return {
+        success: false,
+        error: `GHL media upload failed: HTTP ${uploadRes.status} — ${uploadText.slice(0, 300)}`,
+      };
+    }
+
+    const ghlUrl = uploadData?.url;
+    const fileId = uploadData?.fileId;
+
+    if (!ghlUrl) {
+      return { success: false, error: 'GHL media upload returned no URL' };
+    }
+
+    console.log(`[ghl-media] Uploaded ${fileName} (${imageBuffer.length} bytes) → ${ghlUrl}`);
+    return { success: true, fileId, url: ghlUrl };
+
+  } catch (err: any) {
+    return { success: false, error: `Media upload error: ${err.message}` };
+  }
+}
+
+function inferMimeFromName(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+    mp4: 'video/mp4', mov: 'video/quicktime',
+  };
+  return map[ext] || 'image/png';
+}
+
 // ── Create Post ──────────────────────────────────────────────────────
 
 /**
