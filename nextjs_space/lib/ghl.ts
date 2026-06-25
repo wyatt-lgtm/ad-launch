@@ -187,3 +187,70 @@ export async function sendConfirmationEmail(email: string, confirmationToken: st
   }
   return { success: false, data: null, error: 'Failed to create contact' };
 }
+
+// ═══════════════════════════════════════════════════════════════
+// GHL Location Lookup (validate existing location)
+// ═══════════════════════════════════════════════════════════════
+
+export interface GhlLocationInfo {
+  exists: boolean;
+  locationId?: string;
+  name?: string;
+  error?: string;
+}
+
+/**
+ * Look up a GHL location by ID using the master/agency API.
+ * Returns location info if found, or exists=false if not.
+ */
+export async function lookupGhlLocation(locationId: string): Promise<GhlLocationInfo> {
+  try {
+    const res = await fetch(`${GHL_BASE_URL}/locations/${encodeURIComponent(locationId)}`, {
+      method: 'GET',
+      headers: getHeaders('master'),
+    });
+    if (res.status === 404 || res.status === 422) {
+      return { exists: false, error: 'Location not found in GHL' };
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.error(`[GHL lookup] ${res.status}: ${text}`);
+      return { exists: false, error: `GHL API error: ${res.status}` };
+    }
+    const data = await res.json().catch(() => ({}));
+    const loc = data.location || data;
+    return {
+      exists: true,
+      locationId: loc.id || locationId,
+      name: loc.name || loc.businessName || undefined,
+    };
+  } catch (err: any) {
+    console.error('[GHL lookup] error:', err);
+    return { exists: false, error: err.message || 'Network error' };
+  }
+}
+
+/**
+ * Search GHL locations by name/domain using the master API.
+ */
+export async function searchGhlLocations(query: string): Promise<{ locations: { id: string; name: string; domain?: string }[]; error?: string }> {
+  try {
+    const res = await fetch(`${GHL_BASE_URL}/locations/search?query=${encodeURIComponent(query)}`, {
+      method: 'GET',
+      headers: getHeaders('master'),
+    });
+    if (!res.ok) {
+      // Fallback: search may not be supported — return empty
+      return { locations: [] };
+    }
+    const data = await res.json().catch(() => ({}));
+    const locs = (data.locations || []).map((l: any) => ({
+      id: l.id,
+      name: l.name || l.businessName || '',
+      domain: l.website || l.domain || undefined,
+    }));
+    return { locations: locs };
+  } catch (err: any) {
+    return { locations: [], error: err.message };
+  }
+}

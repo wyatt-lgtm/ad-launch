@@ -33,6 +33,9 @@ export async function GET(_request: NextRequest) {
         ghlProvisioningStatus: true,
         ghlProvisionedAt: true,
         ghlProvisioningError: true,
+        ghlConnectionType: true,
+        ghlLinkedAt: true,
+        ghlLinkNotes: true,
         createdAt: true,
         updatedAt: true,
         analyses: {

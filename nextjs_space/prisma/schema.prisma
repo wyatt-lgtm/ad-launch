@@ -89,6 +89,9 @@ model Business {
   ghlProvisioningStatus String?          // pending | provisioned | failed
   ghlProvisionedAt      DateTime?
   ghlProvisioningError  String?
+  ghlConnectionType     String?          // created_new | linked_existing
+  ghlLinkedAt           DateTime?
+  ghlLinkNotes          String?
 
   @@unique([userId, websiteUrl])
   @@index([userId])

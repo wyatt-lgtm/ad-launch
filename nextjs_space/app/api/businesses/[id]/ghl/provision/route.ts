@@ -84,7 +84,7 @@ export async function POST(
     // ── Validate required fields ────────────────────────────────────
     if (!business.businessName) {
       return NextResponse.json(
-        { error: 'Business must have a name before provisioning a GHL tenant' },
+        { error: 'Business must have a name before provisioning a CRM account' },
         { status: 422 }
       );
     }
@@ -120,7 +120,7 @@ export async function POST(
       });
       return NextResponse.json(
         {
-          error: 'GHL provisioning failed',
+          error: 'CRM provisioning failed',
           detail: result.error,
           ghlProvisioningStatus: 'failed',
         },
@@ -137,6 +137,8 @@ export async function POST(
         ghlProvisioningStatus: 'provisioned',
         ghlProvisionedAt: new Date(),
         ghlProvisioningError: null,
+        ghlConnectionType: 'created_new',
+        ghlLinkedAt: new Date(),
       },
       select: {
         ghlLocationId: true,

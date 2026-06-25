@@ -847,7 +847,7 @@ export default function PublishingDashboard() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Publish Queue</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Review, edit, and auto-publish your social posts via GHL
+            Review, edit, and auto-publish your social posts via Launch CRM
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1239,7 +1239,7 @@ export default function PublishingDashboard() {
                     <Link2 className="w-4 h-4" /> Connected Accounts
                   </h3>
                   <span className="text-[10px] text-gray-500 font-medium bg-gray-50 px-2 py-0.5 rounded-full">
-                    via GHL
+                    via Launch CRM
                   </span>
                 </div>
 
@@ -1250,9 +1250,9 @@ export default function PublishingDashboard() {
                 ) : connectedAccounts.length === 0 ? (
                   <div className="py-6 text-center">
                     <Link2 className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                    <p className="text-sm text-gray-500">Accounts connected via GHL subtenant</p>
+                    <p className="text-sm text-gray-500">Accounts connected via Launch CRM</p>
                     <p className="text-xs text-gray-400 mt-1">
-                      Publishing is handled through your GHL Social Planner integration.
+                      Publishing is handled through your Launch CRM Social Planner integration.
                     </p>
                   </div>
                 ) : (
@@ -1282,7 +1282,7 @@ export default function PublishingDashboard() {
                       );
                     })}
                     <p className="text-xs text-gray-400 mt-2 text-center">
-                      Managed via GHL subtenant
+                      Managed via Launch CRM
                     </p>
                   </div>
                 )}

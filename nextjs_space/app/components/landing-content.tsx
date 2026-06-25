@@ -197,15 +197,15 @@ export default function LandingContent() {
             <p>Not every lightweight post gets a supporting page — only posts with enough substance warrant one. Pages are quality-gated to prevent thin or low-value content from being published.</p>
           </ServiceCard>
 
-          {/* 3g – GHL CRM provisioning */}
-          <ServiceCard icon={Settings} title="Launch CRM Provisioning (GHL)">
-            <p>Launch OS can create or link a Launch CRM workspace (powered by HighLevel/GHL) for each business. The agency credential is used only for initial provisioning and setup.</p>
+          {/* 3g – Launch CRM provisioning */}
+          <ServiceCard icon={Settings} title="Launch CRM Provisioning">
+            <p>Launch OS can create or link a Launch CRM workspace for each business. The agency credential is used only for initial provisioning and setup.</p>
             <p>Once provisioned, a sub-account credential handles all business-specific operations. The system stores the location ID and setup status, and supports lead forms, custom fields, contact management, and future workflow automations.</p>
           </ServiceCard>
 
-          {/* 3h – GHL Social Planner publishing */}
-          <ServiceCard icon={Megaphone} title="Social Planner Publishing (GHL)">
-            <p>Launch OS uses Launch CRM's Social Planner (powered by GHL) as the social publishing rail. This approach leverages existing social account connections rather than building direct Facebook, Instagram, or LinkedIn posting integrations.</p>
+          {/* 3h – Social Planner publishing */}
+          <ServiceCard icon={Megaphone} title="Social Planner Publishing">
+            <p>Launch OS uses Launch CRM's Social Planner as the social publishing rail. This approach leverages existing social account connections rather than building direct Facebook, Instagram, or LinkedIn posting integrations.</p>
             <p>Approved posts can be scheduled or published through the Social Planner when social accounts are connected. Posts for unconnected accounts are held as pending until the connection is made.</p>
             <p>User approval settings control whether posts are auto-scheduled or require manual approval before publishing.</p>
           </ServiceCard>
@@ -322,7 +322,7 @@ export default function LandingContent() {
         </div>
       </Section>
 
-      {/* ═══════════════  10-11. WORDPRESS + GHL CRM  ═══════════════ */}
+      {/* ═══════════════  10-11. WORDPRESS + LAUNCH CRM  ═══════════════ */}
       <Section id="wordpress-ghl">
         <div className="grid md:grid-cols-2 gap-12">
           <div>
@@ -333,19 +333,19 @@ export default function LandingContent() {
           </div>
           <div>
             <h2 className="text-2xl font-bold mb-4">Launch CRM Provisioning</h2>
-            <p className="text-gray-600 mb-3">Launch OS uses Launch CRM, powered by HighLevel (GHL), to manage forms, contacts, and social publishing for each business.</p>
+            <p className="text-gray-600 mb-3">Launch OS uses Launch CRM to manage forms, contacts, and social publishing for each business.</p>
             <p className="text-gray-600 mb-3">When a business is onboarded, Launch OS can create a new CRM sub-account or link to an existing one. The agency credential is used only for initial provisioning — all business-specific operations use the sub-account credential.</p>
             <p className="text-gray-600">The CRM workspace supports lead capture forms, custom fields, contact management, social account connections, and is designed for future workflow automations.</p>
           </div>
         </div>
       </Section>
 
-      {/* ═══════════════  12-13. GHL SOCIAL PLANNER + FACEBOOK  ═══════════════ */}
+      {/* ═══════════════  12-13. SOCIAL PLANNER + FACEBOOK  ═══════════════ */}
       <Section id="social-publishing" className="bg-gray-50">
         <div className="grid md:grid-cols-2 gap-12">
           <div>
             <h2 className="text-2xl font-bold mb-4">Social Planner Publishing</h2>
-            <p className="text-gray-600 mb-3">Rather than building direct integrations with every social platform, Launch OS publishes through Launch CRM's Social Planner (powered by GHL). This approach leverages the business's existing social account connections.</p>
+            <p className="text-gray-600 mb-3">Rather than building direct integrations with every social platform, Launch OS publishes through Launch CRM's Social Planner. This approach leverages the business's existing social account connections.</p>
             <p className="text-gray-600 mb-3">When a post is approved, it's scheduled through the Social Planner for the connected social accounts. Posts for accounts that haven't been connected yet are held in a pending state.</p>
             <p className="text-gray-600">Businesses can configure whether approved posts are automatically scheduled or require manual publishing confirmation.</p>
           </div>
@@ -374,7 +374,7 @@ export default function LandingContent() {
             'Social posts are generated across multiple content lanes — business, evergreen, and local news.',
             'Supporting webpages are created for posts that warrant deeper content.',
             'SEO pages are drafted, quality-checked, and published to grow organic search presence.',
-            'A Launch CRM workspace (GHL) is created or linked, with forms and contact management configured.',
+            'A Launch CRM workspace is created or linked, with forms and contact management configured.',
             'The business connects their Facebook, Instagram, or Google Business Profile through the CRM Social Planner.',
             'Approved posts are scheduled and published through the Social Planner.',
             'Launch OS monitors Google Ads performance, flags unusual campaign movement, summarizes what changed, and recommends landing page, SEO, content, or campaign actions for approval.',
@@ -397,11 +397,11 @@ export default function LandingContent() {
         <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
           {[
             { name: 'WordPress', desc: 'Website deployment, preview hosting, and SEO page publishing through Gutenberg.' },
-            { name: 'HighLevel / GHL', desc: 'CRM workspace provisioning, contact management, forms, and workflow automations.' },
-            { name: 'GHL Social Planner', desc: 'Social media scheduling and publishing rail for approved content.' },
-            { name: 'Facebook Pages (via GHL)', desc: 'Publish approved posts to connected Facebook Pages through the Social Planner.' },
-            { name: 'Instagram (via GHL)', desc: 'Publish approved posts to connected Instagram accounts through the Social Planner, where supported.' },
-            { name: 'Google Business Profile (via GHL)', desc: 'Publish approved posts to Google Business Profile through the Social Planner, where supported.' },
+            { name: 'Launch CRM', desc: 'CRM workspace provisioning, contact management, forms, and workflow automations.' },
+            { name: 'Social Planner', desc: 'Social media scheduling and publishing rail for approved content.' },
+            { name: 'Facebook Pages', desc: 'Publish approved posts to connected Facebook Pages through the Social Planner.' },
+            { name: 'Instagram', desc: 'Publish approved posts to connected Instagram accounts through the Social Planner, where supported.' },
+            { name: 'Google Business Profile', desc: 'Publish approved posts to Google Business Profile through the Social Planner, where supported.' },
             { name: 'RSS / Local News Feeds', desc: 'Monitor local news sources and community events for Scout content generation.' },
             { name: 'AI / LLM Workflows', desc: 'Multiple specialized AI agents handle research, copywriting, creative direction, image generation, and quality review.' },
             { name: 'Tombstone API', desc: 'The AI orchestration engine that coordinates all agents, workflows, and publishing pipelines.' },
@@ -409,7 +409,7 @@ export default function LandingContent() {
             { name: 'LaunchMarketing.com Domains', desc: 'Platform domains for connect, preview, and marketing portal access.' },
             { name: 'Google Ads', desc: 'Campaign performance reporting, anomaly detection, and approval-gated recommendations (being built).' },
             { name: 'Google Ads MCC', desc: 'Manager account-style reporting for agencies overseeing multiple client ad accounts (planned).' },
-            { name: 'CRM Lead Tracking (via GHL)', desc: 'Connect ad performance and website conversions to CRM lead capture and form submissions.' },
+            { name: 'CRM Lead Tracking', desc: 'Connect ad performance and website conversions to CRM lead capture and form submissions.' },
           ].map((item) => (
             <div key={item.name} className="bg-white border border-gray-200 rounded-xl p-4">
               <h4 className="font-semibold text-gray-900 text-sm mb-1">{item.name}</h4>
@@ -536,7 +536,7 @@ export default function LandingContent() {
             { title: 'No Unsupported Claims', desc: 'Generated content is blocked from making unsupported claims like guaranteed rankings, #1 placement, or unrealistic promises.' },
             { title: 'No Password Collection', desc: 'Launch OS never asks for your Facebook password or social media login credentials. All connections use official OAuth flows through the CRM.' },
             { title: 'Credential Isolation', desc: 'Agency credentials are used only for provisioning. All business-specific operations use isolated sub-account credentials. Business data is separated by business ID.' },
-            { title: 'Secure Backend Services', desc: 'GHL, WordPress, and infrastructure credentials are handled by secure backend services. They are never exposed in client-side code or user-facing interfaces.' },
+            { title: 'Secure Backend Services', desc: 'CRM, WordPress, and infrastructure credentials are handled by secure backend services. They are never exposed in client-side code or user-facing interfaces.' },
             { title: 'Review Before Going Live', desc: 'Website previews, social posts, SEO pages, and supporting content can all be reviewed and edited before they reach your audience.' },
             { title: 'No Automatic Doorway Pages', desc: 'Geo-reference data does not automatically generate location doorway pages. SEO pages must provide genuine value to searchers.' },
             { title: 'Approval-Gated Campaign Changes', desc: 'Google Ads campaign recommendations are designed to be approval-gated. No automatic campaign changes without explicit permission (planned).' },
@@ -558,11 +558,11 @@ export default function LandingContent() {
           <FaqItem q="Is this the same as Tombstone?" a="Tombstone is the AI orchestration engine that powers Launch OS behind the scenes. It coordinates multiple specialized AI agents that handle research, copywriting, creative direction, image generation, and publishing. Launch OS is the customer-facing platform; Tombstone is the engine that makes it work." />
           <FaqItem q="Does Launch OS replace my website?" a="It can. Launch OS generates website concepts based on your existing site and competitor analysis, then deploys a preview for your review. You approve the new site before anything replaces your current one. You can also use Launch OS alongside your existing website for social content and SEO pages." />
           <FaqItem q="Can it create a live website preview?" a="Yes. Launch OS deploys preview websites on WordPress so you can see exactly what the generated site looks like, navigate through it, and request changes before approving it." />
-          <FaqItem q="Can it post to Facebook?" a="Yes, through the Launch CRM Social Planner (powered by GHL). Once you connect your Facebook Page through the CRM, approved posts can be scheduled and published to Facebook." />
+          <FaqItem q="Can it post to Facebook?" a="Yes, through the Launch CRM Social Planner. Once you connect your Facebook Page through the CRM, approved posts can be scheduled and published to Facebook." />
           <FaqItem q="Do I still need to connect my Facebook account?" a="Yes. You need to authorize your Facebook Page through the Launch CRM Social Planner. Launch OS generates the content, but you authorize which social accounts it can publish to." />
           <FaqItem q="Does Launch OS need my Facebook password?" a="No. Launch OS never asks for social media passwords. Social account connections use the official authorization flow through the CRM platform." />
           <FaqItem q="Can I approve posts before they publish?" a="Yes. By default, all posts require approval before publishing. Auto-scheduling can be enabled, but only after the business owner explicitly grants that permission." />
-          <FaqItem q="How does GHL fit into the system?" a="Launch OS uses Launch CRM, powered by HighLevel (GHL), for CRM features like contact management, lead forms, and social publishing. GHL provides the Social Planner that handles the actual scheduling and posting to connected social accounts." />
+          <FaqItem q="How does Launch CRM fit into the system?" a="Launch OS uses Launch CRM for CRM features like contact management, lead forms, and social publishing. Launch CRM provides the Social Planner that handles the actual scheduling and posting to connected social accounts." />
           <FaqItem q="How does SEO page generation work?" a="The SEO pipeline includes keyword research, search intent analysis, site inventory check, copy drafting, conversion review, and final QA. Approved pages are published to WordPress through the Gutenberg editor." />
           <FaqItem q="Will it create pages for every ZIP or city?" a="No. Launch OS does not automatically generate location doorway pages. SEO pages must provide genuine value and pass quality gates before publishing. Geo-reference data informs content but does not trigger mass page generation." />
           <FaqItem q="Can I add competitor websites?" a="Yes. You can add up to 3 competitor websites. Launch OS will analyze their SEO, offers, positioning, CTAs, trust signals, and perform SWOT analysis to inform your website concept and content strategy." />

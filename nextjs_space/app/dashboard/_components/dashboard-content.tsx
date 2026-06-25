@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import {
   LayoutDashboard, Globe, Loader2, Sparkles, ChevronRight,
   MapPin, Building2, Image as ImageIcon, FileText, Plus,
-  Zap, CheckCircle2, AlertCircle,
+  Zap, CheckCircle2, AlertCircle, Link2, ChevronDown, X,
 } from 'lucide-react';
 import UrlInputForm from '../../components/url-input-form';
 import CreditBadge from '../../components/credit-badge';
@@ -28,6 +28,9 @@ interface BusinessItem {
   ghlProvisioningStatus: string | null;
   ghlProvisionedAt: string | null;
   ghlProvisioningError: string | null;
+  ghlConnectionType: string | null;
+  ghlLinkedAt: string | null;
+  ghlLinkNotes: string | null;
   createdAt: string;
   updatedAt: string;
   _count: { analyses: number };
@@ -49,24 +52,64 @@ export default function DashboardContent() {
   const [showNewAnalysis, setShowNewAnalysis] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [provisioningIds, setProvisioningIds] = useState<Set<string>>(new Set());
+  const [linkModalBizId, setLinkModalBizId] = useState<string | null>(null);
+  const [linkLocationId, setLinkLocationId] = useState('');
+  const [linkNotes, setLinkNotes] = useState('');
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [crmDropdownId, setCrmDropdownId] = useState<string | null>(null);
 
   const handleProvisionGhl = async (bizId: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // don't trigger card click
+    e.stopPropagation();
+    setCrmDropdownId(null);
     setProvisioningIds(prev => new Set(prev).add(bizId));
     try {
       const res = await fetch(`/api/businesses/${bizId}/ghl/provision`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setToastMsg(data.alreadyProvisioned ? 'GHL tenant already connected' : 'GHL tenant created successfully!');
-        // Refresh business list to get updated GHL status
+        setToastMsg(data.alreadyProvisioned ? 'Launch CRM already connected' : 'Launch CRM account created!');
         await fetchBusinesses();
       } else {
-        setToastMsg(`GHL provisioning failed: ${data.detail || data.error || 'Unknown error'}`);
+        setToastMsg(`Launch CRM setup failed: ${data.detail || data.error || 'Unknown error'}`);
       }
     } catch (err: any) {
-      setToastMsg('GHL provisioning failed: Network error');
+      setToastMsg('Launch CRM setup failed: Network error');
     }
     setProvisioningIds(prev => { const s = new Set(prev); s.delete(bizId); return s; });
+    setTimeout(() => setToastMsg(null), 5000);
+  };
+
+  const handleLinkExisting = async () => {
+    if (!linkModalBizId || !linkLocationId.trim()) return;
+    setLinkLoading(true);
+    setLinkError(null);
+    try {
+      const res = await fetch(`/api/businesses/${linkModalBizId}/ghl/link-existing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ghlLocationId: linkLocationId.trim(),
+          notes: linkNotes.trim() || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setToastMsg(data.alreadyLinked ? 'Launch CRM already linked' : 'Launch CRM account linked!');
+        setLinkModalBizId(null);
+        setLinkLocationId('');
+        setLinkNotes('');
+        await fetchBusinesses();
+      } else if (res.status === 409) {
+        setLinkError(data.message || 'This CRM location is already linked to another business.');
+      } else if (res.status === 422) {
+        setLinkError(data.message || 'Could not verify this CRM location ID.');
+      } else {
+        setLinkError(data.message || data.error || 'Failed to link CRM account.');
+      }
+    } catch (err: any) {
+      setLinkError('Network error. Please try again.');
+    }
+    setLinkLoading(false);
     setTimeout(() => setToastMsg(null), 5000);
   };
 
@@ -219,18 +262,18 @@ export default function DashboardContent() {
                   </div>
                 )}
 
-                {/* GHL Tenant Status */}
+                {/* Launch CRM Status */}
                 <div className="mb-3" onClick={e => e.stopPropagation()}>
                   {biz.ghlProvisioningStatus === 'provisioned' ? (
                     <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg px-2.5 py-1.5 w-fit">
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      GHL Tenant Connected
+                      Launch CRM Connected
                     </div>
                   ) : biz.ghlProvisioningStatus === 'failed' ? (
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg px-2.5 py-1.5">
                         <AlertCircle className="w-3.5 h-3.5" />
-                        GHL Failed
+                        Launch CRM Failed
                       </div>
                       <button
                         onClick={(e) => handleProvisionGhl(biz.id, e)}
@@ -243,17 +286,37 @@ export default function DashboardContent() {
                   ) : provisioningIds.has(biz.id) || biz.ghlProvisioningStatus === 'pending' ? (
                     <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 w-fit">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Provisioning GHL Tenant…
+                      Provisioning Launch CRM…
                     </div>
                   ) : (
-                    <button
-                      onClick={(e) => handleProvisionGhl(biz.id, e)}
-                      disabled={provisioningIds.has(biz.id)}
-                      className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg px-2.5 py-1.5 transition-colors"
-                    >
-                      <Zap className="w-3.5 h-3.5" />
-                      Create GHL Tenant
-                    </button>
+                    <div className="relative">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCrmDropdownId(crmDropdownId === biz.id ? null : biz.id); }}
+                        className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg px-2.5 py-1.5 transition-colors"
+                      >
+                        <Zap className="w-3.5 h-3.5" />
+                        Launch CRM Setup
+                        <ChevronDown className="w-3 h-3" />
+                      </button>
+                      {crmDropdownId === biz.id && (
+                        <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[200px]">
+                          <button
+                            onClick={(e) => { handleProvisionGhl(biz.id, e); }}
+                            className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                          >
+                            <Zap className="w-3.5 h-3.5 text-blue-500" />
+                            Create New CRM Account
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setCrmDropdownId(null); setLinkModalBizId(biz.id); setLinkLocationId(''); setLinkNotes(''); setLinkError(null); }}
+                            className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                          >
+                            <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+                            Link Existing CRM Account
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -288,6 +351,74 @@ export default function DashboardContent() {
       {businesses.length > 0 && (
         <div className="mt-8">
           <BillingSection businessId={businesses[0].id} />
+        </div>
+      )}
+
+      {/* Link Existing CRM Modal */}
+      {linkModalBizId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setLinkModalBizId(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-5 pb-3">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Link Existing Launch CRM Account</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {businesses.find(b => b.id === linkModalBizId)?.businessName || 'Business'}
+                </p>
+              </div>
+              <button onClick={() => setLinkModalBizId(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-6 pb-2">
+              <p className="text-sm text-gray-600">
+                Link an existing Launch CRM account to this business. This will not create a new CRM account. Use this when the business already has a Launch CRM location.
+              </p>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">CRM Location ID <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={linkLocationId}
+                  onChange={e => setLinkLocationId(e.target.value)}
+                  placeholder="e.g. abc123xyz"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Notes <span className="text-gray-400">(optional)</span></label>
+                <input
+                  type="text"
+                  value={linkNotes}
+                  onChange={e => setLinkNotes(e.target.value)}
+                  placeholder="e.g. Existing Blazing Hog CRM account"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                />
+              </div>
+              {linkError && (
+                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  {linkError}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 rounded-b-2xl">
+              <button
+                onClick={() => setLinkModalBizId(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLinkExisting}
+                disabled={linkLoading || !linkLocationId.trim()}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+              >
+                {linkLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {linkLoading ? 'Validating...' : 'Link CRM Account'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
