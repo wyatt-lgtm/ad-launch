@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
-import { lookupGhlLocation } from '@/lib/ghl';
+import { validateGhlCredentials } from '@/lib/ghl';
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? '';
 
@@ -12,7 +12,8 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? '';
  * POST /api/businesses/[id]/ghl/link-existing
  *
  * Links an existing GHL Location to the given business.
- * Validates the location exists via the GHL API before saving.
+ * Requires both a location/business ID and an API token.
+ * Validates the credentials work together via the GHL API before saving.
  * Checks for duplicate linking across businesses.
  *
  * Auth: session user must own the business, OR valid ADMIN_API_KEY header.
@@ -42,18 +43,26 @@ export async function POST(
 
     // ── Parse body ─────────────────────────────────────────────────
     const body = await request.json().catch(() => ({}));
-    const { ghlLocationId, ghlSubtenantId, notes } = body;
+    const { locationId, apiToken, notes } = body;
 
-    if (!ghlLocationId || typeof ghlLocationId !== 'string' || !ghlLocationId.trim()) {
+    // Validate required fields
+    if (!locationId || typeof locationId !== 'string' || !locationId.trim()) {
       return NextResponse.json(
-        { error: 'ghlLocationId is required' },
+        { error: 'Launch CRM Business ID is required' },
+        { status: 400 }
+      );
+    }
+    if (!apiToken || typeof apiToken !== 'string' || !apiToken.trim()) {
+      return NextResponse.json(
+        { error: 'Launch CRM API Token is required' },
         { status: 400 }
       );
     }
 
-    const trimmedLocationId = ghlLocationId.trim();
+    const trimmedLocationId = locationId.trim();
+    const trimmedToken = apiToken.trim();
 
-    // ── Fetch business ──────────────────────────────────────────────
+    // ── Fetch business ────────────────────────────────────────────
     const business = await prisma.business.findUnique({
       where: { id: businessId },
       select: {
@@ -83,7 +92,7 @@ export async function POST(
         alreadyLinked: true,
         ghlLocationId: business.ghlLocationId,
         ghlProvisioningStatus: 'provisioned',
-        message: 'This CRM account is already linked to this business.',
+        message: 'This Launch CRM account is already linked to this business.',
       });
     }
 
@@ -98,8 +107,7 @@ export async function POST(
         return NextResponse.json(
           {
             error: 'business_already_connected',
-            message: 'This business is already connected to a different CRM account. Admin override required to change.',
-            existingLocationId: business.ghlLocationId,
+            message: 'This business is already connected to a different Launch CRM account. Admin override required to change.',
           },
           { status: 409 }
         );
@@ -121,8 +129,8 @@ export async function POST(
       if (!isAdmin || !forceOverwrite) {
         return NextResponse.json(
           {
-            error: 'ghl_location_already_linked',
-            message: 'This CRM location is already linked to another business.',
+            error: 'launch_crm_account_already_linked',
+            message: 'This Launch CRM account is already linked to another business.',
             linkedBusinessId: existingLink.id,
             linkedBusinessName: existingLink.businessName,
           },
@@ -131,25 +139,25 @@ export async function POST(
       }
     }
 
-    // ── Validate location exists in GHL ─────────────────────────────
-    const lookup = await lookupGhlLocation(trimmedLocationId);
-    if (!lookup.exists) {
+    // ── Validate credentials: token + location ID ─────────────────
+    const validation = await validateGhlCredentials(trimmedLocationId, trimmedToken);
+    if (!validation.exists) {
       return NextResponse.json(
         {
-          error: 'ghl_location_not_found',
-          message: 'Could not verify this CRM location ID. Please check the ID and try again.',
-          detail: lookup.error,
+          error: 'invalid_launch_crm_credentials',
+          message: 'The Launch CRM Business ID or API token could not be verified. Please check both values and try again.',
         },
         { status: 422 }
       );
     }
 
-    // ── Save link ──────────────────────────────────────────────────
-    const updated = await prisma.business.update({
+    // ── Save link (same canonical fields as new-account provisioning) ──
+    await prisma.business.update({
       where: { id: businessId },
       data: {
-        ghlLocationId: lookup.locationId || trimmedLocationId,
-        ghlSubtenantId: ghlSubtenantId?.trim() || null,
+        ghlLocationId: validation.locationId || trimmedLocationId,
+        ghlSubtenantId: null,  // linked accounts don't have a separate subtenant
+        ghlApiToken: trimmedToken,
         ghlProvisioningStatus: 'provisioned',
         ghlProvisionedAt: new Date(),
         ghlProvisioningError: null,
@@ -157,28 +165,26 @@ export async function POST(
         ghlLinkedAt: new Date(),
         ghlLinkNotes: notes?.trim() || null,
       },
-      select: {
-        ghlLocationId: true,
-        ghlSubtenantId: true,
-        ghlProvisioningStatus: true,
-        ghlProvisionedAt: true,
-        ghlConnectionType: true,
-        ghlLinkedAt: true,
-      },
     });
 
+    // Log without exposing the token
     console.log(
-      `[GHL] Business ${businessId} linked to existing location ${trimmedLocationId}` +
-      (lookup.name ? ` (${lookup.name})` : '')
+      `[CRM link] Business ${businessId} linked to existing location ${trimmedLocationId}` +
+      (validation.name ? ` (${validation.name})` : '') +
+      ` [token: ${trimmedToken.slice(0, 6)}...${trimmedToken.slice(-4)}]`
     );
 
+    // Return success WITHOUT the API token
     return NextResponse.json({
-      ...updated,
-      ghlLocationName: lookup.name || null,
+      ghlLocationId: validation.locationId || trimmedLocationId,
+      ghlLocationName: validation.name || null,
+      ghlProvisioningStatus: 'provisioned',
+      ghlConnectionType: 'linked_existing',
+      ghlLinkedAt: new Date().toISOString(),
       alreadyLinked: false,
     });
   } catch (err: any) {
-    console.error('[GHL link-existing] unexpected error:', err);
+    console.error('[CRM link-existing] unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

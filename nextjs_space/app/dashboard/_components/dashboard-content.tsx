@@ -54,6 +54,7 @@ export default function DashboardContent() {
   const [provisioningIds, setProvisioningIds] = useState<Set<string>>(new Set());
   const [linkModalBizId, setLinkModalBizId] = useState<string | null>(null);
   const [linkLocationId, setLinkLocationId] = useState('');
+  const [linkApiToken, setLinkApiToken] = useState('');
   const [linkNotes, setLinkNotes] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -80,7 +81,7 @@ export default function DashboardContent() {
   };
 
   const handleLinkExisting = async () => {
-    if (!linkModalBizId || !linkLocationId.trim()) return;
+    if (!linkModalBizId || !linkLocationId.trim() || !linkApiToken.trim()) return;
     setLinkLoading(true);
     setLinkError(null);
     try {
@@ -88,7 +89,8 @@ export default function DashboardContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ghlLocationId: linkLocationId.trim(),
+          locationId: linkLocationId.trim(),
+          apiToken: linkApiToken.trim(),
           notes: linkNotes.trim() || undefined,
         }),
       });
@@ -97,6 +99,7 @@ export default function DashboardContent() {
         setToastMsg(data.alreadyLinked ? 'Launch CRM already linked' : 'Launch CRM account linked!');
         setLinkModalBizId(null);
         setLinkLocationId('');
+        setLinkApiToken('');
         setLinkNotes('');
         await fetchBusinesses();
       } else if (res.status === 409) {
@@ -308,7 +311,7 @@ export default function DashboardContent() {
                             Create New CRM Account
                           </button>
                           <button
-                            onClick={(e) => { e.stopPropagation(); setCrmDropdownId(null); setLinkModalBizId(biz.id); setLinkLocationId(''); setLinkNotes(''); setLinkError(null); }}
+                            onClick={(e) => { e.stopPropagation(); setCrmDropdownId(null); setLinkModalBizId(biz.id); setLinkLocationId(''); setLinkApiToken(''); setLinkNotes(''); setLinkError(null); }}
                             className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                           >
                             <Link2 className="w-3.5 h-3.5 text-indigo-500" />
@@ -376,7 +379,7 @@ export default function DashboardContent() {
             </div>
             <div className="px-6 py-4 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">CRM Location ID <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Launch CRM Business ID <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={linkLocationId}
@@ -386,12 +389,23 @@ export default function DashboardContent() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes <span className="text-gray-400">(optional)</span></label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Launch CRM API Token <span className="text-red-500">*</span></label>
+                <input
+                  type="password"
+                  value={linkApiToken}
+                  onChange={e => setLinkApiToken(e.target.value)}
+                  placeholder="pit-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono"
+                />
+                <p className="text-xs text-gray-400 mt-1">The API token is stored securely and is never displayed after saving.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account Name / Notes <span className="text-gray-400">(optional)</span></label>
                 <input
                   type="text"
                   value={linkNotes}
                   onChange={e => setLinkNotes(e.target.value)}
-                  placeholder="e.g. Existing Blazing Hog CRM account"
+                  placeholder="e.g. Existing Blazing Hog Launch CRM account"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                 />
               </div>
@@ -411,7 +425,7 @@ export default function DashboardContent() {
               </button>
               <button
                 onClick={handleLinkExisting}
-                disabled={linkLoading || !linkLocationId.trim()}
+                disabled={linkLoading || !linkLocationId.trim() || !linkApiToken.trim()}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
               >
                 {linkLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

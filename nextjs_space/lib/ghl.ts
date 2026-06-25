@@ -231,6 +231,45 @@ export async function lookupGhlLocation(locationId: string): Promise<GhlLocation
 }
 
 /**
+ * Validate a user-provided GHL API token + location ID pair.
+ * Uses the provided token (NOT the master token) to call GET /locations/:id.
+ * This proves: (a) token is valid, (b) token can access the location.
+ */
+export async function validateGhlCredentials(
+  locationId: string,
+  apiToken: string
+): Promise<GhlLocationInfo> {
+  try {
+    const res = await fetch(`${GHL_BASE_URL}/locations/${encodeURIComponent(locationId)}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+        'Version': '2021-07-28',
+      },
+    });
+    if (res.status === 401 || res.status === 403) {
+      return { exists: false, error: 'Invalid or unauthorized API token' };
+    }
+    if (res.status === 404 || res.status === 422) {
+      return { exists: false, error: 'Location not found or token cannot access this location' };
+    }
+    if (!res.ok) {
+      return { exists: false, error: `API error: ${res.status}` };
+    }
+    const data = await res.json().catch(() => ({}));
+    const loc = data.location || data;
+    return {
+      exists: true,
+      locationId: loc.id || locationId,
+      name: loc.name || loc.businessName || undefined,
+    };
+  } catch (err: any) {
+    return { exists: false, error: err.message || 'Network error' };
+  }
+}
+
+/**
  * Search GHL locations by name/domain using the master API.
  */
 export async function searchGhlLocations(query: string): Promise<{ locations: { id: string; name: string; domain?: string }[]; error?: string }> {

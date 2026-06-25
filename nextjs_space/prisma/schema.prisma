@@ -89,6 +89,7 @@ model Business {
   ghlProvisioningStatus String?          // pending | provisioned | failed
   ghlProvisionedAt      DateTime?
   ghlProvisioningError  String?
+  ghlApiToken           String?          // Per-business GHL API token (for linked_existing accounts)
   ghlConnectionType     String?          // created_new | linked_existing
   ghlLinkedAt           DateTime?
   ghlLinkNotes          String?
