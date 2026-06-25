@@ -58,6 +58,7 @@ export default function DashboardContent() {
   const [linkNotes, setLinkNotes] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkShowToken, setLinkShowToken] = useState(false);
   const linkBizIdHasAt = linkLocationId.includes('@');
   const [crmDropdownId, setCrmDropdownId] = useState<string | null>(null);
 
@@ -312,7 +313,7 @@ export default function DashboardContent() {
                             Create New CRM Account
                           </button>
                           <button
-                            onClick={(e) => { e.stopPropagation(); setCrmDropdownId(null); setLinkModalBizId(biz.id); setLinkLocationId(''); setLinkApiToken(''); setLinkNotes(''); setLinkError(null); }}
+                            onClick={(e) => { e.stopPropagation(); setCrmDropdownId(null); setLinkModalBizId(biz.id); setLinkLocationId(''); setLinkApiToken(''); setLinkNotes(''); setLinkError(null); setLinkShowToken(false); }}
                             className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                           >
                             <Link2 className="w-3.5 h-3.5 text-indigo-500" />
@@ -362,6 +363,7 @@ export default function DashboardContent() {
       {linkModalBizId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setLinkModalBizId(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <form autoComplete="off" onSubmit={e => { e.preventDefault(); handleLinkExisting(); }}>
             <div className="flex items-center justify-between px-6 pt-5 pb-3">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Link Existing Launch CRM Account</h3>
@@ -378,17 +380,25 @@ export default function DashboardContent() {
                 Link an existing Launch CRM account to this business. This will not create a new CRM account. Use this when the business already has a Launch CRM location.
               </p>
             </div>
+            {/* Hidden honeypot fields absorb browser autofill so real fields stay empty */}
+            <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', top: '-9999px', width: 0, height: 0, overflow: 'hidden', opacity: 0, pointerEvents: 'none' }}>
+              <input type="text" name="fake_email_trap" tabIndex={-1} autoComplete="username" />
+              <input type="password" name="fake_pw_trap" tabIndex={-1} autoComplete="current-password" />
+            </div>
             <div className="px-6 py-4 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Launch CRM Business ID <span className="text-red-500">*</span></label>
+                <label htmlFor="crm-biz-id" className="block text-sm font-medium text-gray-700 mb-1">Launch CRM Business ID <span className="text-red-500">*</span></label>
                 <input
+                  id="crm-biz-id"
                   type="text"
+                  name="crm_location_identifier"
                   value={linkLocationId}
                   onChange={e => setLinkLocationId(e.target.value)}
                   placeholder="Paste the Launch CRM Business ID"
-                  autoComplete="off"
+                  autoComplete="one-time-code"
                   data-lpignore="true"
                   data-form-type="other"
+                  data-1p-ignore="true"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none placeholder:text-gray-400 placeholder:opacity-100"
                 />
                 {linkBizIdHasAt ? (
@@ -401,15 +411,33 @@ export default function DashboardContent() {
                 )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Launch CRM API Token <span className="text-red-500">*</span></label>
-                <input
-                  type="password"
-                  value={linkApiToken}
-                  onChange={e => setLinkApiToken(e.target.value)}
-                  placeholder="Paste the Launch CRM API Token"
-                  autoComplete="off"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono placeholder:text-gray-400 placeholder:opacity-100 placeholder:font-sans"
-                />
+                <label htmlFor="crm-api-token" className="block text-sm font-medium text-gray-700 mb-1">Launch CRM API Token <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <input
+                    id="crm-api-token"
+                    type="text"
+                    name="crm_bearer_credential"
+                    value={linkApiToken}
+                    onChange={e => setLinkApiToken(e.target.value)}
+                    placeholder="Paste the Launch CRM API Token"
+                    autoComplete="one-time-code"
+                    data-lpignore="true"
+                    data-form-type="other"
+                    data-1p-ignore="true"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono placeholder:text-gray-400 placeholder:opacity-100 placeholder:font-sans"
+                    style={!linkShowToken && linkApiToken ? { WebkitTextSecurity: 'disc', textSecurity: 'disc' } as React.CSSProperties : undefined}
+                  />
+                  {linkApiToken && (
+                    <button
+                      type="button"
+                      onClick={() => setLinkShowToken(v => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs"
+                      tabIndex={-1}
+                    >
+                      {linkShowToken ? 'Hide' : 'Show'}
+                    </button>
+                  )}
+                </div>
                 <p className="text-xs text-gray-400 mt-1">The API token is stored securely and is never displayed after saving.</p>
               </div>
               <div>
@@ -437,7 +465,7 @@ export default function DashboardContent() {
                 Cancel
               </button>
               <button
-                onClick={handleLinkExisting}
+                type="submit"
                 disabled={linkLoading || !linkLocationId.trim() || !linkApiToken.trim() || linkBizIdHasAt}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
               >
@@ -445,6 +473,7 @@ export default function DashboardContent() {
                 {linkLoading ? 'Validating...' : 'Link CRM Account'}
               </button>
             </div>
+            </form>
           </div>
         </div>
       )}
