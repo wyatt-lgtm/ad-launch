@@ -10,7 +10,8 @@ import {
   Zap, RefreshCw, ChevronDown, ChevronUp, Plus, Link2, Unlink,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
   List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare,
-  PenLine, Image as ImageIcon, Coins, Lock, Lightbulb, AlertTriangle, Layers
+  PenLine, Image as ImageIcon, Coins, Lock, Lightbulb, AlertTriangle, Layers,
+  CalendarPlus, Globe, Linkedin
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -224,6 +225,21 @@ export default function SocialDashboard() {
   const [draftSubmitting, setDraftSubmitting] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [showDraftAdvanced, setShowDraftAdvanced] = useState(false);
+
+  // Post Now / Schedule Post modal state
+  const [postNowTarget, setPostNowTarget] = useState<SocialPost | null>(null);
+  const [postNowPlatforms, setPostNowPlatforms] = useState<string[]>([]);
+  const [postNowLoading, setPostNowLoading] = useState(false);
+  const [postNowError, setPostNowError] = useState<string | null>(null);
+  const [scheduleTarget, setScheduleTarget] = useState<SocialPost | null>(null);
+  const [schedulePlatforms, setSchedulePlatforms] = useState<string[]>([]);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('10:00');
+  const [scheduleTimezone, setScheduleTimezone] = useState('America/Denver');
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [socialConnections, setSocialConnections] = useState<Array<{ id: string; platform: string; displayName: string | null; isActive: boolean }>>([]);
+  const [actionToast, setActionToast] = useState<string | null>(null);
 
   // Generation progress tracking (shared by both Scout Stories + My Own Post)
   const [activeWorkflowIds, setActiveWorkflowIds] = useState<string[]>([]);
@@ -1076,6 +1092,113 @@ export default function SocialDashboard() {
     navigator.clipboard.writeText(fullText);
     setCopiedId(post.id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // ── Fetch social connections for active business ──
+  const fetchSocialConnections = useCallback(async () => {
+    if (!activeBusinessId) { setSocialConnections([]); return; }
+    try {
+      const res = await fetch(`/api/businesses/${activeBusinessId}/social-connections`);
+      const data = await res.json();
+      setSocialConnections((data.connections || []).filter((c: any) => c.isActive));
+    } catch { setSocialConnections([]); }
+  }, [activeBusinessId]);
+
+  useEffect(() => { fetchSocialConnections(); }, [fetchSocialConnections]);
+
+  // ── Post eligibility check ──
+  const isPostEligible = (post: SocialPost) => {
+    if (!post.caption?.trim()) return { eligible: false, reason: 'Caption is missing. Edit or regenerate before publishing.' };
+    const hasImage = !!post.imageUrl || (Array.isArray((post as any).carouselImageUrls) && (post as any).carouselImageUrls.length > 0);
+    if (!hasImage) return { eligible: false, reason: 'Image is missing. Edit or regenerate before publishing.' };
+    if (post.status === 'generation_failed' || post.status === 'generation_incomplete') return { eligible: false, reason: 'Post generation failed or is incomplete. Fix or regenerate before publishing.' };
+    if (post.status === 'manually_posted' || post.status === 'published') return { eligible: false, reason: 'This post has already been published.' };
+    return { eligible: true, reason: '' };
+  };
+
+  // ── Post Now handler ──
+  const openPostNowModal = (post: SocialPost) => {
+    setPostNowTarget(post);
+    setPostNowPlatforms(post.platforms.length > 0 ? [...post.platforms] : (socialConnections.length > 0 ? socialConnections.map(c => c.platform) : ['facebook']));
+    setPostNowError(null);
+    setPostNowLoading(false);
+  };
+
+  const executePostNow = async () => {
+    if (!postNowTarget) return;
+    setPostNowLoading(true);
+    setPostNowError(null);
+    try {
+      const res = await fetch(`/api/social/posts/${postNowTarget.id}/post-now`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platforms: postNowPlatforms }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPostNowTarget(null);
+        setActionToast('Post published successfully!');
+        setTimeout(() => setActionToast(null), 5000);
+        await fetchPosts();
+      } else {
+        setPostNowError(data.message || data.error || 'Failed to publish post.');
+      }
+    } catch {
+      setPostNowError('Network error. Please try again.');
+    }
+    setPostNowLoading(false);
+  };
+
+  // ── Schedule Post handler ──
+  const openScheduleModal = (post: SocialPost) => {
+    setScheduleTarget(post);
+    setSchedulePlatforms(post.platforms.length > 0 ? [...post.platforms] : (socialConnections.length > 0 ? socialConnections.map(c => c.platform) : ['facebook']));
+    // Default to tomorrow 10 AM
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    setScheduleDate(tomorrow.toISOString().split('T')[0]);
+    setScheduleTime('10:00');
+    setScheduleTimezone('America/Denver');
+    setScheduleError(null);
+    setScheduleLoading(false);
+  };
+
+  const executeSchedule = async () => {
+    if (!scheduleTarget || !scheduleDate || !scheduleTime) return;
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      const scheduledFor = new Date(`${scheduleDate}T${scheduleTime}:00`).toISOString();
+      const res = await fetch(`/api/social/posts/${scheduleTarget.id}/schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduledFor, timezone: scheduleTimezone, platforms: schedulePlatforms }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setScheduleTarget(null);
+        setActionToast('Post scheduled successfully!');
+        setTimeout(() => setActionToast(null), 5000);
+        await fetchPosts();
+      } else {
+        setScheduleError(data.message || data.error || 'Failed to schedule post.');
+      }
+    } catch {
+      setScheduleError('Network error. Please try again.');
+    }
+    setScheduleLoading(false);
+  };
+
+  const CHANNEL_OPTIONS = [
+    { id: 'facebook', label: 'Facebook', icon: Facebook },
+    { id: 'instagram', label: 'Instagram', icon: Instagram },
+    { id: 'google_business', label: 'Google Business', icon: Globe },
+    { id: 'linkedin', label: 'LinkedIn', icon: Linkedin },
+    { id: 'youtube', label: 'YouTube', icon: Youtube },
+  ];
+
+  const togglePlatform = (platformId: string, list: string[], setList: (v: string[]) => void) => {
+    setList(list.includes(platformId) ? list.filter(p => p !== platformId) : [...list, platformId]);
   };
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -2498,16 +2621,39 @@ export default function SocialDashboard() {
                           Download Package
                         </button>
 
-                        {/* Mark as Manually Posted — for approved/downloaded posts */}
-                        {(post.status === 'approved' || post.status === 'downloaded') && (
-                          <button
-                            onClick={() => updatePost(post.id, 'mark_manually_posted')}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 rounded-lg text-xs font-medium text-green-700 hover:bg-green-100 transition-colors"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Mark as Posted
-                          </button>
-                        )}
+                        {/* Post Now — for eligible posts */}
+                        {(() => {
+                          const elig = isPostEligible(post);
+                          if (post.status === 'manually_posted' || post.status === 'published') return null;
+                          return (
+                            <button
+                              onClick={() => elig.eligible ? openPostNowModal(post) : undefined}
+                              disabled={!elig.eligible}
+                              title={!elig.eligible ? elig.reason : 'Publish this post now'}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 rounded-lg text-xs font-medium text-green-700 hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                              Post Now
+                            </button>
+                          );
+                        })()}
+
+                        {/* Schedule Post — for eligible posts */}
+                        {(() => {
+                          const elig = isPostEligible(post);
+                          if (post.status === 'manually_posted' || post.status === 'published') return null;
+                          return (
+                            <button
+                              onClick={() => elig.eligible ? openScheduleModal(post) : undefined}
+                              disabled={!elig.eligible}
+                              title={!elig.eligible ? elig.reason : 'Schedule this post for later'}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 rounded-lg text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <CalendarPlus className="w-3.5 h-3.5" />
+                              Schedule Post
+                            </button>
+                          );
+                        })()}
 
                         {/* Save as Draft — for pending posts */}
                         {post.status === 'pending_approval' && (
@@ -2632,6 +2778,237 @@ export default function SocialDashboard() {
           onClose={() => setShowCarouselCreator(false)}
           onPostCreated={() => fetchPosts()}
         />
+      )}
+
+      {/* ── Post Now Modal ────────────────────────────────────── */}
+      {postNowTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setPostNowTarget(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-5 pb-3">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Post Now</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{postNowTarget.businessName || activeBizName}</p>
+              </div>
+              <button onClick={() => setPostNowTarget(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-6 pb-2">
+              <p className="text-sm text-gray-600">Choose where to publish this post.</p>
+            </div>
+
+            {/* Caption preview */}
+            <div className="px-6 py-2">
+              <div className="bg-gray-50 rounded-lg p-3 max-h-24 overflow-y-auto">
+                <p className="text-xs text-gray-600 whitespace-pre-wrap line-clamp-4">{postNowTarget.caption}</p>
+              </div>
+            </div>
+
+            {/* Image thumbnail */}
+            {postNowTarget.imageUrl && (
+              <div className="px-6 py-2">
+                <div className="relative w-20 h-20 rounded-lg overflow-hidden bg-gray-100">
+                  <ResolvedImage imageUrl={postNowTarget.imageUrl} alt="Post preview" className="w-full h-full object-cover" />
+                </div>
+              </div>
+            )}
+
+            {/* Channel selection */}
+            <div className="px-6 py-3">
+              <p className="text-xs font-medium text-gray-700 mb-2">Channels</p>
+              {socialConnections.length === 0 ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium text-amber-700">No social channels connected yet.</p>
+                      <p className="text-xs text-amber-600 mt-0.5">Connect Facebook, Instagram, Google Business Profile, LinkedIn, or another channel before posting.</p>
+                      <button onClick={() => { setPostNowTarget(null); setActiveTab('accounts'); }} className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800">Connect Social Accounts →</button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {CHANNEL_OPTIONS.map(ch => {
+                    const Icon = ch.icon;
+                    const selected = postNowPlatforms.includes(ch.id);
+                    const connected = socialConnections.some(c => c.platform === ch.id);
+                    return (
+                      <button
+                        key={ch.id}
+                        onClick={() => togglePlatform(ch.id, postNowPlatforms, setPostNowPlatforms)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          selected ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                        } ${!connected ? 'opacity-50' : ''}`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        {ch.label}
+                        {!connected && <span className="text-[10px] text-gray-400">(not connected)</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Warnings */}
+            {(!postNowTarget.rssItemLink && !postNowTarget.sourceArticleUrl) && (
+              <div className="px-6 py-2">
+                <div className="flex items-start gap-2 text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                  This post has a warning: Source article link missing. You can still post it, or cancel and edit first.
+                </div>
+              </div>
+            )}
+
+            {postNowError && (
+              <div className="px-6 py-2">
+                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  {postNowError}
+                </div>
+              </div>
+            )}
+
+            <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 rounded-b-2xl">
+              <button onClick={() => setPostNowTarget(null)} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
+              <button
+                onClick={executePostNow}
+                disabled={postNowLoading || postNowPlatforms.length === 0}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+              >
+                {postNowLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {postNowLoading ? 'Posting...' : 'Post Now'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Schedule Post Modal ───────────────────────────────── */}
+      {scheduleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setScheduleTarget(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-5 pb-3">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Schedule Post</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{scheduleTarget.businessName || activeBizName}</p>
+              </div>
+              <button onClick={() => setScheduleTarget(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Caption preview */}
+            <div className="px-6 py-2">
+              <div className="bg-gray-50 rounded-lg p-3 max-h-20 overflow-y-auto">
+                <p className="text-xs text-gray-600 whitespace-pre-wrap line-clamp-3">{scheduleTarget.caption}</p>
+              </div>
+            </div>
+
+            {/* Image thumbnail */}
+            {scheduleTarget.imageUrl && (
+              <div className="px-6 py-2">
+                <div className="relative w-16 h-16 rounded-lg overflow-hidden bg-gray-100">
+                  <ResolvedImage imageUrl={scheduleTarget.imageUrl} alt="Post preview" className="w-full h-full object-cover" />
+                </div>
+              </div>
+            )}
+
+            {/* Date & Time */}
+            <div className="px-6 py-3 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={e => setScheduleDate(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Time</label>
+                  <input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={e => setScheduleTime(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Timezone</label>
+                <select
+                  value={scheduleTimezone}
+                  onChange={e => setScheduleTimezone(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                >
+                  <option value="America/New_York">Eastern (ET)</option>
+                  <option value="America/Chicago">Central (CT)</option>
+                  <option value="America/Denver">Mountain (MT)</option>
+                  <option value="America/Los_Angeles">Pacific (PT)</option>
+                  <option value="America/Anchorage">Alaska (AKT)</option>
+                  <option value="Pacific/Honolulu">Hawaii (HT)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Channel selection */}
+            <div className="px-6 py-3">
+              <p className="text-xs font-medium text-gray-700 mb-2">Channels</p>
+              <div className="flex flex-wrap gap-2">
+                {CHANNEL_OPTIONS.map(ch => {
+                  const Icon = ch.icon;
+                  const selected = schedulePlatforms.includes(ch.id);
+                  return (
+                    <button
+                      key={ch.id}
+                      onClick={() => togglePlatform(ch.id, schedulePlatforms, setSchedulePlatforms)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                        selected ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      {ch.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {scheduleError && (
+              <div className="px-6 py-2">
+                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  {scheduleError}
+                </div>
+              </div>
+            )}
+
+            <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 rounded-b-2xl">
+              <button onClick={() => setScheduleTarget(null)} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
+              <button
+                onClick={executeSchedule}
+                disabled={scheduleLoading || !scheduleDate || !scheduleTime || schedulePlatforms.length === 0}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+              >
+                {scheduleLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {scheduleLoading ? 'Scheduling...' : 'Schedule Post'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Action Toast ──────────────────────────────────────── */}
+      {actionToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 animate-fade-in-up">
+          <CheckCircle2 className="w-4 h-4" />
+          {actionToast}
+        </div>
       )}
     </div>
   );
