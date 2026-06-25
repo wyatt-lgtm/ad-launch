@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
+import { buildLandingPageBlock } from '@/lib/social-landing-page';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -72,11 +73,33 @@ export async function POST(req: NextRequest, context: RouteContext) {
     // Parse optional platforms from body
     const body = await req.json().catch(() => ({}));
     const platforms = Array.isArray(body.platforms) ? body.platforms : post.platforms;
+    const includeLandingPage = body.includeLandingPage === true;
 
     // Build warnings
     const warnings: string[] = [];
     if (!(post as any).sourceArticleUrl && !(post as any).rssItemLink) {
       warnings.push('Source article link missing.');
+    }
+
+    // Optionally append landing page CTA to caption
+    let finalCaption = post.caption || '';
+    if (includeLandingPage && (post as any).businessId) {
+      const biz = await prisma.business.findUnique({
+        where: { id: (post as any).businessId },
+        select: { defaultSocialLandingPageUrl: true, defaultSocialLandingPageEnabled: true, defaultSocialCtaText: true },
+      });
+      if (biz?.defaultSocialLandingPageEnabled && biz.defaultSocialLandingPageUrl) {
+        const block = buildLandingPageBlock(finalCaption, {
+          url: biz.defaultSocialLandingPageUrl,
+          ctaText: biz.defaultSocialCtaText || 'Learn more here:',
+          enabled: true,
+        }, {
+          platform: platforms[0] || 'social',
+          campaign: (post as any).patternType || 'social',
+          contentId: post.id,
+        });
+        if (block) finalCaption += block;
+      }
     }
 
     // Mark as published
@@ -86,6 +109,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
         status: 'manually_posted',
         publishedAt: new Date(),
         platforms,
+        ...(finalCaption !== post.caption ? { caption: finalCaption } : {}),
       },
     });
 

@@ -238,6 +238,10 @@ export default function SocialDashboard() {
   const [scheduleTimezone, setScheduleTimezone] = useState('America/Denver');
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  // Landing page per-post override
+  const [landingPageConfig, setLandingPageConfig] = useState<{ url: string; enabled: boolean; ctaText: string } | null>(null);
+  const [postNowIncludeLanding, setPostNowIncludeLanding] = useState(false);
+  const [scheduleIncludeLanding, setScheduleIncludeLanding] = useState(false);
   const [socialConnections, setSocialConnections] = useState<Array<{ id: string; platform: string; displayName: string | null; isActive: boolean }>>([]);
   const [actionToast, setActionToast] = useState<string | null>(null);
 
@@ -1094,6 +1098,25 @@ export default function SocialDashboard() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  // ── Fetch social landing page config for active business ──
+  useEffect(() => {
+    if (!activeBusinessId) { setLandingPageConfig(null); return; }
+    fetch(`/api/businesses/${activeBusinessId}/social-landing-page`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data) {
+          setLandingPageConfig({
+            url: data.defaultSocialLandingPageUrl || '',
+            enabled: data.defaultSocialLandingPageEnabled || false,
+            ctaText: data.defaultSocialCtaText || 'Learn more here:',
+          });
+        } else {
+          setLandingPageConfig(null);
+        }
+      })
+      .catch(() => setLandingPageConfig(null));
+  }, [activeBusinessId]);
+
   // ── Fetch social connections for active business ──
   const fetchSocialConnections = useCallback(async () => {
     if (!activeBusinessId) { setSocialConnections([]); return; }
@@ -1120,6 +1143,7 @@ export default function SocialDashboard() {
   const openPostNowModal = (post: SocialPost) => {
     setPostNowTarget(post);
     setPostNowPlatforms(post.platforms.length > 0 ? [...post.platforms] : (socialConnections.length > 0 ? socialConnections.map(c => c.platform) : ['facebook']));
+    setPostNowIncludeLanding(landingPageConfig?.enabled && !!landingPageConfig?.url ? true : false);
     setPostNowError(null);
     setPostNowLoading(false);
   };
@@ -1132,7 +1156,7 @@ export default function SocialDashboard() {
       const res = await fetch(`/api/social/posts/${postNowTarget.id}/post-now`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platforms: postNowPlatforms }),
+        body: JSON.stringify({ platforms: postNowPlatforms, includeLandingPage: postNowIncludeLanding }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -1153,6 +1177,7 @@ export default function SocialDashboard() {
   const openScheduleModal = (post: SocialPost) => {
     setScheduleTarget(post);
     setSchedulePlatforms(post.platforms.length > 0 ? [...post.platforms] : (socialConnections.length > 0 ? socialConnections.map(c => c.platform) : ['facebook']));
+    setScheduleIncludeLanding(landingPageConfig?.enabled && !!landingPageConfig?.url ? true : false);
     // Default to tomorrow 10 AM
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -1172,7 +1197,7 @@ export default function SocialDashboard() {
       const res = await fetch(`/api/social/posts/${scheduleTarget.id}/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scheduledFor, timezone: scheduleTimezone, platforms: schedulePlatforms }),
+        body: JSON.stringify({ scheduledFor, timezone: scheduleTimezone, platforms: schedulePlatforms, includeLandingPage: scheduleIncludeLanding }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -2852,6 +2877,24 @@ export default function SocialDashboard() {
               )}
             </div>
 
+            {/* Landing page override */}
+            {landingPageConfig?.url && (
+              <div className="px-6 py-2">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={postNowIncludeLanding}
+                    onChange={e => setPostNowIncludeLanding(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <p className="text-xs font-medium text-gray-700">Include default social landing page</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">{landingPageConfig.ctaText} {landingPageConfig.url}</p>
+                  </div>
+                </label>
+              </div>
+            )}
+
             {/* Warnings */}
             {(!postNowTarget.rssItemLink && !postNowTarget.sourceArticleUrl) && (
               <div className="px-6 py-2">
@@ -2978,6 +3021,24 @@ export default function SocialDashboard() {
                 })}
               </div>
             </div>
+
+            {/* Landing page override */}
+            {landingPageConfig?.url && (
+              <div className="px-6 py-2">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={scheduleIncludeLanding}
+                    onChange={e => setScheduleIncludeLanding(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <p className="text-xs font-medium text-gray-700">Include default social landing page</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">{landingPageConfig.ctaText} {landingPageConfig.url}</p>
+                  </div>
+                </label>
+              </div>
+            )}
 
             {scheduleError && (
               <div className="px-6 py-2">

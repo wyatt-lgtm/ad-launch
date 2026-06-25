@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
+import { buildLandingPageBlock } from '@/lib/social-landing-page';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -99,6 +100,28 @@ export async function POST(req: NextRequest, context: RouteContext) {
 
     const resolvedPlatforms = Array.isArray(platforms) ? platforms : post.platforms;
     const resolvedTimezone = timezone || 'America/Denver';
+    const includeLandingPage = body.includeLandingPage === true;
+
+    // Optionally append landing page CTA to caption
+    let finalCaption = post.caption || '';
+    if (includeLandingPage && businessId) {
+      const biz = await prisma.business.findUnique({
+        where: { id: businessId },
+        select: { defaultSocialLandingPageUrl: true, defaultSocialLandingPageEnabled: true, defaultSocialCtaText: true },
+      });
+      if (biz?.defaultSocialLandingPageEnabled && biz.defaultSocialLandingPageUrl) {
+        const block = buildLandingPageBlock(finalCaption, {
+          url: biz.defaultSocialLandingPageUrl,
+          ctaText: biz.defaultSocialCtaText || 'Learn more here:',
+          enabled: true,
+        }, {
+          platform: resolvedPlatforms[0] || 'social',
+          campaign: (post as any).patternType || 'social',
+          contentId: post.id,
+        });
+        if (block) finalCaption += block;
+      }
+    }
 
     // Check for duplicate scheduled post for same socialPost
     const existingScheduled = await prisma.scheduledPost.findFirst({
@@ -121,7 +144,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
         businessId,
         userId,
         socialPostId: id,
-        caption: post.caption,
+        caption: finalCaption,
         imageUrl: post.imageUrl ?? null,
         hashtags: post.hashtags ?? [],
         cta: (post as any).cta ?? null,

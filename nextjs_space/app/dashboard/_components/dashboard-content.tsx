@@ -12,6 +12,7 @@ import {
 import UrlInputForm from '../../components/url-input-form';
 import CreditBadge from '../../components/credit-badge';
 import BillingSection from '../../components/billing-section';
+import SocialPostSettings from '../../components/social-post-settings';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
 const STORAGE_KEY = 'adlaunch_active_business_id';
@@ -356,6 +357,13 @@ export default function DashboardContent() {
       {businesses.length > 0 && (
         <div className="mt-8">
           <BillingSection businessId={businesses[0].id} />
+        </div>
+      )}
+
+      {/* Social Post Settings for active business */}
+      {bizCtx.activeBusiness && (
+        <div className="mt-8">
+          <SocialPostSettings businessId={bizCtx.activeBusiness.id} businessName={bizCtx.activeBusiness.businessName || 'Business'} />
         </div>
       )}
 

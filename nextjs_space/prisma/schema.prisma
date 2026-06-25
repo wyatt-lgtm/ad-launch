@@ -83,6 +83,11 @@ model Business {
   websiteBuildMode      String           @default("multi_page_seo") // single_page | multi_page_seo
   forbiddenBrandTerms   String[]         @default([])
 
+  // ── Default social landing page ─────────────────────────────────
+  defaultSocialLandingPageUrl     String?
+  defaultSocialLandingPageEnabled Boolean  @default(false)
+  defaultSocialCtaText            String   @default("Learn more here:")
+
   // ── GoHighLevel tenant provisioning ─────────────────────────────
   ghlLocationId         String?          // GHL location ID returned by provisioning API
   ghlSubtenantId        String?          // GHL sub-account / subtenant ID
