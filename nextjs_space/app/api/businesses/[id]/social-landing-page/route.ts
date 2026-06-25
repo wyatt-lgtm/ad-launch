@@ -86,14 +86,17 @@ export async function PUT(
     }
   }
 
+  const resolvedEnabled = typeof enabled === 'boolean' ? enabled : false;
+  const resolvedCtaText = typeof ctaText === 'string' && ctaText.trim()
+    ? ctaText.trim()
+    : 'Learn more here:';
+
   const updated = await prisma.business.update({
     where: { id: params.id },
     data: {
       defaultSocialLandingPageUrl: trimmedUrl || null,
-      defaultSocialLandingPageEnabled: typeof enabled === 'boolean' ? enabled : false,
-      defaultSocialCtaText: typeof ctaText === 'string' && ctaText.trim()
-        ? ctaText.trim()
-        : 'Learn more here:',
+      defaultSocialLandingPageEnabled: resolvedEnabled,
+      defaultSocialCtaText: resolvedCtaText,
     },
     select: {
       defaultSocialLandingPageUrl: true,
@@ -102,5 +105,54 @@ export async function PUT(
     },
   });
 
-  return NextResponse.json(updated);
+  // Apply to existing posts if requested
+  const applyTo = body.applyTo; // 'future' | 'drafts' | 'scheduled'
+  let appliedCount = 0;
+
+  if (trimmedUrl && resolvedEnabled && (applyTo === 'drafts' || applyTo === 'scheduled')) {
+    const { buildLandingPageBlock } = await import('@/lib/social-landing-page');
+    const ctaConfig = { url: trimmedUrl, ctaText: resolvedCtaText, enabled: true };
+
+    if (applyTo === 'drafts') {
+      // Update existing draft social posts (pending_approval, approved)
+      const drafts = await prisma.socialPost.findMany({
+        where: {
+          businessId: params.id,
+          status: { in: ['pending_approval', 'approved'] },
+        },
+        select: { id: true, caption: true },
+      });
+      for (const draft of drafts) {
+        const block = buildLandingPageBlock(draft.caption || '', ctaConfig);
+        if (block) {
+          await prisma.socialPost.update({
+            where: { id: draft.id },
+            data: { caption: (draft.caption || '') + block },
+          });
+          appliedCount++;
+        }
+      }
+    } else if (applyTo === 'scheduled') {
+      // Update existing scheduled posts
+      const scheduled = await prisma.scheduledPost.findMany({
+        where: {
+          businessId: params.id,
+          status: { in: ['needs_approval', 'approved', 'scheduled'] },
+        },
+        select: { id: true, caption: true },
+      });
+      for (const sp of scheduled) {
+        const block = buildLandingPageBlock(sp.caption || '', ctaConfig);
+        if (block) {
+          await prisma.scheduledPost.update({
+            where: { id: sp.id },
+            data: { caption: (sp.caption || '') + block },
+          });
+          appliedCount++;
+        }
+      }
+    }
+  }
+
+  return NextResponse.json({ ...updated, appliedCount });
 }

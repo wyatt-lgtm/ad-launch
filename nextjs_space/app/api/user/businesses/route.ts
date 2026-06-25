@@ -36,6 +36,9 @@ export async function GET(_request: NextRequest) {
         ghlConnectionType: true,
         ghlLinkedAt: true,
         ghlLinkNotes: true,
+        defaultSocialLandingPageUrl: true,
+        defaultSocialLandingPageEnabled: true,
+        defaultSocialCtaText: true,
         createdAt: true,
         updatedAt: true,
         analyses: {

@@ -12,7 +12,6 @@ import {
 import UrlInputForm from '../../components/url-input-form';
 import CreditBadge from '../../components/credit-badge';
 import BillingSection from '../../components/billing-section';
-import SocialPostSettings from '../../components/social-post-settings';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
 const STORAGE_KEY = 'adlaunch_active_business_id';
@@ -32,6 +31,9 @@ interface BusinessItem {
   ghlConnectionType: string | null;
   ghlLinkedAt: string | null;
   ghlLinkNotes: string | null;
+  defaultSocialLandingPageUrl: string | null;
+  defaultSocialLandingPageEnabled: boolean;
+  defaultSocialCtaText: string;
   createdAt: string;
   updatedAt: string;
   _count: { analyses: number };
@@ -62,6 +64,85 @@ export default function DashboardContent() {
   const [linkShowToken, setLinkShowToken] = useState(false);
   const linkBizIdHasAt = linkLocationId.includes('@');
   const [crmDropdownId, setCrmDropdownId] = useState<string | null>(null);
+
+  // Social landing page edit modal
+  const [slpModalBizId, setSlpModalBizId] = useState<string | null>(null);
+  const [slpUrl, setSlpUrl] = useState('');
+  const [slpEnabled, setSlpEnabled] = useState(false);
+  const [slpCtaText, setSlpCtaText] = useState('Learn more here:');
+  const [slpSaving, setSlpSaving] = useState(false);
+  const [slpError, setSlpError] = useState<string | null>(null);
+  const [slpUrlError, setSlpUrlError] = useState<string | null>(null);
+  const [slpApplyTo, setSlpApplyTo] = useState<'future' | 'drafts' | 'scheduled'>('future');
+
+  const openSlpModal = (biz: BusinessItem) => {
+    setSlpModalBizId(biz.id);
+    setSlpUrl(biz.defaultSocialLandingPageUrl || '');
+    setSlpEnabled(biz.defaultSocialLandingPageEnabled || false);
+    setSlpCtaText(biz.defaultSocialCtaText || 'Learn more here:');
+    setSlpSaving(false);
+    setSlpError(null);
+    setSlpUrlError(null);
+    setSlpApplyTo('future');
+  };
+
+  const validateSlpUrl = (value: string): boolean => {
+    if (!value.trim()) { setSlpUrlError(null); return true; }
+    if (!/^https?:\/\//i.test(value.trim())) {
+      setSlpUrlError('URL must start with https:// or http://');
+      return false;
+    }
+    try {
+      const parsed = new URL(value.trim());
+      if (!parsed.hostname || !parsed.hostname.includes('.')) throw new Error();
+      if (/[\s<>{}|\\^`]/.test(value.trim())) throw new Error();
+    } catch {
+      setSlpUrlError('Please enter a valid landing page URL.');
+      return false;
+    }
+    setSlpUrlError(null);
+    return true;
+  };
+
+  const handleSlpSave = async () => {
+    if (!slpModalBizId) return;
+    if (!validateSlpUrl(slpUrl)) return;
+    setSlpSaving(true);
+    setSlpError(null);
+    try {
+      const res = await fetch(`/api/businesses/${slpModalBizId}/social-landing-page`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: slpUrl.trim(),
+          enabled: slpEnabled,
+          ctaText: slpCtaText.trim(),
+          applyTo: slpApplyTo,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSlpModalBizId(null);
+        setToastMsg('Social post settings saved!');
+        setTimeout(() => setToastMsg(null), 4000);
+        await fetchBusinesses();
+      } else {
+        setSlpError(data.error || 'Failed to save settings.');
+        if (data.field === 'url') setSlpUrlError(data.error);
+      }
+    } catch {
+      setSlpError('Network error. Please try again.');
+    }
+    setSlpSaving(false);
+  };
+
+  const getShortDomain = (url: string) => {
+    try {
+      const parsed = new URL(url);
+      const path = parsed.pathname === '/' ? '' : parsed.pathname;
+      return parsed.hostname.replace(/^www\./, '') + (path.length > 20 ? path.slice(0, 20) + '…' : path);
+    } catch { return url.slice(0, 30); }
+  };
 
   const handleProvisionGhl = async (bizId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -331,6 +412,34 @@ export default function DashboardContent() {
                   <CreditBadge businessId={biz.id} />
                 </div>
 
+                {/* Social Landing Page Status */}
+                <div className="mb-3" onClick={e => e.stopPropagation()}>
+                  {biz.defaultSocialLandingPageEnabled && biz.defaultSocialLandingPageUrl ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 rounded-lg px-2.5 py-1.5">
+                        <Link2 className="w-3.5 h-3.5" />
+                        <span>Social Link: <span className="font-semibold">Set</span></span>
+                        <span className="text-indigo-400 font-normal truncate max-w-[120px]">{getShortDomain(biz.defaultSocialLandingPageUrl)}</span>
+                      </div>
+                      <button
+                        onClick={() => openSlpModal(biz)}
+                        className="text-xs font-medium text-indigo-600 hover:text-indigo-800 underline"
+                      >Edit</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500 bg-gray-50 rounded-lg px-2.5 py-1.5">
+                        <Link2 className="w-3.5 h-3.5 text-gray-400" />
+                        Social Link: <span className="text-amber-600">Missing</span>
+                      </div>
+                      <button
+                        onClick={() => openSlpModal(biz)}
+                        className="text-xs font-medium text-blue-600 hover:text-blue-800 underline"
+                      >Add</button>
+                    </div>
+                  )}
+                </div>
+
                 {/* Stats */}
                 <div className="flex items-center gap-4 text-xs text-gray-400 pt-3 border-t border-gray-100">
                   <span className="flex items-center gap-1">
@@ -357,13 +466,6 @@ export default function DashboardContent() {
       {businesses.length > 0 && (
         <div className="mt-8">
           <BillingSection businessId={businesses[0].id} />
-        </div>
-      )}
-
-      {/* Social Post Settings for active business */}
-      {bizCtx.activeBusiness && (
-        <div className="mt-8">
-          <SocialPostSettings businessId={bizCtx.activeBusiness.id} businessName={bizCtx.activeBusiness.businessName || 'Business'} />
         </div>
       )}
 
@@ -482,6 +584,134 @@ export default function DashboardContent() {
               </button>
             </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Social Landing Page Edit Modal */}
+      {slpModalBizId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setSlpModalBizId(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-5 pb-3">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Social Post Settings</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {businesses.find(b => b.id === slpModalBizId)?.businessName || 'Business'}
+                </p>
+              </div>
+              <button onClick={() => setSlpModalBizId(null)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-6 pb-6 space-y-4">
+              {/* URL */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Default social landing page</label>
+                <div className="relative">
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                    <Globe className="w-4 h-4 text-gray-400" />
+                  </div>
+                  <input
+                    type="url"
+                    value={slpUrl}
+                    onChange={e => { setSlpUrl(e.target.value); setSlpUrlError(null); }}
+                    onBlur={() => slpUrl.trim() && validateSlpUrl(slpUrl)}
+                    placeholder="https://example.com/offer"
+                    className={`w-full border rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none ${
+                      slpUrlError ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                    }`}
+                  />
+                </div>
+                {slpUrlError ? (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 flex-shrink-0" />{slpUrlError}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-1">This link will be added to scheduled social posts as the default destination for traffic from Facebook, Google Business Profile, LinkedIn, and other connected channels.</p>
+                )}
+              </div>
+
+              {/* Toggle */}
+              <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5">
+                <p className="text-sm font-medium text-gray-700">Add this link to social posts by default</p>
+                <button type="button" onClick={() => setSlpEnabled(!slpEnabled)} className="flex-shrink-0 ml-3">
+                  {slpEnabled ? (
+                    <div className="w-9 h-5 bg-indigo-600 rounded-full relative transition-colors">
+                      <div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow" />
+                    </div>
+                  ) : (
+                    <div className="w-9 h-5 bg-gray-300 rounded-full relative transition-colors">
+                      <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow" />
+                    </div>
+                  )}
+                </button>
+              </div>
+
+              {/* CTA Text */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Default CTA text <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input
+                  type="text"
+                  value={slpCtaText}
+                  onChange={e => setSlpCtaText(e.target.value)}
+                  placeholder="Learn more here:"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              {/* Apply To */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Apply this to</label>
+                <div className="space-y-1.5">
+                  {[
+                    { value: 'future' as const, label: 'Future posts only', desc: 'New posts will use this setting' },
+                    { value: 'drafts' as const, label: 'Existing drafts', desc: 'Update pending and approved drafts too' },
+                    { value: 'scheduled' as const, label: 'Existing scheduled posts', desc: 'Update already-scheduled posts too' },
+                  ].map(opt => (
+                    <label key={opt.value} className="flex items-start gap-2.5 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                      <input
+                        type="radio"
+                        name="slp-apply-to"
+                        checked={slpApplyTo === opt.value}
+                        onChange={() => setSlpApplyTo(opt.value)}
+                        className="mt-0.5 w-4 h-4 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">{opt.label}</p>
+                        <p className="text-xs text-gray-400">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preview */}
+              {slpUrl.trim() && slpEnabled && (
+                <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+                  <p className="text-xs font-medium text-indigo-700 mb-1">Preview — post ending</p>
+                  <div className="bg-white rounded px-3 py-2 text-xs text-gray-700 font-mono whitespace-pre-wrap">{slpCtaText || 'Learn more here:'}{'\n'}{slpUrl.trim()}</div>
+                </div>
+              )}
+
+              {slpError && (
+                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />{slpError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 rounded-b-2xl">
+              <button onClick={() => setSlpModalBizId(null)} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
+              <button
+                onClick={handleSlpSave}
+                disabled={slpSaving}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+              >
+                {slpSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {slpSaving ? 'Saving…' : 'Save Social Settings'}
+              </button>
+            </div>
           </div>
         </div>
       )}

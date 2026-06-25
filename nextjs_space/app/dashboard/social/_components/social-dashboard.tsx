@@ -242,6 +242,15 @@ export default function SocialDashboard() {
   const [landingPageConfig, setLandingPageConfig] = useState<{ url: string; enabled: boolean; ctaText: string } | null>(null);
   const [postNowIncludeLanding, setPostNowIncludeLanding] = useState(false);
   const [scheduleIncludeLanding, setScheduleIncludeLanding] = useState(false);
+  // Landing page edit panel (Social Posts page)
+  const [slpEditOpen, setSlpEditOpen] = useState(false);
+  const [slpEditUrl, setSlpEditUrl] = useState('');
+  const [slpEditEnabled, setSlpEditEnabled] = useState(false);
+  const [slpEditCtaText, setSlpEditCtaText] = useState('Learn more here:');
+  const [slpEditSaving, setSlpEditSaving] = useState(false);
+  const [slpEditError, setSlpEditError] = useState<string | null>(null);
+  const [slpEditUrlError, setSlpEditUrlError] = useState<string | null>(null);
+  const [slpEditApplyTo, setSlpEditApplyTo] = useState<'future' | 'drafts' | 'scheduled'>('future');
   const [socialConnections, setSocialConnections] = useState<Array<{ id: string; platform: string; displayName: string | null; isActive: boolean }>>([]);
   const [actionToast, setActionToast] = useState<string | null>(null);
 
@@ -1116,6 +1125,84 @@ export default function SocialDashboard() {
       })
       .catch(() => setLandingPageConfig(null));
   }, [activeBusinessId]);
+
+  // Populate SLP edit form when opened
+  useEffect(() => {
+    if (slpEditOpen && landingPageConfig) {
+      setSlpEditUrl(landingPageConfig.url || '');
+      setSlpEditEnabled(landingPageConfig.enabled);
+      setSlpEditCtaText(landingPageConfig.ctaText || 'Learn more here:');
+      setSlpEditSaving(false);
+      setSlpEditError(null);
+      setSlpEditUrlError(null);
+      setSlpEditApplyTo('future');
+    } else if (slpEditOpen && !landingPageConfig) {
+      setSlpEditUrl('');
+      setSlpEditEnabled(true);
+      setSlpEditCtaText('Learn more here:');
+      setSlpEditSaving(false);
+      setSlpEditError(null);
+      setSlpEditUrlError(null);
+      setSlpEditApplyTo('future');
+    }
+  }, [slpEditOpen, landingPageConfig]);
+
+  const validateSlpEditUrl = (value: string): boolean => {
+    if (!value.trim()) { setSlpEditUrlError(null); return true; }
+    if (!/^https?:\/\//i.test(value.trim())) {
+      setSlpEditUrlError('URL must start with https:// or http://');
+      return false;
+    }
+    try {
+      const parsed = new URL(value.trim());
+      if (!parsed.hostname || !parsed.hostname.includes('.')) throw new Error();
+      if (/[\s<>{}|\\^`]/.test(value.trim())) throw new Error();
+    } catch {
+      setSlpEditUrlError('Please enter a valid landing page URL.');
+      return false;
+    }
+    setSlpEditUrlError(null);
+    return true;
+  };
+
+  const handleSlpEditSave = async () => {
+    if (!activeBusinessId) return;
+    if (!validateSlpEditUrl(slpEditUrl)) return;
+    setSlpEditSaving(true);
+    setSlpEditError(null);
+    try {
+      const res = await fetch(`/api/businesses/${activeBusinessId}/social-landing-page`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: slpEditUrl.trim(),
+          enabled: slpEditEnabled,
+          ctaText: slpEditCtaText.trim(),
+          applyTo: slpEditApplyTo,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setLandingPageConfig({
+          url: data.defaultSocialLandingPageUrl || '',
+          enabled: data.defaultSocialLandingPageEnabled || false,
+          ctaText: data.defaultSocialCtaText || 'Learn more here:',
+        });
+        setSlpEditOpen(false);
+        const msg = data.appliedCount > 0
+          ? `Settings saved. Updated ${data.appliedCount} existing post${data.appliedCount !== 1 ? 's' : ''}.`
+          : 'Social post settings saved!';
+        setActionToast(msg);
+        setTimeout(() => setActionToast(null), 5000);
+      } else {
+        setSlpEditError(data.error || 'Failed to save settings.');
+        if (data.field === 'url') setSlpEditUrlError(data.error);
+      }
+    } catch {
+      setSlpEditError('Network error. Please try again.');
+    }
+    setSlpEditSaving(false);
+  };
 
   // ── Fetch social connections for active business ──
   const fetchSocialConnections = useCallback(async () => {
@@ -2226,6 +2313,74 @@ export default function SocialDashboard() {
         ))}
       </div>
 
+      {/* Default Social Landing Page Panel */}
+      {activeBusinessId && (
+        <div className="mb-6">
+          {landingPageConfig?.enabled && landingPageConfig?.url ? (
+            <div className="bg-white border border-indigo-100 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Link2 className="w-4 h-4 text-indigo-600" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900">Default Social Landing Page</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Current destination:</p>
+                  <a
+                    href={landingPageConfig.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-indigo-600 hover:text-indigo-800 font-medium break-all"
+                  >
+                    {landingPageConfig.url}
+                  </a>
+                  <p className="text-xs text-gray-400 mt-1">New social posts will include this link by default.</p>
+                  {landingPageConfig.ctaText && landingPageConfig.ctaText !== 'Learn more here:' && (
+                    <p className="text-xs text-gray-500 mt-0.5">CTA: <span className="font-medium">{landingPageConfig.ctaText}</span></p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => setSlpEditOpen(true)}
+                  className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                >Change</button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await fetch(`/api/businesses/${activeBusinessId}/social-landing-page`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: landingPageConfig.url, enabled: false, ctaText: landingPageConfig.ctaText, applyTo: 'future' }),
+                      });
+                      setLandingPageConfig(prev => prev ? { ...prev, enabled: false } : null);
+                      setActionToast('Landing page disabled for this business.');
+                      setTimeout(() => setActionToast(null), 4000);
+                    } catch {}
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-gray-500 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+                >Disable</button>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-gray-50 border border-gray-200 border-dashed rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Link2 className="w-4 h-4 text-gray-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-700">No default social landing page set.</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Add one so social posts have a clear traffic destination.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSlpEditOpen(true)}
+                className="px-4 py-2 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors flex-shrink-0"
+              >Add landing page</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-gray-100 rounded-xl p-1 w-fit">
         {(['queue', 'accounts'] as const).map(tab => (
@@ -3064,6 +3219,131 @@ export default function SocialDashboard() {
         </div>
       )}
 
+      {/* ── Social Landing Page Edit Modal (Social Posts page) ─────── */}
+      {slpEditOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setSlpEditOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 pt-5 pb-3">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Social Post Settings</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{activeBizName}</p>
+              </div>
+              <button onClick={() => setSlpEditOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-6 pb-6 space-y-4">
+              {/* URL */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Default social landing page</label>
+                <div className="relative">
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                    <Globe className="w-4 h-4 text-gray-400" />
+                  </div>
+                  <input
+                    type="url"
+                    value={slpEditUrl}
+                    onChange={e => { setSlpEditUrl(e.target.value); setSlpEditUrlError(null); }}
+                    onBlur={() => slpEditUrl.trim() && validateSlpEditUrl(slpEditUrl)}
+                    placeholder="https://example.com/offer"
+                    className={`w-full border rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none ${
+                      slpEditUrlError ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                    }`}
+                  />
+                </div>
+                {slpEditUrlError ? (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 flex-shrink-0" />{slpEditUrlError}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-1">This link will be added to scheduled social posts as the default destination for traffic from Facebook, Google Business Profile, LinkedIn, and other connected channels.</p>
+                )}
+              </div>
+
+              {/* Toggle */}
+              <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2.5">
+                <p className="text-sm font-medium text-gray-700">Add this link to social posts by default</p>
+                <button type="button" onClick={() => setSlpEditEnabled(!slpEditEnabled)} className="flex-shrink-0 ml-3">
+                  {slpEditEnabled ? (
+                    <div className="w-9 h-5 bg-indigo-600 rounded-full relative transition-colors">
+                      <div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow" />
+                    </div>
+                  ) : (
+                    <div className="w-9 h-5 bg-gray-300 rounded-full relative transition-colors">
+                      <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow" />
+                    </div>
+                  )}
+                </button>
+              </div>
+
+              {/* CTA Text */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Default CTA text <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input
+                  type="text"
+                  value={slpEditCtaText}
+                  onChange={e => setSlpEditCtaText(e.target.value)}
+                  placeholder="Learn more here:"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              {/* Apply To */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Apply this to</label>
+                <div className="space-y-1.5">
+                  {[
+                    { value: 'future' as const, label: 'Future posts only', desc: 'New posts will use this setting' },
+                    { value: 'drafts' as const, label: 'Existing drafts', desc: 'Update pending and approved drafts too' },
+                    { value: 'scheduled' as const, label: 'Existing scheduled posts', desc: 'Update already-scheduled posts too' },
+                  ].map(opt => (
+                    <label key={opt.value} className="flex items-start gap-2.5 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                      <input
+                        type="radio"
+                        name="slp-edit-apply-to"
+                        checked={slpEditApplyTo === opt.value}
+                        onChange={() => setSlpEditApplyTo(opt.value)}
+                        className="mt-0.5 w-4 h-4 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">{opt.label}</p>
+                        <p className="text-xs text-gray-400">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preview */}
+              {slpEditUrl.trim() && slpEditEnabled && (
+                <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+                  <p className="text-xs font-medium text-indigo-700 mb-1">Preview — post ending</p>
+                  <div className="bg-white rounded px-3 py-2 text-xs text-gray-700 font-mono whitespace-pre-wrap">{slpEditCtaText || 'Learn more here:'}{'\n'}{slpEditUrl.trim()}</div>
+                </div>
+              )}
+
+              {slpEditError && (
+                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />{slpEditError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3 rounded-b-2xl">
+              <button onClick={() => setSlpEditOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
+              <button
+                onClick={handleSlpEditSave}
+                disabled={slpEditSaving}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+              >
+                {slpEditSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {slpEditSaving ? 'Saving…' : 'Save Social Settings'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ── Action Toast ──────────────────────────────────────── */}
       {actionToast && (
         <div className="fixed bottom-6 right-6 z-50 bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 animate-fade-in-up">
