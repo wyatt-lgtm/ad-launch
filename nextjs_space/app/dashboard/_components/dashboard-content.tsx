@@ -8,6 +8,7 @@ import {
   LayoutDashboard, Globe, Loader2, Sparkles, ChevronRight,
   MapPin, Building2, Image as ImageIcon, FileText, Plus,
   Zap, CheckCircle2, AlertCircle, Link2, ChevronDown, X,
+  Settings, ShieldCheck,
 } from 'lucide-react';
 import UrlInputForm from '../../components/url-input-form';
 import CreditBadge from '../../components/credit-badge';
@@ -25,12 +26,17 @@ interface BusinessItem {
   businessZip: string | null;
   ghlLocationId: string | null;
   ghlSubtenantId: string | null;
+  hasGhlApiToken: boolean;
   ghlProvisioningStatus: string | null;
   ghlProvisionedAt: string | null;
   ghlProvisioningError: string | null;
   ghlConnectionType: string | null;
   ghlLinkedAt: string | null;
   ghlLinkNotes: string | null;
+  defaultGhlSocialAccountId: string | null;
+  defaultGhlSocialAccountName: string | null;
+  defaultGhlSocialPlatform: string | null;
+  defaultGhlSocialOriginId: string | null;
   defaultSocialLandingPageUrl: string | null;
   defaultSocialLandingPageEnabled: boolean;
   defaultSocialCtaText: string;
@@ -44,6 +50,22 @@ interface BusinessItem {
     ads: { id: string }[];
     socialPosts: { id: string }[];
   }[];
+}
+
+/** A business is truly CRM-connected only when both locationId AND API token are present */
+function isCrmConnected(biz: BusinessItem): boolean {
+  return !!biz.ghlLocationId && biz.hasGhlApiToken && biz.ghlProvisioningStatus === 'provisioned';
+}
+
+/** CRM credentials are incomplete — some fields saved but not all required ones */
+function isCrmIncomplete(biz: BusinessItem): boolean {
+  if (isCrmConnected(biz)) return false;
+  // Has provisioning status but missing actual credentials
+  return (
+    biz.ghlProvisioningStatus === 'provisioned' ||
+    !!biz.ghlLocationId ||
+    biz.hasGhlApiToken
+  );
 }
 
 export default function DashboardContent() {
@@ -64,6 +86,7 @@ export default function DashboardContent() {
   const [linkShowToken, setLinkShowToken] = useState(false);
   const linkBizIdHasAt = linkLocationId.includes('@');
   const [crmDropdownId, setCrmDropdownId] = useState<string | null>(null);
+  const [linkResult, setLinkResult] = useState<any>(null);
 
   // Social landing page edit modal
   const [slpModalBizId, setSlpModalBizId] = useState<string | null>(null);
@@ -168,6 +191,7 @@ export default function DashboardContent() {
     if (!linkModalBizId || !linkLocationId.trim() || !linkApiToken.trim() || linkBizIdHasAt) return;
     setLinkLoading(true);
     setLinkError(null);
+    setLinkResult(null);
     try {
       const res = await fetch(`/api/businesses/${linkModalBizId}/ghl/link-existing`, {
         method: 'POST',
@@ -180,12 +204,18 @@ export default function DashboardContent() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setToastMsg(data.alreadyLinked ? 'Launch CRM already linked' : 'Launch CRM account linked!');
-        setLinkModalBizId(null);
-        setLinkLocationId('');
+        setLinkResult(data);
+        const accountInfo = data.selectedAccount?.name ? ` → ${data.selectedAccount.name}` : '';
+        setToastMsg(data.alreadyLinked ? 'Launch CRM already linked' : `Launch CRM linked!${accountInfo}`);
         setLinkApiToken('');
-        setLinkNotes('');
         await fetchBusinesses();
+        // Close modal after a brief delay so user can see verification result
+        setTimeout(() => {
+          setLinkModalBizId(null);
+          setLinkLocationId('');
+          setLinkNotes('');
+          setLinkResult(null);
+        }, 3000);
       } else if (res.status === 409) {
         setLinkError(data.message || 'This CRM location is already linked to another business.');
       } else if (res.status === 422) {
@@ -351,10 +381,56 @@ export default function DashboardContent() {
 
                 {/* Launch CRM Status */}
                 <div className="mb-3" onClick={e => e.stopPropagation()}>
-                  {biz.ghlProvisioningStatus === 'provisioned' ? (
-                    <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg px-2.5 py-1.5 w-fit">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      Launch CRM Connected
+                  {isCrmConnected(biz) ? (
+                    <div className="relative flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 rounded-lg px-2.5 py-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Launch CRM Connected
+                        {biz.defaultGhlSocialAccountName && (
+                          <span className="text-emerald-500 font-normal ml-0.5 truncate max-w-[120px]" title={biz.defaultGhlSocialAccountName}>→ {biz.defaultGhlSocialAccountName}</span>
+                        )}
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCrmDropdownId(crmDropdownId === biz.id ? null : biz.id); }}
+                        className="text-xs font-medium text-gray-400 hover:text-gray-600 p-1"
+                        title="Edit CRM Link"
+                      >
+                        <Settings className="w-3.5 h-3.5" />
+                      </button>
+                      {crmDropdownId === biz.id && (
+                        <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[200px]">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setCrmDropdownId(null); setLinkModalBizId(biz.id); setLinkLocationId(biz.ghlLocationId || ''); setLinkApiToken(''); setLinkNotes(biz.ghlLinkNotes || ''); setLinkError(null); setLinkShowToken(false); }}
+                            className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                          >
+                            <Settings className="w-3.5 h-3.5 text-gray-500" />
+                            Edit CRM Link
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setCrmDropdownId(null); setLinkModalBizId(biz.id); setLinkLocationId(biz.ghlLocationId || ''); setLinkApiToken(''); setLinkNotes(biz.ghlLinkNotes || ''); setLinkError(null); setLinkShowToken(false); }}
+                            className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                            Verify Connection
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : isCrmIncomplete(biz) ? (
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        Launch CRM Incomplete
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setLinkModalBizId(biz.id); setLinkLocationId(biz.ghlLocationId || ''); setLinkApiToken(''); setLinkNotes(biz.ghlLinkNotes || ''); setLinkError(null); setLinkShowToken(false); }}
+                        className="text-xs font-medium text-blue-600 hover:text-blue-700 underline"
+                      >
+                        Reconnect
+                      </button>
+                      <p className="text-[10px] text-amber-500">
+                        {!biz.ghlLocationId ? 'Missing Location ID' : !biz.hasGhlApiToken ? 'Missing API Token' : 'Verify credentials'}
+                      </p>
                     </div>
                   ) : biz.ghlProvisioningStatus === 'failed' ? (
                     <div className="flex items-center gap-2">
@@ -497,14 +573,14 @@ export default function DashboardContent() {
             </div>
             <div className="px-6 py-4 space-y-4">
               <div>
-                <label htmlFor="crm-biz-id" className="block text-sm font-medium text-gray-700 mb-1">Launch CRM Business ID <span className="text-red-500">*</span></label>
+                <label htmlFor="crm-biz-id" className="block text-sm font-medium text-gray-700 mb-1">Launch CRM Location ID <span className="text-red-500">*</span></label>
                 <input
                   id="crm-biz-id"
                   type="text"
                   name="crm_location_identifier"
                   value={linkLocationId}
                   onChange={e => setLinkLocationId(e.target.value)}
-                  placeholder="Paste the Launch CRM Business ID"
+                  placeholder="Paste the Launch CRM Location ID"
                   autoComplete="one-time-code"
                   data-lpignore="true"
                   data-form-type="other"
@@ -514,10 +590,10 @@ export default function DashboardContent() {
                 {linkBizIdHasAt ? (
                   <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                    The Launch CRM Business ID is not an email address. Copy the Business ID from Launch CRM Business Profile Settings.
+                    The Launch CRM Location ID is not an email address. Copy the Location ID from Launch CRM Business Profile Settings.
                   </p>
                 ) : (
-                  <p className="text-xs text-gray-400 mt-1">Find this ID in Launch CRM under Business Profile Settings. It is not an email address.</p>
+                  <p className="text-xs text-gray-400 mt-1">Find this Location ID in Launch CRM under Business Profile Settings. It is not an email address.</p>
                 )}
               </div>
               <div>
@@ -564,6 +640,25 @@ export default function DashboardContent() {
                 <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
                   <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                   {linkError}
+                </div>
+              )}
+              {linkResult && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+                    <CheckCircle2 className="w-4 h-4" />
+                    CRM Linked &amp; Verified
+                  </div>
+                  <div className="text-xs text-emerald-600 space-y-0.5">
+                    <p>Location ID: <span className="font-mono">{linkResult.ghlLocationId}</span></p>
+                    <p>API Token: <span className="font-mono">Saved ✓</span></p>
+                    {linkResult.ghlLocationName && <p>Location: {linkResult.ghlLocationName}</p>}
+                    {linkResult.selectedAccount && (
+                      <p>Social Account: <span className="font-semibold">{linkResult.selectedAccount.name}</span> ({linkResult.selectedAccount.platform})</p>
+                    )}
+                    {linkResult.socialAccountWarning && (
+                      <p className="text-amber-600 mt-1">⚠ {linkResult.socialAccountWarning}</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

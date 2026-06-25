@@ -5,6 +5,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { validateGhlCredentials } from '@/lib/ghl';
+import { listGhlSocialAccounts, selectGhlAccount } from '@/lib/ghl-social-planner';
 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY ?? '';
 
@@ -48,7 +49,7 @@ export async function POST(
     // Validate required fields
     if (!locationId || typeof locationId !== 'string' || !locationId.trim()) {
       return NextResponse.json(
-        { error: 'Launch CRM Business ID is required' },
+        { error: 'Launch CRM Location ID is required' },
         { status: 400 }
       );
     }
@@ -66,8 +67,8 @@ export async function POST(
     if (trimmedLocationId.includes('@')) {
       return NextResponse.json(
         {
-          error: 'invalid_launch_crm_business_id',
-          message: 'The Launch CRM Business ID is not an email address. Copy the Business ID from Launch CRM Business Profile Settings.',
+          error: 'invalid_launch_crm_location_id',
+          message: 'The Launch CRM Location ID is not an email address. Copy the Location ID from Launch CRM Business Profile Settings.',
         },
         { status: 422 }
       );
@@ -162,37 +163,114 @@ export async function POST(
       );
     }
 
+    // ── Verify GHL Social Planner accounts before saving ─────────────
+    const resolvedLocationId = validation.locationId || trimmedLocationId;
+    const accountsResult = await listGhlSocialAccounts(resolvedLocationId, trimmedToken);
+
+    let selectedAccount: { id: string; name: string; platform: string; originId: string } | null = null;
+    let socialAccountWarning: string | null = null;
+    let allAccountNames: string[] = [];
+
+    if (accountsResult.success && accountsResult.accounts.length > 0) {
+      allAccountNames = accountsResult.accounts.map(a => `${a.name} (${a.platform})`);
+
+      // Try auto-selection: if only one FB page, use it
+      const selection = selectGhlAccount(accountsResult.accounts, {
+        platform: 'facebook',
+      });
+      if (selection.selected) {
+        selectedAccount = {
+          id: selection.selected.id,
+          name: selection.selected.name,
+          platform: selection.selected.platform,
+          originId: selection.selected.originId,
+        };
+      } else if (selection.error) {
+        socialAccountWarning = selection.error;
+      }
+    } else if (!accountsResult.success) {
+      // Token validates for location lookup but Social Planner returns error
+      // Still save credentials but warn
+      socialAccountWarning = `Social Planner account lookup failed: ${accountsResult.error || 'Unknown error'}. Credentials saved — you can select an account later.`;
+    } else {
+      socialAccountWarning = 'No social accounts found in this Launch CRM location. Connect a Facebook page in Launch CRM Social Planner first.';
+    }
+
     // ── Save link (same canonical fields as new-account provisioning) ──
+    const updateData: Record<string, any> = {
+      ghlLocationId: resolvedLocationId,
+      ghlSubtenantId: null,  // linked accounts don't have a separate subtenant
+      ghlApiToken: trimmedToken,
+      ghlProvisioningStatus: 'provisioned',
+      ghlProvisionedAt: new Date(),
+      ghlProvisioningError: null,
+      ghlConnectionType: 'linked_existing',
+      ghlLinkedAt: new Date(),
+      ghlLinkNotes: notes?.trim() || null,
+    };
+
+    // Store selected social account if auto-selection succeeded
+    if (selectedAccount) {
+      updateData.defaultGhlSocialAccountId = selectedAccount.id;
+      updateData.defaultGhlSocialAccountName = selectedAccount.name;
+      updateData.defaultGhlSocialPlatform = selectedAccount.platform;
+      updateData.defaultGhlSocialOriginId = selectedAccount.originId;
+    }
+
     await prisma.business.update({
       where: { id: businessId },
-      data: {
-        ghlLocationId: validation.locationId || trimmedLocationId,
-        ghlSubtenantId: null,  // linked accounts don't have a separate subtenant
-        ghlApiToken: trimmedToken,
-        ghlProvisioningStatus: 'provisioned',
-        ghlProvisionedAt: new Date(),
-        ghlProvisioningError: null,
-        ghlConnectionType: 'linked_existing',
-        ghlLinkedAt: new Date(),
-        ghlLinkNotes: notes?.trim() || null,
+      data: updateData,
+    });
+
+    // ── Readback verification ────────────────────────────────────────
+    const saved = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: {
+        ghlLocationId: true,
+        ghlApiToken: true,
+        ghlProvisioningStatus: true,
+        ghlConnectionType: true,
+        defaultGhlSocialAccountId: true,
+        defaultGhlSocialAccountName: true,
+        defaultGhlSocialPlatform: true,
+        defaultGhlSocialOriginId: true,
       },
     });
 
+    if (!saved?.ghlLocationId || !saved?.ghlApiToken) {
+      console.error(`[CRM link] READBACK FAILED for business ${businessId}: locationId=${saved?.ghlLocationId} tokenPresent=${!!saved?.ghlApiToken}`);
+      return NextResponse.json(
+        { error: 'Credentials were not persisted. Please try again.' },
+        { status: 500 }
+      );
+    }
+
     // Log without exposing the token
     console.log(
-      `[CRM link] Business ${businessId} linked to existing location ${trimmedLocationId}` +
+      `[CRM link] Business ${businessId} linked to existing location ${resolvedLocationId}` +
       (validation.name ? ` (${validation.name})` : '') +
-      ` [token: ${trimmedToken.slice(0, 6)}...${trimmedToken.slice(-4)}]`
+      ` [token: ${trimmedToken.slice(0, 6)}...${trimmedToken.slice(-4)}]` +
+      (selectedAccount ? ` [account: ${selectedAccount.name} / ${selectedAccount.originId}]` : '')
     );
 
     // Return success WITHOUT the API token
     return NextResponse.json({
-      ghlLocationId: validation.locationId || trimmedLocationId,
+      ghlLocationId: resolvedLocationId,
       ghlLocationName: validation.name || null,
       ghlProvisioningStatus: 'provisioned',
       ghlConnectionType: 'linked_existing',
       ghlLinkedAt: new Date().toISOString(),
       alreadyLinked: false,
+      hasGhlApiToken: true,
+      // Social account verification results
+      socialAccountVerified: !!selectedAccount,
+      selectedAccount: selectedAccount ? {
+        name: selectedAccount.name,
+        platform: selectedAccount.platform,
+        originId: selectedAccount.originId,
+      } : null,
+      socialAccountWarning,
+      allAccounts: allAccountNames,
     });
   } catch (err: any) {
     console.error('[CRM link-existing] unexpected error:', err);

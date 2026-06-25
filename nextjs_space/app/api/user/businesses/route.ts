@@ -16,7 +16,7 @@ export async function GET(_request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const businesses = await prisma.business.findMany({
+    const rawBusinesses = await prisma.business.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
       select: {
@@ -30,12 +30,17 @@ export async function GET(_request: NextRequest) {
         tombstoneBusinessId: true,
         ghlLocationId: true,
         ghlSubtenantId: true,
+        ghlApiToken: true,
         ghlProvisioningStatus: true,
         ghlProvisionedAt: true,
         ghlProvisioningError: true,
         ghlConnectionType: true,
         ghlLinkedAt: true,
         ghlLinkNotes: true,
+        defaultGhlSocialAccountId: true,
+        defaultGhlSocialAccountName: true,
+        defaultGhlSocialPlatform: true,
+        defaultGhlSocialOriginId: true,
         defaultSocialLandingPageUrl: true,
         defaultSocialLandingPageEnabled: true,
         defaultSocialCtaText: true,
@@ -59,6 +64,12 @@ export async function GET(_request: NextRequest) {
         },
       },
     });
+
+    // Transform: expose hasGhlApiToken boolean, strip the actual token
+    const businesses = rawBusinesses.map(({ ghlApiToken, ...biz }) => ({
+      ...biz,
+      hasGhlApiToken: !!ghlApiToken && ghlApiToken.length > 0,
+    }));
 
     return NextResponse.json({ businesses });
   } catch (err: any) {
