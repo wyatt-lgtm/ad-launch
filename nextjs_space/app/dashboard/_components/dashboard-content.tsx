@@ -58,6 +58,7 @@ export default function DashboardContent() {
   const [linkNotes, setLinkNotes] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const linkBizIdHasAt = linkLocationId.includes('@');
   const [crmDropdownId, setCrmDropdownId] = useState<string | null>(null);
 
   const handleProvisionGhl = async (bizId: string, e: React.MouseEvent) => {
@@ -81,7 +82,7 @@ export default function DashboardContent() {
   };
 
   const handleLinkExisting = async () => {
-    if (!linkModalBizId || !linkLocationId.trim() || !linkApiToken.trim()) return;
+    if (!linkModalBizId || !linkLocationId.trim() || !linkApiToken.trim() || linkBizIdHasAt) return;
     setLinkLoading(true);
     setLinkError(null);
     try {
@@ -384,9 +385,20 @@ export default function DashboardContent() {
                   type="text"
                   value={linkLocationId}
                   onChange={e => setLinkLocationId(e.target.value)}
-                  placeholder="e.g. abc123xyz"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  placeholder="Paste the Launch CRM Business ID"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-form-type="other"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none placeholder:text-gray-400 placeholder:opacity-100"
                 />
+                {linkBizIdHasAt ? (
+                  <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                    The Launch CRM Business ID is not an email address. Copy the Business ID from Launch CRM Business Profile Settings.
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-1">Find this ID in Launch CRM under Business Profile Settings. It is not an email address.</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Launch CRM API Token <span className="text-red-500">*</span></label>
@@ -394,8 +406,9 @@ export default function DashboardContent() {
                   type="password"
                   value={linkApiToken}
                   onChange={e => setLinkApiToken(e.target.value)}
-                  placeholder="pit-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono"
+                  placeholder="Paste the Launch CRM API Token"
+                  autoComplete="off"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono placeholder:text-gray-400 placeholder:opacity-100 placeholder:font-sans"
                 />
                 <p className="text-xs text-gray-400 mt-1">The API token is stored securely and is never displayed after saving.</p>
               </div>
@@ -425,7 +438,7 @@ export default function DashboardContent() {
               </button>
               <button
                 onClick={handleLinkExisting}
-                disabled={linkLoading || !linkLocationId.trim() || !linkApiToken.trim()}
+                disabled={linkLoading || !linkLocationId.trim() || !linkApiToken.trim() || linkBizIdHasAt}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
               >
                 {linkLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

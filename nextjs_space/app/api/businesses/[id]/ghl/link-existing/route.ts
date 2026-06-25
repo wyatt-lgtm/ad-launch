@@ -62,6 +62,17 @@ export async function POST(
     const trimmedLocationId = locationId.trim();
     const trimmedToken = apiToken.trim();
 
+    // Reject email-like values for locationId
+    if (trimmedLocationId.includes('@')) {
+      return NextResponse.json(
+        {
+          error: 'invalid_launch_crm_business_id',
+          message: 'The Launch CRM Business ID is not an email address. Copy the Business ID from Launch CRM Business Profile Settings.',
+        },
+        { status: 422 }
+      );
+    }
+
     // ── Fetch business ────────────────────────────────────────────
     const business = await prisma.business.findUnique({
       where: { id: businessId },
