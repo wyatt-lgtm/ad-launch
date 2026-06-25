@@ -37,7 +37,7 @@ export async function POST(
   try {
     const analysisId = params.id;
     const body = await request.json().catch(() => ({} as any));
-    const { name, address, city, state, zip, phone, placeId, googleMapsUrl, multiLocation } = body;
+    const { name, address, city, state, zip, phone, placeId, googleMapsUrl, multiLocation, serviceAreaMode, isNationwide } = body;
 
     // Validate analysis exists and is in pending_location state
     const analysis = await prisma.analysis.findUnique({ where: { id: analysisId } });
@@ -168,6 +168,14 @@ export async function POST(
               businessZip: primaryLoc.postalCode || bZip,
               businessPhone: primaryLoc.phone || bPhone,
             } : {}),
+            // Service area mode
+            ...(serviceAreaMode ? { serviceAreaMode } : {}),
+            ...(typeof isNationwide === 'boolean' ? { isNationwide } : {}),
+            // For national businesses, treat confirmed address as HQ
+            ...(serviceAreaMode === 'national' || serviceAreaMode === 'multi_location' ? {
+              hqCity: primaryLoc?.city || bCity || undefined,
+              hqState: primaryLoc?.state || bState || undefined,
+            } : {}),
           },
         });
 
@@ -184,6 +192,13 @@ export async function POST(
             ...(bState ? { businessState: bState } : {}),
             ...(bZip ? { businessZip: bZip } : {}),
             ...(bPhone ? { businessPhone: bPhone } : {}),
+            // Service area mode
+            ...(serviceAreaMode ? { serviceAreaMode } : {}),
+            ...(typeof isNationwide === 'boolean' ? { isNationwide } : {}),
+            ...(serviceAreaMode === 'national' || serviceAreaMode === 'multi_location' ? {
+              hqCity: bCity || undefined,
+              hqState: bState || undefined,
+            } : {}),
           },
         }).catch((e: any) => console.error('[confirm-and-launch] Business sync error (non-fatal):', e?.message));
 

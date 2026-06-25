@@ -1967,6 +1967,13 @@ export interface ConceptWebsitePayload {
   trade_area?: string;
   competitor_urls?: string[];
   competitor_count?: number;
+  // Service area & build mode
+  service_area_mode?: string;
+  is_nationwide?: boolean;
+  website_build_mode?: string;
+  forbidden_brand_terms?: string[];
+  hq_city?: string;
+  hq_state?: string;
   // Owner feedback for revision workflows
   owner_feedback?: Array<{
     section_id: string;

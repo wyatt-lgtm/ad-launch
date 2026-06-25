@@ -72,6 +72,17 @@ model Business {
   socialConnections   SocialConnection[]
   scheduledPosts      ScheduledPost[]
 
+  // ── Service area & website build mode ──────────────────────────────
+  serviceAreaMode       String?          // local | regional | national | multi_location
+  isNationwide          Boolean          @default(false)
+  hqCity                String?
+  hqState               String?
+  primaryMarketCity     String?
+  primaryMarketState    String?
+  targetMarkets         String[]         @default([])
+  websiteBuildMode      String           @default("multi_page_seo") // single_page | multi_page_seo
+  forbiddenBrandTerms   String[]         @default([])
+
   // ── GoHighLevel tenant provisioning ─────────────────────────────
   ghlLocationId         String?          // GHL location ID returned by provisioning API
   ghlSubtenantId        String?          // GHL sub-account / subtenant ID

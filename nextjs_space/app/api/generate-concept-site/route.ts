@@ -37,6 +37,32 @@ export async function POST(request: NextRequest) {
 
     // ── Try Tombstone workflow first ──────────────────────────────────────
     if (websiteUrl || businessName) {
+      // Fetch business-level metadata (service area, build mode, forbidden terms)
+      let serviceAreaMode = 'local';
+      let isNationwide = false;
+      let websiteBuildMode = 'multi_page_seo';
+      let forbiddenBrandTerms: string[] = [];
+      let hqCity = '';
+      let hqState = '';
+      if (businessId) {
+        try {
+          const biz = await prisma.business.findUnique({
+            where: { id: businessId },
+            select: { serviceAreaMode: true, isNationwide: true, websiteBuildMode: true, forbiddenBrandTerms: true, hqCity: true, hqState: true },
+          });
+          if (biz) {
+            serviceAreaMode = biz.serviceAreaMode || 'local';
+            isNationwide = biz.isNationwide || false;
+            websiteBuildMode = biz.websiteBuildMode || 'multi_page_seo';
+            forbiddenBrandTerms = biz.forbiddenBrandTerms || [];
+            hqCity = biz.hqCity || '';
+            hqState = biz.hqState || '';
+          }
+        } catch (e: any) {
+          console.warn('[generate-concept-site] Failed to fetch business metadata (non-fatal):', e?.message);
+        }
+      }
+
       try {
         // Check for search API availability if competitor auto-discovery requested
         const hasSearchApi = !!(process.env.SERPAPI_API_KEY || process.env.DATAFORSEO_LOGIN || process.env.GOOGLE_CUSTOM_SEARCH_KEY || process.env.BING_SEARCH_API_KEY);
@@ -102,6 +128,13 @@ export async function POST(request: NextRequest) {
           reference_instructions: referenceInstructions,
           inspiration_only: true,
           do_not_copy_assets: true,
+          // Service area & build mode
+          service_area_mode: serviceAreaMode,
+          is_nationwide: isNationwide,
+          website_build_mode: websiteBuildMode,
+          forbidden_brand_terms: forbiddenBrandTerms,
+          hq_city: hqCity,
+          hq_state: hqState,
           // Competitive SEO scout — always enabled for website generation
           analyze_competitors: true,
           primary_keyword: primaryKeyword,

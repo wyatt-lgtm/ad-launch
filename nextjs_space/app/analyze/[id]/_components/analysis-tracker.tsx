@@ -337,6 +337,8 @@ function LocationStep({
   const [newLoc, setNewLoc] = useState<SelectedLocation>(makeEmptyLocation());
   // businessId for location API
   const [businessId, setBusinessId] = useState<string | null>(null);
+  // Service area mode
+  const [serviceAreaMode, setServiceAreaMode] = useState<'local' | 'regional' | 'national' | 'multi_location'>('local');
 
   /** Smart paste: if user pastes a full address like "123 Main St, City, ST 12345", split it */
   const handleAddressPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
@@ -531,6 +533,10 @@ function LocationStep({
           })),
         };
       }
+
+      // Attach service area mode
+      primaryPayload.serviceAreaMode = serviceAreaMode;
+      primaryPayload.isNationwide = serviceAreaMode === 'national';
 
       const res = await fetch(`/api/analysis/${analysisId}/confirm-and-launch`, {
         method: 'POST',
@@ -1039,6 +1045,39 @@ function LocationStep({
           )}
         </>
       )}
+
+      {/* ── Service Area Mode ── */}
+      <div className="mb-6 bg-white rounded-xl border border-gray-200 p-5">
+        <h4 className="text-sm font-semibold text-gray-900 mb-1">Service Area</h4>
+        <p className="text-xs text-gray-500 mb-3">How does this business serve its customers?</p>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { value: 'local' as const, label: 'Local / Single Market', desc: 'City or metro area' },
+            { value: 'regional' as const, label: 'Regional', desc: 'Multi-city or state' },
+            { value: 'national' as const, label: 'Nationwide', desc: 'Serves customers everywhere' },
+            { value: 'multi_location' as const, label: 'Multi-Location / Agency', desc: 'Multiple offices or clients' },
+          ].map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => setServiceAreaMode(opt.value)}
+              className={`text-left p-3 rounded-lg border-2 transition-all ${
+                serviceAreaMode === opt.value
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 hover:border-blue-300'
+              }`}
+            >
+              <div className="text-sm font-medium text-gray-900">{opt.label}</div>
+              <div className="text-xs text-gray-500">{opt.desc}</div>
+            </button>
+          ))}
+        </div>
+        {(serviceAreaMode === 'national' || serviceAreaMode === 'multi_location') && (
+          <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+            <MapPin className="w-3 h-3" />
+            Your address will be used as HQ/contact info, not as the content market.
+          </p>
+        )}
+      </div>
 
       {error && (
         <div className="mb-4 flex items-center gap-2 text-red-500 text-sm justify-center">
