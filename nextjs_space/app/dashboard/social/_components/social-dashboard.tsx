@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2, Newspaper, Send, CheckCircle2, XCircle,
   Edit3, Trash2, Copy, ExternalLink, Hash, Clock,
-  Zap, RefreshCw, ChevronDown, ChevronUp, Plus, Link2, Unlink,
+  Zap, RefreshCw, ChevronDown, ChevronUp, Plus, Link2,
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
   List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare,
   PenLine, Image as ImageIcon, Coins, Lock, Lightbulb, AlertTriangle, Layers,
@@ -108,14 +108,6 @@ interface SocialPost {
   publishResponseSummary: string | null;
 }
 
-interface SocialAccount {
-  id: string;
-  platform: string;
-  handle: string;
-  profileUrl: string | null;
-  displayName: string | null;
-  isActive: boolean;
-}
 
 const PLATFORMS = [
   { id: 'facebook', label: 'Facebook', icon: Facebook, color: 'bg-blue-600', hoverColor: 'hover:bg-blue-700', textColor: 'text-blue-600', lightBg: 'bg-blue-50', composerUrl: (text: string, link?: string) => `https://www.facebook.com/sharer/sharer.php?quote=${encodeURIComponent(text)}${link ? `&u=${encodeURIComponent(link)}` : ''}` },
@@ -170,7 +162,6 @@ export default function SocialDashboard() {
 
   // State
   const [posts, setPosts] = useState<SocialPost[]>([]);
-  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [totalPosts, setTotalPosts] = useState(0);
   const [loading, setLoading] = useState(true);
   const [scouting, setScouting] = useState(false);
@@ -180,9 +171,10 @@ export default function SocialDashboard() {
   const [editingPost, setEditingPost] = useState<string | null>(null);
   const [editCaption, setEditCaption] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [linkingPlatform, setLinkingPlatform] = useState<string | null>(null);
-  const [linkHandle, setLinkHandle] = useState('');
-  const [linkUrl, setLinkUrl] = useState('');
+  // GHL Social Planner accounts (replaces direct linking)
+  const [ghlAccounts, setGhlAccounts] = useState<Array<{ id: string; name: string; platform: string; type: string; originId: string; avatar: string; isExpired: boolean; isDefault: boolean }>>([]);
+  const [ghlAccountsLoading, setGhlAccountsLoading] = useState(false);
+  const [ghlAccountsStatus, setGhlAccountsStatus] = useState<{ connected: boolean; reason: string; message: string } | null>(null);
   const [scoutError, setScoutError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [pollStatus, setPollStatus] = useState<string | null>(null);
@@ -264,7 +256,7 @@ export default function SocialDashboard() {
   const [slpEditError, setSlpEditError] = useState<string | null>(null);
   const [slpEditUrlError, setSlpEditUrlError] = useState<string | null>(null);
   const [slpEditApplyTo, setSlpEditApplyTo] = useState<'future' | 'drafts' | 'scheduled'>('future');
-  const [socialConnections, setSocialConnections] = useState<Array<{ id: string; platform: string; displayName: string | null; isActive: boolean }>>([]);
+
   const [actionToast, setActionToast] = useState<string | null>(null);
 
   // Generation progress tracking (shared by both Scout Stories + My Own Post)
@@ -342,15 +334,7 @@ export default function SocialDashboard() {
     }
   }, [statusFilter, activeBusinessId]);
 
-  const fetchAccounts = useCallback(async () => {
-    try {
-      const res = await fetch('/api/social/accounts');
-      const data = await res.json();
-      setAccounts(data.accounts || []);
-    } catch (e) {
-      console.error('Failed to fetch accounts:', e);
-    }
-  }, []);
+
 
   // Poll Tombstone for pending missions and import completed posts
   const pollMissions = useCallback(async (silent = false) => {
@@ -385,14 +369,14 @@ export default function SocialDashboard() {
 
   useEffect(() => {
     if (sessionStatus === 'authenticated') {
-      Promise.all([fetchPosts(), fetchAccounts()])
+      Promise.all([fetchPosts()])
         .then(async () => {
           setLoading(false);
           // Auto-poll for any pending missions on page load
           await pollMissions(true);
         });
     }
-  }, [sessionStatus, fetchPosts, fetchAccounts, pollMissions]);
+  }, [sessionStatus, fetchPosts, pollMissions]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
@@ -1218,16 +1202,23 @@ export default function SocialDashboard() {
   };
 
   // ── Fetch social connections for active business ──
-  const fetchSocialConnections = useCallback(async () => {
-    if (!activeBusinessId) { setSocialConnections([]); return; }
+  const fetchGhlAccounts = useCallback(async () => {
+    if (!activeBusinessId) { setGhlAccounts([]); setGhlAccountsStatus(null); return; }
+    setGhlAccountsLoading(true);
     try {
-      const res = await fetch(`/api/businesses/${activeBusinessId}/social-connections`);
+      const res = await fetch(`/api/businesses/${activeBusinessId}/ghl/social-accounts`);
       const data = await res.json();
-      setSocialConnections((data.connections || []).filter((c: any) => c.isActive));
-    } catch { setSocialConnections([]); }
+      setGhlAccounts(data.accounts || []);
+      setGhlAccountsStatus({ connected: data.connected, reason: data.reason, message: data.message });
+    } catch {
+      setGhlAccounts([]);
+      setGhlAccountsStatus({ connected: false, reason: 'error', message: 'Failed to load Launch CRM accounts.' });
+    } finally {
+      setGhlAccountsLoading(false);
+    }
   }, [activeBusinessId]);
 
-  useEffect(() => { fetchSocialConnections(); }, [fetchSocialConnections]);
+  useEffect(() => { fetchGhlAccounts(); }, [fetchGhlAccounts]);
 
   // ── Post eligibility check ──
   const isPostEligible = (post: SocialPost) => {
@@ -1242,7 +1233,7 @@ export default function SocialDashboard() {
   // ── Post Now handler ──
   const openPostNowModal = (post: SocialPost) => {
     setPostNowTarget(post);
-    setPostNowPlatforms(post.platforms.length > 0 ? [...post.platforms] : (socialConnections.length > 0 ? socialConnections.map(c => c.platform) : ['facebook']));
+    setPostNowPlatforms(post.platforms.length > 0 ? [...post.platforms] : (ghlAccounts.length > 0 ? ghlAccounts.map(a => a.platform) : ['facebook']));
     setPostNowIncludeLanding(landingPageConfig?.enabled && !!landingPageConfig?.url ? true : false);
     setPostNowError(null);
     setPostNowLoading(false);
@@ -1282,7 +1273,7 @@ export default function SocialDashboard() {
   // ── Schedule Post handler ──
   const openScheduleModal = (post: SocialPost) => {
     setScheduleTarget(post);
-    setSchedulePlatforms(post.platforms.length > 0 ? [...post.platforms] : (socialConnections.length > 0 ? socialConnections.map(c => c.platform) : ['facebook']));
+    setSchedulePlatforms(post.platforms.length > 0 ? [...post.platforms] : (ghlAccounts.length > 0 ? ghlAccounts.map(a => a.platform) : ['facebook']));
     setScheduleIncludeLanding(landingPageConfig?.enabled && !!landingPageConfig?.url ? true : false);
     // Default to tomorrow 10 AM
     const tomorrow = new Date();
@@ -1319,14 +1310,6 @@ export default function SocialDashboard() {
     }
     setScheduleLoading(false);
   };
-
-  const CHANNEL_OPTIONS = [
-    { id: 'facebook', label: 'Facebook', icon: Facebook },
-    { id: 'instagram', label: 'Instagram', icon: Instagram },
-    { id: 'google_business', label: 'Google Business', icon: Globe },
-    { id: 'linkedin', label: 'LinkedIn', icon: Linkedin },
-    { id: 'youtube', label: 'YouTube', icon: Youtube },
-  ];
 
   const togglePlatform = (platformId: string, list: string[], setList: (v: string[]) => void) => {
     setList(list.includes(platformId) ? list.filter(p => p !== platformId) : [...list, platformId]);
@@ -1459,40 +1442,7 @@ export default function SocialDashboard() {
     window.open(url, '_blank');
   };
 
-  const linkAccount = async (platform: string) => {
-    if (!linkHandle.trim()) return;
-    try {
-      await fetch('/api/social/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          platform,
-          handle: linkHandle.trim(),
-          profileUrl: linkUrl.trim() || null,
-        }),
-      });
-      await fetchAccounts();
-      setLinkingPlatform(null);
-      setLinkHandle('');
-      setLinkUrl('');
-    } catch (e) {
-      console.error('Link error:', e);
-    }
-  };
 
-  const unlinkAccount = async (platform: string) => {
-    if (!confirm(`Unlink ${platform}?`)) return;
-    try {
-      await fetch('/api/social/accounts', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform }),
-      });
-      await fetchAccounts();
-    } catch (e) {
-      console.error('Unlink error:', e);
-    }
-  };
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -1531,7 +1481,7 @@ export default function SocialDashboard() {
     );
   }
 
-  const linkedCount = accounts.filter(a => a.isActive).length;
+  const linkedCount = ghlAccounts.length;
   const pendingCount = posts.filter(p => p.status === 'pending_approval').length;
   const approvedCount = posts.filter(p => p.status === 'approved').length;
   const postedCount = posts.filter(p => ['manually_posted', 'published_by_ghl', 'published_unverified'].includes(p.status)).length;
@@ -2413,7 +2363,7 @@ export default function SocialDashboard() {
             {tab === 'queue' ? (
               <span className="flex items-center gap-2"><LayoutGrid className="w-4 h-4" /> Post Queue</span>
             ) : (
-              <span className="flex items-center gap-2"><Link2 className="w-4 h-4" /> Accounts</span>
+              <span className="flex items-center gap-2"><Link2 className="w-4 h-4" /> Publish Options</span>
             )}
           </button>
         ))}
@@ -2879,93 +2829,150 @@ export default function SocialDashboard() {
         </div>
       )}
 
-      {/* ── Accounts Tab ─────────────────────────────────────────────────── */}
+      {/* ── Publish Options Tab ───────────────────────────────────────────── */}
       {activeTab === 'accounts' && (
         <div>
-          <p className="text-sm text-gray-500 mb-6">Link your social accounts so posts can be tailored to each platform. Download the post package and manually publish to your accounts — auto-publishing is on the roadmap!</p>
+          <p className="text-sm text-gray-500 mb-6">Publish options</p>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {PLATFORMS.map(platform => {
-              const linked = accounts.find(a => a.platform === platform.id && a.isActive);
-              const Icon = platform.icon;
-              const isLinking = linkingPlatform === platform.id;
-
-              return (
-                <div
-                  key={platform.id}
-                  className={`rounded-2xl border-2 p-5 transition-all ${
-                    linked ? 'border-green-200 bg-green-50/50' : 'border-gray-100 bg-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 ${platform.color} rounded-xl flex items-center justify-center text-white`}>
-                        <Icon className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-900 text-sm">{platform.label}</h3>
-                        {linked && <p className="text-xs text-gray-500">@{linked.handle}</p>}
-                      </div>
-                    </div>
-                    {linked ? (
-                      <span className="flex items-center gap-1 text-xs font-medium text-green-600">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Linked
-                      </span>
-                    ) : null}
-                  </div>
-
-                  {isLinking ? (
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={linkHandle}
-                        onChange={e => setLinkHandle(e.target.value)}
-                        placeholder="Username or page name"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        autoFocus
-                      />
-                      <input
-                        type="url"
-                        value={linkUrl}
-                        onChange={e => setLinkUrl(e.target.value)}
-                        placeholder="Profile URL (optional)"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                      <div className="flex gap-2">
-                        <button onClick={() => linkAccount(platform.id)} className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700">
-                          Save
-                        </button>
-                        <button onClick={() => { setLinkingPlatform(null); setLinkHandle(''); setLinkUrl(''); }} className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-200">
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : linked ? (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => { setLinkingPlatform(platform.id); setLinkHandle(linked.handle); setLinkUrl(linked.profileUrl || ''); }}
-                        className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-600 hover:bg-gray-50 flex items-center justify-center gap-1"
-                      >
-                        <Edit3 className="w-3 h-3" /> Edit
-                      </button>
-                      <button
-                        onClick={() => unlinkAccount(platform.id)}
-                        className="px-3 py-2 bg-white border border-red-200 rounded-lg text-xs font-medium text-red-500 hover:bg-red-50 flex items-center justify-center gap-1"
-                      >
-                        <Unlink className="w-3 h-3" /> Unlink
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => { setLinkingPlatform(platform.id); setLinkHandle(''); setLinkUrl(''); }}
-                      className="w-full px-3 py-2 border-2 border-dashed border-gray-200 rounded-lg text-xs font-medium text-gray-400 hover:border-blue-300 hover:text-blue-500 transition-colors flex items-center justify-center gap-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Link Account
-                    </button>
-                  )}
+          <div className="grid gap-6 sm:grid-cols-2">
+            {/* Card 1: Download & Post Manually */}
+            <div className="rounded-2xl border-2 border-gray-100 bg-white p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                  <Download className="w-5 h-5 text-indigo-600" />
                 </div>
-              );
-            })}
+                <h3 className="font-semibold text-gray-900">Download & Post Manually</h3>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Download the finished post package and publish it directly from your own social accounts.
+              </p>
+              <p className="text-xs text-gray-400 mb-4">
+                You can always download the post package and publish manually from your own social accounts.
+              </p>
+              <button
+                onClick={() => setActiveTab('queue')}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-100 transition-colors"
+              >
+                <LayoutGrid className="w-4 h-4" />
+                View Post Queue
+              </button>
+            </div>
+
+            {/* Card 2: Publish Through Launch CRM */}
+            <div className={`rounded-2xl border-2 p-6 transition-all ${
+              ghlAccountsStatus?.reason === 'accounts_found' ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-100 bg-white'
+            }`}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                  <Link2 className="w-5 h-5 text-blue-600" />
+                </div>
+                <h3 className="font-semibold text-gray-900">Publish Through Launch CRM</h3>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Connect an existing Launch CRM account. Launch OS will publish through Launch CRM Social Planner using the social accounts already connected there.
+              </p>
+
+              {ghlAccountsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading Launch CRM accounts…
+                </div>
+              ) : !ghlAccountsStatus?.connected ? (
+                /* No CRM connection */
+                <div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-amber-700">This business is not linked to Launch CRM.</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => router.push('/dashboard')}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                  >
+                    <Link2 className="w-4 h-4" />
+                    Connect Launch CRM
+                  </button>
+                </div>
+              ) : ghlAccountsStatus.reason === 'lookup_failed' ? (
+                /* CRM connected but lookup failed */
+                <div>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-red-700">Could not load social accounts from Launch CRM. Verify the Launch CRM connection and try again.</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => router.push('/dashboard')}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                    >
+                      <Link2 className="w-4 h-4" />
+                      Reconnect Launch CRM
+                    </button>
+                    <button
+                      onClick={fetchGhlAccounts}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Retry
+                    </button>
+                  </div>
+                </div>
+              ) : ghlAccounts.length === 0 ? (
+                /* CRM connected but no social accounts */
+                <div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-amber-700">No social accounts are connected inside Launch CRM Social Planner. Connect your social accounts in Launch CRM, then refresh here.</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={fetchGhlAccounts}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Refresh Launch CRM Accounts
+                  </button>
+                </div>
+              ) : (
+                /* CRM connected and accounts found */
+                <div>
+                  <p className="text-xs font-medium text-emerald-700 mb-3 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Connected through Launch CRM:
+                  </p>
+                  <div className="space-y-2 mb-4">
+                    {ghlAccounts.map(acct => {
+                      const platformLabel = acct.platform.charAt(0).toUpperCase() + acct.platform.slice(1).replace('_', ' ');
+                      return (
+                        <div key={acct.id} className="flex items-center gap-2.5 px-3 py-2 bg-white border border-gray-100 rounded-lg">
+                          {acct.avatar ? (
+                            <img src={acct.avatar} alt={acct.name} className="w-6 h-6 rounded-full" />
+                          ) : (
+                            <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500">
+                              {platformLabel[0]}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">{acct.name}</p>
+                            <p className="text-[11px] text-gray-400">{platformLabel}{acct.isDefault ? ' · Default' : ''}{acct.isExpired ? ' · Expired' : ''}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={fetchGhlAccounts}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Refresh Launch CRM Accounts
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -3013,37 +3020,78 @@ export default function SocialDashboard() {
               </div>
             )}
 
-            {/* Channel selection */}
+            {/* Channel selection — Launch CRM based */}
             <div className="px-6 py-3">
-              <p className="text-xs font-medium text-gray-700 mb-2">Channels</p>
-              {socialConnections.length === 0 ? (
+              <p className="text-xs font-medium text-gray-700 mb-2">Publishing Channel</p>
+              {!ghlAccountsStatus?.connected ? (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
                     <div>
-                      <p className="text-xs font-medium text-amber-700">No social channels connected yet.</p>
-                      <p className="text-xs text-amber-600 mt-0.5">Connect Facebook, Instagram, Google Business Profile, LinkedIn, or another channel before posting.</p>
-                      <button onClick={() => { setPostNowTarget(null); setActiveTab('accounts'); }} className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800">Connect Social Accounts →</button>
+                      <p className="text-xs font-medium text-amber-700">Auto-publishing requires Launch CRM.</p>
+                      <p className="text-xs text-amber-600 mt-0.5">Connect Launch CRM to publish through its Social Planner, or download the post package and publish manually.</p>
+                      <div className="flex gap-2 mt-2">
+                        <button onClick={() => { setPostNowTarget(null); router.push('/dashboard'); }} className="text-xs font-medium text-blue-600 hover:text-blue-800">Connect Launch CRM →</button>
+                        <button onClick={() => { setPostNowTarget(null); }} className="text-xs font-medium text-gray-500 hover:text-gray-700">Download Package Instead</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : ghlAccountsStatus.reason === 'lookup_failed' ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium text-red-700">Could not load social accounts from Launch CRM.</p>
+                      <p className="text-xs text-red-600 mt-0.5">Verify the Launch CRM connection and try again.</p>
+                      <div className="flex gap-2 mt-2">
+                        <button onClick={() => { setPostNowTarget(null); router.push('/dashboard'); }} className="text-xs font-medium text-blue-600 hover:text-blue-800">Reconnect Launch CRM →</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : ghlAccounts.length === 0 ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium text-amber-700">No social accounts connected inside Launch CRM Social Planner.</p>
+                      <p className="text-xs text-amber-600 mt-0.5">Connect your social accounts in Launch CRM, then refresh.</p>
+                      <div className="flex gap-2 mt-2">
+                        <button onClick={() => fetchGhlAccounts()} className="text-xs font-medium text-blue-600 hover:text-blue-800">Refresh Launch CRM Accounts →</button>
+                      </div>
                     </div>
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-2">
-                  {CHANNEL_OPTIONS.map(ch => {
-                    const Icon = ch.icon;
-                    const selected = postNowPlatforms.includes(ch.id);
-                    const connected = socialConnections.some(c => c.platform === ch.id);
+                <div className="space-y-2">
+                  {ghlAccounts.map(acct => {
+                    const platformLabel = acct.platform.charAt(0).toUpperCase() + acct.platform.slice(1).replace('_', ' ');
+                    const selected = postNowPlatforms.includes(acct.platform);
                     return (
                       <button
-                        key={ch.id}
-                        onClick={() => togglePlatform(ch.id, postNowPlatforms, setPostNowPlatforms)}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                          selected ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-                        } ${!connected ? 'opacity-50' : ''}`}
+                        key={acct.id}
+                        onClick={() => togglePlatform(acct.platform, postNowPlatforms, setPostNowPlatforms)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left border transition-colors ${
+                          selected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:bg-gray-50'
+                        }`}
                       >
-                        <Icon className="w-3.5 h-3.5" />
-                        {ch.label}
-                        {!connected && <span className="text-[10px] text-gray-400">(not connected)</span>}
+                        {acct.avatar ? (
+                          <img src={acct.avatar} alt={acct.name} className="w-6 h-6 rounded-full flex-shrink-0" />
+                        ) : (
+                          <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500 flex-shrink-0">
+                            {platformLabel[0]}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${selected ? 'text-blue-700' : 'text-gray-900'}`}>{acct.name}</p>
+                          <p className="text-[11px] text-gray-400">{platformLabel}{acct.isExpired ? ' · Token Expired' : ''}</p>
+                        </div>
+                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          selected ? 'border-blue-600 bg-blue-600' : 'border-gray-300'
+                        }`}>
+                          {selected && <Check className="w-3 h-3 text-white" />}
+                        </div>
                       </button>
                     );
                   })}
@@ -3118,7 +3166,7 @@ export default function SocialDashboard() {
               <button onClick={() => setPostNowTarget(null)} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
               <button
                 onClick={executePostNow}
-                disabled={postNowLoading || postNowPlatforms.length === 0}
+                disabled={postNowLoading || postNowPlatforms.length === 0 || ghlAccounts.length === 0}
                 className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
               >
                 {postNowLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -3199,27 +3247,54 @@ export default function SocialDashboard() {
               </div>
             </div>
 
-            {/* Channel selection */}
+            {/* Channel selection — Launch CRM based */}
             <div className="px-6 py-3">
-              <p className="text-xs font-medium text-gray-700 mb-2">Channels</p>
-              <div className="flex flex-wrap gap-2">
-                {CHANNEL_OPTIONS.map(ch => {
-                  const Icon = ch.icon;
-                  const selected = schedulePlatforms.includes(ch.id);
-                  return (
-                    <button
-                      key={ch.id}
-                      onClick={() => togglePlatform(ch.id, schedulePlatforms, setSchedulePlatforms)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                        selected ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" />
-                      {ch.label}
-                    </button>
-                  );
-                })}
-              </div>
+              <p className="text-xs font-medium text-gray-700 mb-2">Publishing Channel</p>
+              {ghlAccounts.length > 0 ? (
+                <div className="space-y-2">
+                  {ghlAccounts.map(acct => {
+                    const platformLabel = acct.platform.charAt(0).toUpperCase() + acct.platform.slice(1).replace('_', ' ');
+                    const selected = schedulePlatforms.includes(acct.platform);
+                    return (
+                      <button
+                        key={acct.id}
+                        onClick={() => togglePlatform(acct.platform, schedulePlatforms, setSchedulePlatforms)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left border transition-colors ${
+                          selected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {acct.avatar ? (
+                          <img src={acct.avatar} alt={acct.name} className="w-6 h-6 rounded-full flex-shrink-0" />
+                        ) : (
+                          <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500 flex-shrink-0">
+                            {platformLabel[0]}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${selected ? 'text-blue-700' : 'text-gray-900'}`}>{acct.name}</p>
+                          <p className="text-[11px] text-gray-400">{platformLabel}</p>
+                        </div>
+                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          selected ? 'border-blue-600 bg-blue-600' : 'border-gray-300'
+                        }`}>
+                          {selected && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-amber-700">
+                      {!ghlAccountsStatus?.connected
+                        ? 'Connect Launch CRM to schedule through Social Planner.'
+                        : 'No social accounts found in Launch CRM. Connect accounts in Launch CRM first.'}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Landing page override */}
