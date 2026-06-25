@@ -98,6 +98,14 @@ interface SocialPost {
   carouselSlides: any[] | null;
   carouselImageUrls: string[] | null;
   sourceAttribution: string | null;
+  // GHL Social Planner fields
+  ghlPostId: string | null;
+  ghlSocialAccountName: string | null;
+  ghlSocialOriginId: string | null;
+  ghlStatus: string | null;
+  publishTraceId: string | null;
+  lastPublishAttemptAt: string | null;
+  publishResponseSummary: string | null;
 }
 
 interface SocialAccount {
@@ -127,6 +135,11 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
   generation_incomplete: { label: 'Incomplete', color: 'text-orange-700', bg: 'bg-orange-50', icon: AlertTriangle },
   manually_posted: { label: 'Posted', color: 'text-blue-700', bg: 'bg-blue-50', icon: Send },
   rejected: { label: 'Rejected', color: 'text-red-700', bg: 'bg-red-50', icon: XCircle },
+  publishing: { label: 'Publishing...', color: 'text-blue-700', bg: 'bg-blue-50', icon: Loader2 },
+  published_by_ghl: { label: 'Published', color: 'text-emerald-700', bg: 'bg-emerald-50', icon: CheckCircle2 },
+  published_unverified: { label: 'Published (Unverified)', color: 'text-teal-700', bg: 'bg-teal-50', icon: CheckCircle2 },
+  scheduled_in_ghl: { label: 'Scheduled in CRM', color: 'text-purple-700', bg: 'bg-purple-50', icon: Clock },
+  failed_to_publish: { label: 'Publish Failed', color: 'text-red-700', bg: 'bg-red-50', icon: AlertTriangle },
 };
 
 const POST_TYPE_LABELS: Record<string, string> = {
@@ -1222,7 +1235,7 @@ export default function SocialDashboard() {
     const hasImage = !!post.imageUrl || (Array.isArray((post as any).carouselImageUrls) && (post as any).carouselImageUrls.length > 0);
     if (!hasImage) return { eligible: false, reason: 'Image is missing. Edit or regenerate before publishing.' };
     if (post.status === 'generation_failed' || post.status === 'generation_incomplete') return { eligible: false, reason: 'Post generation failed or is incomplete. Fix or regenerate before publishing.' };
-    if (post.status === 'manually_posted' || post.status === 'published') return { eligible: false, reason: 'This post has already been published.' };
+    if (['manually_posted', 'published', 'published_by_ghl', 'published_unverified', 'publishing'].includes(post.status)) return { eligible: false, reason: 'This post has already been published.' };
     return { eligible: true, reason: '' };
   };
 
@@ -1235,10 +1248,13 @@ export default function SocialDashboard() {
     setPostNowLoading(false);
   };
 
+  const [postNowResult, setPostNowResult] = useState<any>(null);
+
   const executePostNow = async () => {
     if (!postNowTarget) return;
     setPostNowLoading(true);
     setPostNowError(null);
+    setPostNowResult(null);
     try {
       const res = await fetch(`/api/social/posts/${postNowTarget.id}/post-now`, {
         method: 'POST',
@@ -1246,13 +1262,16 @@ export default function SocialDashboard() {
         body: JSON.stringify({ platforms: postNowPlatforms, includeLandingPage: postNowIncludeLanding }),
       });
       const data = await res.json();
-      if (res.ok) {
-        setPostNowTarget(null);
-        setActionToast('Post published successfully!');
-        setTimeout(() => setActionToast(null), 5000);
+      if (res.ok && data.success) {
+        setPostNowResult(data);
+        setActionToast(`Published through Launch CRM${data.diagnostics?.selectedAccount?.name ? ` → ${data.diagnostics.selectedAccount.name}` : ''}`);
+        setTimeout(() => setActionToast(null), 6000);
         await fetchPosts();
       } else {
-        setPostNowError(data.message || data.error || 'Failed to publish post.');
+        setPostNowError(data.error || data.message || 'Failed to publish post.');
+        if (data.publishTraceId) {
+          setPostNowResult(data);
+        }
       }
     } catch {
       setPostNowError('Network error. Please try again.');
@@ -1515,7 +1534,7 @@ export default function SocialDashboard() {
   const linkedCount = accounts.filter(a => a.isActive).length;
   const pendingCount = posts.filter(p => p.status === 'pending_approval').length;
   const approvedCount = posts.filter(p => p.status === 'approved').length;
-  const postedCount = posts.filter(p => p.status === 'manually_posted').length;
+  const postedCount = posts.filter(p => ['manually_posted', 'published_by_ghl', 'published_unverified'].includes(p.status)).length;
   const downloadedCount = posts.filter(p => p.status === 'downloaded').length;
   const failedCount = posts.filter(p => p.status === 'generation_failed').length;
 
@@ -2405,7 +2424,7 @@ export default function SocialDashboard() {
         <div>
           {/* Filter bar */}
           <div className="flex gap-2 mb-6 flex-wrap">
-            {['', 'pending_approval', 'approved', 'downloaded', 'manually_posted', 'rejected', 'generation_failed', 'generation_incomplete'].map(s => (
+            {['', 'pending_approval', 'approved', 'downloaded', 'manually_posted', 'published_by_ghl', 'published_unverified', 'scheduled_in_ghl', 'failed_to_publish', 'publishing', 'rejected', 'generation_failed', 'generation_incomplete'].map(s => (
               <button
                 key={s}
                 onClick={() => { setStatusFilter(s); }}
@@ -2804,7 +2823,7 @@ export default function SocialDashboard() {
                         {/* Post Now — for eligible posts */}
                         {(() => {
                           const elig = isPostEligible(post);
-                          if (post.status === 'manually_posted' || post.status === 'published') return null;
+                          if (['manually_posted', 'published', 'published_by_ghl', 'published_unverified', 'publishing', 'scheduled_in_ghl'].includes(post.status)) return null;
                           return (
                             <button
                               onClick={() => elig.eligible ? openPostNowModal(post) : undefined}
@@ -2821,7 +2840,7 @@ export default function SocialDashboard() {
                         {/* Schedule Post — for eligible posts */}
                         {(() => {
                           const elig = isPostEligible(post);
-                          if (post.status === 'manually_posted' || post.status === 'published') return null;
+                          if (['manually_posted', 'published', 'published_by_ghl', 'published_unverified', 'publishing', 'scheduled_in_ghl'].includes(post.status)) return null;
                           return (
                             <button
                               onClick={() => elig.eligible ? openScheduleModal(post) : undefined}
@@ -3064,7 +3083,33 @@ export default function SocialDashboard() {
               <div className="px-6 py-2">
                 <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
                   <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  {postNowError}
+                  <div>
+                    <p>{postNowError}</p>
+                    {postNowResult?.publishTraceId && (
+                      <p className="text-[10px] text-red-400 mt-1 font-mono">Trace: {postNowResult.publishTraceId}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Success diagnostics panel */}
+            {postNowResult?.success && (
+              <div className="px-6 py-2">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                    <p className="text-xs font-medium text-green-700">Published successfully</p>
+                  </div>
+                  {postNowResult.diagnostics?.selectedAccount?.name && (
+                    <p className="text-[11px] text-green-600 ml-6">Account: {postNowResult.diagnostics.selectedAccount.name}</p>
+                  )}
+                  {postNowResult.diagnostics?.ghlPostId && (
+                    <p className="text-[11px] text-green-600 ml-6 font-mono">Post ID: {postNowResult.diagnostics.ghlPostId}</p>
+                  )}
+                  {postNowResult.publishTraceId && (
+                    <p className="text-[11px] text-green-600 ml-6 font-mono">Trace: {postNowResult.publishTraceId}</p>
+                  )}
                 </div>
               </div>
             )}

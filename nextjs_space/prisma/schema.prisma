@@ -99,6 +99,12 @@ model Business {
   ghlLinkedAt           DateTime?
   ghlLinkNotes          String?
 
+  // ── Default GHL Social Planner account ──────────────────────────
+  defaultGhlSocialAccountId   String?    // Full GHL Social Planner account ID
+  defaultGhlSocialAccountName String?    // Display name (e.g. "Blazing Hog Wireless Internet")
+  defaultGhlSocialPlatform    String?    // facebook | tiktok | instagram | etc.
+  defaultGhlSocialOriginId    String?    // GHL platform-specific origin ID
+
   @@unique([userId, websiteUrl])
   @@index([userId])
 }
@@ -808,6 +814,17 @@ model SocialPost {
   carouselSlides        Json?    // Array of {slide_number, headline, bullets, imageUrl} for rendered slides
   carouselImageUrls     String[] @default([]) // S3 URLs for slide images (ordered)
   sourceAttribution     String?  // "Source: Publisher Name"
+  // ── GHL Social Planner publish tracking ─────────────────────────
+  ghlPostId               String?    // Post ID returned by GHL Create Post API
+  ghlLocationId           String?    // GHL location ID used for publishing
+  ghlSocialAccountId      String?    // GHL Social Planner account ID used
+  ghlSocialAccountName    String?    // Display name of the account published to
+  ghlSocialOriginId       String?    // Platform-specific origin ID (e.g. FB page ID)
+  ghlStatus               String?    // GHL's reported status: success | error | pending
+  publishTraceId          String?    // Unique trace ID for diagnostics
+  lastPublishAttemptAt    DateTime?  // Timestamp of last publish attempt
+  publishResponseSummary  String?    // Safe summary of GHL response (no secrets)
+
   analysis        Analysis?      @relation(fields: [analysisId], references: [id])
   business        Business?      @relation(fields: [businessId], references: [id])
   generationRun   GenerationRun? @relation(fields: [generationRunId], references: [id])
@@ -821,6 +838,7 @@ model SocialPost {
   @@index([scheduledFor])
   @@index([createdAt])
   @@index([generationRunId])
+  @@index([ghlPostId])
 }
 
 model GenerationRun {

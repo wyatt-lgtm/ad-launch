@@ -5,22 +5,38 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { buildLandingPageBlock } from '@/lib/social-landing-page';
+import {
+  listGhlSocialAccounts,
+  selectGhlAccount,
+  createGhlSocialPost,
+  createTraceId,
+  traceStep,
+  type GhlTraceStep,
+} from '@/lib/ghl-social-planner';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
  * POST /api/social/posts/[id]/post-now
- * Marks a social post as published ("posted now").
- * Body: { platforms?: string[] }
  *
- * Eligibility:
- *  - Post must have caption
- *  - Post must have image (or be carousel with images)
- *  - Post must not already be published/publishing
- *  - Post must belong to the authenticated user
+ * Publishes a social post through GHL Social Planner.
+ *
+ * Architecture:
+ *   Launch OS Post Now → GHL Social Planner API → Connected Facebook/TikTok Page → Platform
+ *
+ * The route reads ghlLocationId + ghlApiToken from the Launch OS Business record.
+ * It does NOT require a direct Facebook token in Launch OS SocialConnection.
+ *
+ * Body: { platforms?: string[], includeLandingPage?: boolean }
  */
 export async function POST(req: NextRequest, context: RouteContext) {
+  const publishTraceId = createTraceId();
+  const trace: GhlTraceStep[] = [];
+
   try {
+    trace.push(traceStep('POST_NOW_REQUEST_RECEIVED'));
+
+    // ── Auth ──────────────────────────────────────────────────────────
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -28,41 +44,24 @@ export async function POST(req: NextRequest, context: RouteContext) {
     const userId = (session.user as any).id;
     const { id } = await context.params;
 
+    // ── Load SocialPost ──────────────────────────────────────────────
     const post = await prisma.socialPost.findFirst({
       where: { id, userId },
     });
-
     if (!post) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
+    trace.push(traceStep('SOCIAL_POST_LOADED', `id=${post.id} status=${post.status}`));
 
-    // Duplicate prevention: already published/publishing
-    if (post.status === 'published' || post.status === 'manually_posted') {
+    // ── Duplicate prevention ─────────────────────────────────────────
+    if (['published_by_ghl', 'published_unverified', 'publishing'].includes(post.status)) {
       return NextResponse.json(
-        { error: 'already_posted', message: 'This post has already been published.' },
+        { error: 'already_posted', message: 'This post has already been published through Launch CRM.' },
         { status: 409 }
       );
     }
-
-    // Eligibility: must have caption
-    if (!post.caption?.trim()) {
-      return NextResponse.json(
-        { error: 'incomplete_post', message: 'Post is incomplete — caption is missing. Edit or regenerate before publishing.' },
-        { status: 422 }
-      );
-    }
-
-    // Eligibility: must have image (unless carousel with images)
-    const carouselUrls = (post as any).carouselImageUrls as string[] | null;
-    const hasImage = !!post.imageUrl || (Array.isArray(carouselUrls) && carouselUrls.length > 0);
-    if (!hasImage) {
-      return NextResponse.json(
-        { error: 'incomplete_post', message: 'Post is incomplete — image is missing. Edit or regenerate before publishing.' },
-        { status: 422 }
-      );
-    }
-
-    // Eligibility: reject failed/incomplete statuses
+    // Allow re-publishing of failed_to_publish and manually_posted
+    // Block generation_failed / generation_incomplete
     if (post.status === 'generation_failed' || post.status === 'generation_incomplete') {
       return NextResponse.json(
         { error: 'incomplete_post', message: 'Post generation failed or is incomplete. Fix or regenerate before publishing.' },
@@ -70,48 +69,248 @@ export async function POST(req: NextRequest, context: RouteContext) {
       );
     }
 
-    // Parse optional platforms from body
+    // ── Eligibility: caption ─────────────────────────────────────────
+    if (!post.caption?.trim()) {
+      return NextResponse.json(
+        { error: 'incomplete_post', message: 'Post is incomplete — caption is missing.' },
+        { status: 422 }
+      );
+    }
+
+    // ── Eligibility: image ───────────────────────────────────────────
+    const carouselUrls = (post as any).carouselImageUrls as string[] | null;
+    const hasImage = !!post.imageUrl || (Array.isArray(carouselUrls) && carouselUrls.length > 0);
+    if (!hasImage) {
+      return NextResponse.json(
+        { error: 'incomplete_post', message: 'Post is incomplete — image is missing.' },
+        { status: 422 }
+      );
+    }
+
+    // ── Load Business ────────────────────────────────────────────────
+    if (!post.businessId) {
+      return fail(publishTraceId, trace, 'Post is not associated with a business.', 422);
+    }
+    const business = await prisma.business.findUnique({
+      where: { id: post.businessId },
+      select: {
+        id: true,
+        businessName: true,
+        ghlLocationId: true,
+        ghlApiToken: true,
+        ghlProvisioningStatus: true,
+        defaultSocialLandingPageUrl: true,
+        defaultSocialLandingPageEnabled: true,
+        defaultSocialCtaText: true,
+        defaultGhlSocialAccountId: true,
+        defaultGhlSocialAccountName: true,
+        defaultGhlSocialPlatform: true,
+        defaultGhlSocialOriginId: true,
+      },
+    });
+    if (!business) {
+      return fail(publishTraceId, trace, 'Business not found.', 404);
+    }
+    trace.push(traceStep('BUSINESS_LOADED', `id=${business.id} name=${business.businessName}`));
+
+    // ── Validate GHL credentials ─────────────────────────────────────
+    if (!business.ghlLocationId) {
+      return fail(publishTraceId, trace, 'Missing Launch CRM location ID for this business.', 422);
+    }
+    trace.push(traceStep('GHL_LOCATION_RESOLVED', `locationId=${business.ghlLocationId}`));
+
+    if (!business.ghlApiToken) {
+      return fail(publishTraceId, trace, 'Missing Launch CRM API token for this business.', 422);
+    }
+    trace.push(traceStep('GHL_TOKEN_PRESENT'));
+
+    // ── Mark as publishing (optimistic) ──────────────────────────────
+    await prisma.socialPost.update({
+      where: { id: post.id },
+      data: {
+        status: 'publishing',
+        publishTraceId,
+        lastPublishAttemptAt: new Date(),
+        ghlLocationId: business.ghlLocationId,
+      },
+    });
+
+    // ── Parse request body ───────────────────────────────────────────
     const body = await req.json().catch(() => ({}));
     const platforms = Array.isArray(body.platforms) ? body.platforms : post.platforms;
     const includeLandingPage = body.includeLandingPage === true;
 
-    // Build warnings
-    const warnings: string[] = [];
-    if (!(post as any).sourceArticleUrl && !(post as any).rssItemLink) {
-      warnings.push('Source article link missing.');
-    }
-
-    // Optionally append landing page CTA to caption
+    // ── Build final caption with landing page ────────────────────────
     let finalCaption = post.caption || '';
-    if (includeLandingPage && (post as any).businessId) {
-      const biz = await prisma.business.findUnique({
-        where: { id: (post as any).businessId },
-        select: { defaultSocialLandingPageUrl: true, defaultSocialLandingPageEnabled: true, defaultSocialCtaText: true },
+    let landingPageApplied = false;
+
+    if (includeLandingPage && business.defaultSocialLandingPageEnabled && business.defaultSocialLandingPageUrl) {
+      const block = buildLandingPageBlock(finalCaption, {
+        url: business.defaultSocialLandingPageUrl,
+        ctaText: business.defaultSocialCtaText || 'Learn more here:',
+        enabled: true,
+      }, {
+        platform: platforms[0] || 'social',
+        campaign: (post as any).patternType || 'social',
+        contentId: post.id,
       });
-      if (biz?.defaultSocialLandingPageEnabled && biz.defaultSocialLandingPageUrl) {
-        const block = buildLandingPageBlock(finalCaption, {
-          url: biz.defaultSocialLandingPageUrl,
-          ctaText: biz.defaultSocialCtaText || 'Learn more here:',
-          enabled: true,
-        }, {
-          platform: platforms[0] || 'social',
-          campaign: (post as any).patternType || 'social',
-          contentId: post.id,
-        });
-        if (block) finalCaption += block;
+      if (block) {
+        finalCaption += block;
+        landingPageApplied = true;
       }
     }
+    trace.push(traceStep(
+      landingPageApplied ? 'DEFAULT_LANDING_PAGE_APPLIED' : 'DEFAULT_LANDING_PAGE_SKIPPED',
+      landingPageApplied ? business.defaultSocialLandingPageUrl || '' : 'not enabled or already present'
+    ));
 
-    // Mark as published
+    // ── GHL Account Lookup ───────────────────────────────────────────
+    trace.push(traceStep('GHL_ACCOUNTS_LOOKUP_REQUESTED'));
+    const accountsResult = await listGhlSocialAccounts(
+      business.ghlLocationId,
+      business.ghlApiToken
+    );
+
+    if (!accountsResult.success) {
+      return fail(
+        publishTraceId, trace,
+        `Could not load Launch CRM Social Planner accounts. ${accountsResult.error || ''}`,
+        502, post.id
+      );
+    }
+    trace.push(traceStep('GHL_ACCOUNTS_LOOKUP_SUCCEEDED', `${accountsResult.accounts.length} accounts found`));
+
+    // ── Select the correct account ───────────────────────────────────
+    const targetPlatform = platforms.includes('facebook') ? 'facebook'
+      : platforms.includes('tiktok') ? 'tiktok'
+      : platforms[0] || business.defaultGhlSocialPlatform || 'facebook';
+
+    const selection = selectGhlAccount(accountsResult.accounts, {
+      platform: targetPlatform,
+      savedAccountId: business.defaultGhlSocialAccountId,
+      savedOriginId: business.defaultGhlSocialOriginId,
+      savedAccountName: business.defaultGhlSocialAccountName,
+    });
+
+    if (!selection.selected) {
+      return fail(
+        publishTraceId, trace,
+        selection.error || 'No connected account/page found in Launch CRM Social Planner.',
+        422, post.id
+      );
+    }
+
+    const account = selection.selected;
+    trace.push(traceStep('GHL_ACCOUNT_SELECTED', `name="${account.name}" platform=${account.platform} originId=${account.originId}`));
+
+    // ── Cache/update the default account if not already saved ────────
+    if (!business.defaultGhlSocialAccountId || business.defaultGhlSocialAccountId !== account.id) {
+      await prisma.business.update({
+        where: { id: business.id },
+        data: {
+          defaultGhlSocialAccountId: account.id,
+          defaultGhlSocialAccountName: account.name,
+          defaultGhlSocialPlatform: account.platform,
+          defaultGhlSocialOriginId: account.originId,
+        },
+      }).catch(err => {
+        console.warn('[post-now] Failed to cache default GHL account:', err.message);
+      });
+    }
+
+    // ── Build post payload ───────────────────────────────────────────
+    const mediaUrls: string[] = [];
+    if (post.imageUrl) {
+      mediaUrls.push(post.imageUrl);
+    } else if (Array.isArray(carouselUrls) && carouselUrls.length > 0) {
+      mediaUrls.push(...carouselUrls);
+    }
+
+    const ghlPayload = {
+      accountIds: [account.id],
+      summary: finalCaption,
+      mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
+      type: 'post' as const,
+    };
+
+    trace.push(traceStep('POST_PAYLOAD_BUILT', `caption_len=${finalCaption.length} media_count=${mediaUrls.length} account=${account.name}`));
+
+    // Log the payload for diagnostics (no secrets)
+    console.log(`[post-now] [${publishTraceId}] Creating GHL post:`, {
+      businessId: business.id,
+      businessName: business.businessName,
+      ghlLocationId: business.ghlLocationId,
+      accountId: account.id,
+      accountName: account.name,
+      platform: account.platform,
+      captionLength: finalCaption.length,
+      mediaCount: mediaUrls.length,
+      landingPageApplied,
+    });
+
+    // ── Call GHL Create Post API ─────────────────────────────────────
+    trace.push(traceStep('GHL_CREATE_POST_REQUESTED'));
+    const createResult = await createGhlSocialPost(
+      business.ghlLocationId,
+      business.ghlApiToken,
+      ghlPayload
+    );
+
+    if (!createResult.success) {
+      console.error(`[post-now] [${publishTraceId}] GHL Create Post FAILED:`, createResult.error);
+      trace.push(traceStep('GHL_CREATE_POST_FAILED', createResult.error));
+
+      // Update post status to failed
+      await prisma.socialPost.update({
+        where: { id: post.id },
+        data: {
+          status: 'failed_to_publish',
+          ghlSocialAccountId: account.id,
+          ghlSocialAccountName: account.name,
+          ghlSocialOriginId: account.originId,
+          ghlStatus: 'error',
+          publishResponseSummary: (createResult.error || '').slice(0, 1000),
+          ...(finalCaption !== post.caption ? { caption: finalCaption } : {}),
+        },
+      });
+
+      return NextResponse.json({
+        success: false,
+        error: createResult.error || 'Launch CRM rejected the post.',
+        publishTraceId,
+        diagnostics: buildDiagnostics(publishTraceId, business, account, landingPageApplied, null, createResult.error || null, trace),
+      }, { status: 502 });
+    }
+
+    // ── Success! ─────────────────────────────────────────────────────
+    trace.push(traceStep('GHL_CREATE_POST_SUCCEEDED', `postId=${createResult.postId || 'none'} status=${createResult.status}`));
+
+    const finalStatus = createResult.postId ? 'published_by_ghl' : 'published_unverified';
+
     const updated = await prisma.socialPost.update({
-      where: { id },
+      where: { id: post.id },
       data: {
-        status: 'manually_posted',
+        status: finalStatus,
         publishedAt: new Date(),
         platforms,
+        ghlPostId: createResult.postId || null,
+        ghlSocialAccountId: account.id,
+        ghlSocialAccountName: account.name,
+        ghlSocialOriginId: account.originId,
+        ghlStatus: createResult.status || 'success',
+        publishResponseSummary: JSON.stringify({
+          statusCode: createResult.statusCode,
+          postId: createResult.postId,
+          status: createResult.status,
+        }).slice(0, 1000),
         ...(finalCaption !== post.caption ? { caption: finalCaption } : {}),
       },
     });
+
+    trace.push(traceStep('SOCIAL_POST_STATUS_UPDATED', `status=${finalStatus}`));
+    trace.push(traceStep('POST_NOW_COMPLETED'));
+
+    console.log(`[post-now] [${publishTraceId}] SUCCESS: post=${post.id} ghlPostId=${createResult.postId} status=${finalStatus}`);
 
     return NextResponse.json({
       success: true,
@@ -120,11 +319,80 @@ export async function POST(req: NextRequest, context: RouteContext) {
         status: updated.status,
         publishedAt: updated.publishedAt,
         platforms: updated.platforms,
+        ghlPostId: createResult.postId,
       },
-      warnings,
+      publishTraceId,
+      diagnostics: buildDiagnostics(publishTraceId, business, account, landingPageApplied, createResult.postId || null, null, trace),
     });
+
   } catch (error: any) {
-    console.error('[post-now] Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error(`[post-now] [${publishTraceId}] Unhandled error:`, error);
+    trace.push(traceStep('POST_NOW_FAILED', error.message));
+
+    return NextResponse.json({
+      success: false,
+      error: 'An unexpected error occurred while publishing.',
+      publishTraceId,
+    }, { status: 500 });
   }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function fail(
+  traceId: string,
+  trace: GhlTraceStep[],
+  message: string,
+  status: number,
+  postId?: string
+): NextResponse {
+  trace.push(traceStep('POST_NOW_FAILED', message));
+  console.warn(`[post-now] [${traceId}] FAILED: ${message}`);
+
+  // Update post status if we have a postId
+  if (postId) {
+    prisma.socialPost.update({
+      where: { id: postId },
+      data: {
+        status: 'failed_to_publish',
+        publishTraceId: traceId,
+        lastPublishAttemptAt: new Date(),
+        publishResponseSummary: message.slice(0, 1000),
+      },
+    }).catch(err => {
+      console.error(`[post-now] [${traceId}] Failed to update post status:`, err.message);
+    });
+  }
+
+  return NextResponse.json({
+    success: false,
+    error: message,
+    publishTraceId: traceId,
+  }, { status });
+}
+
+function buildDiagnostics(
+  traceId: string,
+  business: { id: string; businessName: string | null; ghlLocationId: string | null },
+  account: { id: string; name: string; platform: string; originId: string } | null,
+  landingPageApplied: boolean,
+  ghlPostId: string | null,
+  errorSummary: string | null,
+  trace: GhlTraceStep[]
+) {
+  return {
+    publishTraceId: traceId,
+    businessId: business.id,
+    businessName: business.businessName,
+    ghlLocationId: business.ghlLocationId,
+    selectedAccount: account ? {
+      name: account.name,
+      platform: account.platform,
+      originId: account.originId,
+    } : null,
+    landingPageApplied,
+    ghlPostId,
+    errorSummary,
+    trace,
+  };
 }
