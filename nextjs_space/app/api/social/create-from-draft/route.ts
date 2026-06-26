@@ -326,24 +326,40 @@ export async function POST(req: NextRequest) {
         })
       : null;
 
-    if (!targetAnalysis) {
+    // If no Analysis for this business, create a stub so missions/poll
+    // can discover the workflow via the normal workflow-based lane.
+    if (!targetAnalysis && resolvedBusinessId) {
+      const created = await prisma.analysis.create({
+        data: {
+          userId,
+          businessId: resolvedBusinessId,
+          websiteUrl: websiteUrl || '',
+          socialMissionId: socialMissionId,
+          status: 'completed',
+        },
+        select: { id: true, socialMissionId: true },
+      });
+      targetAnalysis = created;
+      console.log(`[create-from-draft] Created stub Analysis ${created.id} for business=${resolvedBusinessId} to store socialMissionId`);
+    } else if (!targetAnalysis) {
+      // No business and no analysis — best-effort fallback to most recent analysis
       targetAnalysis = await prisma.analysis.findFirst({
         where: { userId },
         orderBy: { createdAt: 'desc' },
         select: { id: true, socialMissionId: true },
       });
-      if (targetAnalysis) {
-        console.warn(`[create-from-draft] No analysis for business ${resolvedBusinessId}, falling back to most recent analysis ${targetAnalysis.id}`);
-      }
     }
 
     if (targetAnalysis) {
-      const existing = targetAnalysis.socialMissionId || '';
-      const updated = existing ? `${existing},${socialMissionId}` : socialMissionId;
-      await prisma.analysis.update({
-        where: { id: targetAnalysis.id },
-        data: { socialMissionId: updated },
-      });
+      // Only update if the socialMissionId isn't already set (stub creation sets it above)
+      if (!targetAnalysis.socialMissionId?.includes(socialMissionId)) {
+        const existing = targetAnalysis.socialMissionId || '';
+        const updated = existing ? `${existing},${socialMissionId}` : socialMissionId;
+        await prisma.analysis.update({
+          where: { id: targetAnalysis.id },
+          data: { socialMissionId: updated },
+        });
+      }
       console.log(`[create-from-draft] Stored workflow ${socialMissionId} on analysis ${targetAnalysis.id} (business=${resolvedBusinessId})`);
     }
 

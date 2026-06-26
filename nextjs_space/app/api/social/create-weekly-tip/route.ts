@@ -140,18 +140,35 @@ export async function POST(req: NextRequest) {
 
     const socialMissionId = result.workflowIds.join(',');
 
-    // Store mission ID on the most recent analysis for polling
-    const recentAnalysis = await prisma.analysis.findFirst({
-      where: { userId },
+    // Store mission ID on the correct business's Analysis for workflow-based
+    // discovery in missions/poll. Filter by businessId to avoid cross-business
+    // linking (matches the pattern used by social/generate).
+    let targetAnalysis = await prisma.analysis.findFirst({
+      where: { businessId, userId },
       orderBy: { createdAt: 'desc' },
       select: { id: true, socialMissionId: true },
     });
 
-    if (recentAnalysis) {
-      const existing = recentAnalysis.socialMissionId || '';
+    // If no Analysis exists for this business, create a minimal one so
+    // missions/poll can discover the workflow via the normal lane.
+    if (!targetAnalysis) {
+      const created = await prisma.analysis.create({
+        data: {
+          userId,
+          businessId,
+          websiteUrl: business.websiteUrl || '',
+          socialMissionId: socialMissionId,
+          status: 'completed',
+        },
+        select: { id: true, socialMissionId: true },
+      });
+      targetAnalysis = created;
+      console.log(`[create-weekly-tip] Created stub Analysis ${created.id} for business=${businessId} to store socialMissionId`);
+    } else {
+      const existing = targetAnalysis.socialMissionId || '';
       const updated = existing ? `${existing},${socialMissionId}` : socialMissionId;
       await prisma.analysis.update({
-        where: { id: recentAnalysis.id },
+        where: { id: targetAnalysis.id },
         data: { socialMissionId: updated },
       });
     }
