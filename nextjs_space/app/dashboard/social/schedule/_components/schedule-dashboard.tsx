@@ -8,15 +8,9 @@ import {
   Calendar, Clock, CheckCircle2, AlertCircle, Loader2,
   ChevronDown, ChevronRight, Eye, Check, X, MessageSquare,
   RefreshCw, Filter, Facebook, Globe, Instagram, Linkedin,
-  Wifi, WifiOff, ExternalLink, LayoutGrid, List as ListIcon,
-  Sparkles, Zap,
+  ExternalLink, LayoutGrid, List as ListIcon,
+  Sparkles, Zap, Link2, Download,
 } from 'lucide-react';
-import { useActiveBusiness } from '@/hooks/use-active-business';
-import {
-  STATUS_LABELS, PLATFORM_CONFIG, CADENCE_CONFIG, APPROVAL_MODES,
-  getStatusLabel, getPlatformLabel, formatScheduleDate,
-  type ScheduledPostStatus, type Platform,
-} from '@/lib/scheduling-utils';
 
 const PLATFORM_ICONS: Record<string, React.ElementType> = {
   facebook: Facebook,
@@ -24,6 +18,14 @@ const PLATFORM_ICONS: Record<string, React.ElementType> = {
   instagram: Instagram,
   linkedin: Linkedin,
 };
+import { useActiveBusiness } from '@/hooks/use-active-business';
+import {
+  STATUS_LABELS, CADENCE_CONFIG, APPROVAL_MODES,
+  getStatusLabel, getPlatformLabel, formatScheduleDate,
+  type ScheduledPostStatus, type Platform,
+} from '@/lib/scheduling-utils';
+
+
 
 type TabId = 'queue' | 'calendar' | 'approvals' | 'connections';
 
@@ -48,16 +50,21 @@ interface ScheduledPost {
   createdAt: string;
 }
 
-interface SocialConnection {
+interface GhlSocialAccount {
   id: string;
+  name: string;
   platform: string;
-  displayName: string | null;
-  profileUrl: string | null;
-  permissionsStatus: string;
-  isActive: boolean;
-  lastCheckedAt: string | null;
-  lastPublishedAt: string | null;
-  errorMessage: string | null;
+  type: string;
+  originId: string;
+  avatar: string;
+  isExpired: boolean;
+  isDefault: boolean;
+}
+
+interface GhlAccountsStatus {
+  connected: boolean;
+  reason: string;
+  message: string;
 }
 
 interface PublishSettingsData {
@@ -77,7 +84,9 @@ export default function ScheduleDashboard() {
 
   const [tab, setTab] = useState<TabId>('queue');
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
-  const [connections, setConnections] = useState<SocialConnection[]>([]);
+  const [ghlAccounts, setGhlAccounts] = useState<GhlSocialAccount[]>([]);
+  const [ghlAccountsLoading, setGhlAccountsLoading] = useState(false);
+  const [ghlAccountsStatus, setGhlAccountsStatus] = useState<GhlAccountsStatus | null>(null);
   const [settings, setSettings] = useState<PublishSettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -90,18 +99,15 @@ export default function ScheduleDashboard() {
     if (!activeBusinessId) return;
     setLoading(true);
     try {
-      const [postsRes, connectionsRes, settingsRes] = await Promise.all([
+      const [postsRes, settingsRes] = await Promise.all([
         fetch(`/api/businesses/${activeBusinessId}/scheduled-posts${statusFilter !== 'all' ? `?status=${statusFilter}` : ''}`),
-        fetch(`/api/businesses/${activeBusinessId}/social-connections`),
         fetch(`/api/businesses/${activeBusinessId}/posting-preferences`),
       ]);
-      const [postsData, connectionsData, settingsData] = await Promise.all([
+      const [postsData, settingsData] = await Promise.all([
         postsRes.json(),
-        connectionsRes.json(),
         settingsRes.json(),
       ]);
       setPosts(postsData.posts ?? []);
-      setConnections(connectionsData.connections ?? []);
       setSettings(settingsData.settings ?? null);
     } catch (err) {
       console.error('[ScheduleDashboard fetch]', err);
@@ -114,6 +120,27 @@ export default function ScheduleDashboard() {
     if (sessionStatus === 'unauthenticated') { router.push('/'); return; }
     if (sessionStatus === 'authenticated' && activeBusinessId) fetchData();
   }, [sessionStatus, activeBusinessId, fetchData, router]);
+
+  // ── Fetch GHL social accounts ──
+  const fetchGhlAccounts = useCallback(async () => {
+    if (!activeBusinessId) { setGhlAccounts([]); setGhlAccountsStatus(null); return; }
+    setGhlAccountsLoading(true);
+    try {
+      const res = await fetch(`/api/businesses/${activeBusinessId}/ghl/social-accounts`);
+      const data = await res.json();
+      setGhlAccounts(data.accounts || []);
+      setGhlAccountsStatus({ connected: data.connected, reason: data.reason, message: data.message });
+    } catch {
+      setGhlAccounts([]);
+      setGhlAccountsStatus({ connected: false, reason: 'error', message: 'Failed to load Launch CRM accounts.' });
+    } finally {
+      setGhlAccountsLoading(false);
+    }
+  }, [activeBusinessId]);
+
+  useEffect(() => {
+    if (sessionStatus === 'authenticated' && activeBusinessId) fetchGhlAccounts();
+  }, [sessionStatus, activeBusinessId, fetchGhlAccounts]);
 
   // Actions
   const approvePost = async (postId: string, approveAll = false) => {
@@ -234,7 +261,7 @@ export default function ScheduleDashboard() {
             { id: 'queue' as TabId, label: 'Queue', count: posts.length },
             { id: 'calendar' as TabId, label: 'Calendar' },
             { id: 'approvals' as TabId, label: 'Approvals', count: needsApproval },
-            { id: 'connections' as TabId, label: 'Connections', count: connections.length },
+            { id: 'connections' as TabId, label: 'Publish Options' },
           ].map(t => (
             <button
               key={t.id}
@@ -528,69 +555,118 @@ export default function ScheduleDashboard() {
     );
   }
 
-  // ─── Connections Tab ──────────────────────
+  // ─── Publish Options Tab (replaces Connections) ────────────
   function renderConnections() {
-    const allPlatforms = Object.entries(PLATFORM_CONFIG) as [string, typeof PLATFORM_CONFIG[keyof typeof PLATFORM_CONFIG]][];
-
     return (
-      <div className="space-y-3">
-        {allPlatforms.map(([key, config]) => {
-          const connection = connections.find(c => c.platform === key);
-          const Icon = PLATFORM_ICONS[key] ?? Globe;
-          const isConnected = connection?.permissionsStatus === 'connected';
-          const isPending = connection?.permissionsStatus === 'pending';
-
-          return (
-            <div key={key} className="bg-white rounded-xl border border-gray-200 p-4">
-              <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${config.bgColor}`}>
-                  <Icon className={`w-6 h-6 ${config.color}`} />
-                </div>
-                <div className="flex-1">
-                  <div className="font-medium text-gray-900">{config.label}</div>
-                  {connection?.displayName && (
-                    <div className="text-xs text-gray-500">{connection.displayName}</div>
-                  )}
-                  {config.comingSoon && (
-                    <div className="text-xs text-gray-400">Coming soon</div>
-                  )}
-                </div>
-                <div>
-                  {config.comingSoon ? (
-                    <span className="text-xs bg-gray-100 text-gray-500 px-3 py-1.5 rounded-lg font-medium">Coming Soon</span>
-                  ) : isConnected ? (
-                    <span className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg font-medium">
-                      <Wifi className="w-3.5 h-3.5" /> Connected
-                    </span>
-                  ) : isPending ? (
-                    <span className="flex items-center gap-1 text-xs bg-amber-50 text-amber-700 px-3 py-1.5 rounded-lg font-medium">
-                      <Clock className="w-3.5 h-3.5" /> Pending Setup
-                    </span>
-                  ) : (
-                    <button
-                      className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition-colors"
-                      onClick={() => {
-                        // Create placeholder connection
-                        fetch(`/api/businesses/${activeBusinessId}/social-connections`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ platform: key }),
-                        }).then(() => fetchData());
-                      }}
-                    >
-                      Connect
-                    </button>
-                  )}
-                </div>
-              </div>
-              {connection?.errorMessage && (
-                <div className="mt-2 text-xs bg-red-50 text-red-600 p-2 rounded-lg">
-                  {connection.errorMessage}
-                </div>
-              )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Card 1: Download & Post Manually */}
+        <div className="rounded-2xl border-2 border-gray-100 bg-white p-6">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
+              <Download className="w-5 h-5 text-gray-600" />
             </div>
-          );
-        })}
+            <h3 className="font-semibold text-gray-900">Download & Post Manually</h3>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">
+            Download the finished post package and publish it directly from your own social accounts.
+          </p>
+          <button
+            onClick={() => setTab('queue')}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+          >
+            <LayoutGrid className="w-4 h-4" /> View Post Queue
+          </button>
+        </div>
+
+        {/* Card 2: Publish Through Launch CRM */}
+        <div className={`rounded-2xl border-2 p-6 transition-all ${
+          ghlAccountsStatus?.reason === 'accounts_found' ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-100 bg-white'
+        }`}>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+              <Link2 className="w-5 h-5 text-blue-600" />
+            </div>
+            <h3 className="font-semibold text-gray-900">Publish Through Launch CRM</h3>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">
+            Connect Launch CRM and publish through Launch CRM Social Planner using the social accounts already connected there.
+          </p>
+
+          {ghlAccountsLoading ? (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading Launch CRM accounts...
+            </div>
+          ) : !ghlAccountsStatus?.connected ? (
+            <button
+              onClick={() => window.location.href = '/dashboard?tab=crm'}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+            >
+              <Link2 className="w-4 h-4" /> Connect Launch CRM
+            </button>
+          ) : ghlAccountsStatus.reason === 'lookup_failed' ? (
+            <div>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
+                <p className="text-xs text-red-700">Could not load social accounts from Launch CRM. Verify the Launch CRM connection and try again.</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => window.location.href = '/dashboard?tab=crm'}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                >
+                  Reconnect Launch CRM
+                </button>
+                <button
+                  onClick={fetchGhlAccounts}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                >
+                  <RefreshCw className="w-4 h-4" /> Retry
+                </button>
+              </div>
+            </div>
+          ) : ghlAccounts.length === 0 ? (
+            <div>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+                <p className="text-xs text-amber-700">No social accounts are connected inside Launch CRM Social Planner. Connect your social accounts in Launch CRM, then refresh here.</p>
+              </div>
+              <button
+                onClick={fetchGhlAccounts}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" /> Refresh Launch CRM Accounts
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p className="text-xs text-emerald-700 font-medium mb-3">Connected through Launch CRM:</p>
+              <div className="space-y-2 mb-4">
+                {ghlAccounts.map(acct => {
+                  const platformLabel = acct.platform.charAt(0).toUpperCase() + acct.platform.slice(1).replace('_', ' ');
+                  return (
+                    <div key={acct.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-gray-100 bg-white">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white ${
+                        acct.platform === 'facebook' ? 'bg-blue-600' : acct.platform === 'instagram' ? 'bg-gradient-to-br from-purple-600 to-pink-500' : acct.platform === 'linkedin' ? 'bg-blue-700' : acct.platform === 'tiktok' ? 'bg-black' : acct.platform === 'google_business' ? 'bg-green-600' : 'bg-gray-500'
+                      }`}>
+                        <Globe className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{platformLabel} — {acct.name}</p>
+                      </div>
+                      {acct.isExpired && (
+                        <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Expired</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <button
+                onClick={fetchGhlAccounts}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" /> Refresh Launch CRM Accounts
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

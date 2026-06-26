@@ -48,11 +48,21 @@ interface OriginalContent {
   platformCaptions: Record<string, string>;
 }
 
-interface SocialAccountItem {
-  id: number;
+interface GhlSocialAccount {
+  id: string;
+  name: string;
   platform: string;
-  account_name: string;
-  connection_status: string;
+  type: string;
+  originId: string;
+  avatar: string;
+  isExpired: boolean;
+  isDefault: boolean;
+}
+
+interface GhlAccountsStatus {
+  connected: boolean;
+  reason: string;
+  message: string;
 }
 
 interface InlineToast {
@@ -416,9 +426,10 @@ export default function PublishingDashboard() {
   const [scheduleTime, setScheduleTime] = useState('');
   const [publishing, setPublishing] = useState(false);
 
-  // Connected accounts state
-  const [connectedAccounts, setConnectedAccounts] = useState<SocialAccountItem[]>([]);
-  const [accountsLoading, setAccountsLoading] = useState(true);
+  // GHL Social Planner accounts (replaces direct linking)
+  const [ghlAccounts, setGhlAccounts] = useState<GhlSocialAccount[]>([]);
+  const [ghlAccountsLoading, setGhlAccountsLoading] = useState(false);
+  const [ghlAccountsStatus, setGhlAccountsStatus] = useState<GhlAccountsStatus | null>(null);
 
   // Auto-publish settings state
   const [autoPublishEnabled, setAutoPublishEnabled] = useState(false);
@@ -462,28 +473,27 @@ export default function PublishingDashboard() {
     if (sessionStatus === 'authenticated' && !bizCtx.loading) fetchQueue();
   }, [sessionStatus, bizCtx.loading, fetchQueue]);
 
-  // ── Fetch connected accounts ────────────────────────────────────────────────
+  // ── Fetch GHL social accounts ────────────────────────────────────────────────
 
-  const fetchAccounts = useCallback(async () => {
-    setAccountsLoading(true);
+  const fetchGhlAccounts = useCallback(async () => {
+    if (!activeBusinessId) { setGhlAccounts([]); setGhlAccountsStatus(null); return; }
+    setGhlAccountsLoading(true);
     try {
-      const res = await fetch('/api/publish/accounts');
-      if (res.ok) {
-        const data = await res.json();
-        setConnectedAccounts(Array.isArray(data.accounts) ? data.accounts : []);
-      } else {
-        setConnectedAccounts([]);
-      }
+      const res = await fetch(`/api/businesses/${activeBusinessId}/ghl/social-accounts`);
+      const data = await res.json();
+      setGhlAccounts(data.accounts || []);
+      setGhlAccountsStatus({ connected: data.connected, reason: data.reason, message: data.message });
     } catch {
-      setConnectedAccounts([]);
+      setGhlAccounts([]);
+      setGhlAccountsStatus({ connected: false, reason: 'error', message: 'Failed to load Launch CRM accounts.' });
     } finally {
-      setAccountsLoading(false);
+      setGhlAccountsLoading(false);
     }
-  }, []);
+  }, [activeBusinessId]);
 
   useEffect(() => {
-    if (sessionStatus === 'authenticated') fetchAccounts();
-  }, [sessionStatus, fetchAccounts]);
+    if (sessionStatus === 'authenticated' && activeBusinessId) fetchGhlAccounts();
+  }, [sessionStatus, activeBusinessId, fetchGhlAccounts]);
 
   // ── Fetch auto-publish settings ─────────────────────────────────────────────
 
@@ -1158,34 +1168,67 @@ export default function PublishingDashboard() {
                 </div>
               </div>
 
-              {/* ── Publishing Controls ────────────────────────────── */}
+              {/* ── Publishing Controls (Launch CRM) ─────────────────── */}
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4">Publish</h3>
 
-                {/* Platform multi-select */}
+                {/* Channel selection via Launch CRM */}
                 <div className="mb-4">
-                  <label className="text-xs font-medium text-gray-600 mb-2 block">Select Platforms</label>
-                  <div className="flex flex-wrap gap-2">
-                    {PLATFORMS.map(p => {
-                      const Icon = p.icon;
-                      const isSelected = selectedPlatforms.has(p.id);
-                      return (
-                        <button
-                          key={p.id}
-                          onClick={() => togglePlatform(p.id)}
-                          disabled={publishing}
-                          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
-                            isSelected
-                              ? `${p.color} text-white border-transparent ring-2 ${p.ring}`
-                              : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                          } disabled:opacity-40 disabled:cursor-not-allowed`}
-                        >
-                          <Icon className="w-4 h-4" />
-                          {p.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <label className="text-xs font-medium text-gray-600 mb-2 block">Publishing Channel</label>
+                  {ghlAccountsLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-3">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Checking Launch CRM social accounts…
+                    </div>
+                  ) : !ghlAccountsStatus?.connected ? (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <p className="text-xs font-medium text-amber-700">Auto-publishing requires Launch CRM.</p>
+                      <p className="text-xs text-amber-600 mt-0.5">Connect Launch CRM to publish through its Social Planner, or download the post package and publish manually.</p>
+                    </div>
+                  ) : ghlAccountsStatus.reason === 'lookup_failed' ? (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                      <p className="text-xs font-medium text-red-700">Could not load social accounts from Launch CRM.</p>
+                      <p className="text-xs text-red-600 mt-0.5">Verify the Launch CRM connection and try again.</p>
+                      <button onClick={fetchGhlAccounts} className="text-xs font-medium text-blue-600 hover:text-blue-800 mt-2">Retry →</button>
+                    </div>
+                  ) : ghlAccounts.length === 0 ? (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <p className="text-xs font-medium text-amber-700">No social accounts connected inside Launch CRM Social Planner.</p>
+                      <p className="text-xs text-amber-600 mt-0.5">Connect your social accounts in Launch CRM, then refresh.</p>
+                      <button onClick={fetchGhlAccounts} className="text-xs font-medium text-blue-600 hover:text-blue-800 mt-2">Refresh Launch CRM Accounts →</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-emerald-700 font-medium">Connected through Launch CRM:</p>
+                      {ghlAccounts.map(acct => {
+                        const platformLabel = acct.platform.charAt(0).toUpperCase() + acct.platform.slice(1).replace('_', ' ');
+                        const selected = selectedPlatforms.has(acct.platform);
+                        return (
+                          <button
+                            key={acct.id}
+                            onClick={() => togglePlatform(acct.platform)}
+                            disabled={publishing}
+                            className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg border text-left transition-all ${
+                              selected ? 'border-blue-300 bg-blue-50 ring-2 ring-blue-200' : 'border-gray-200 bg-white hover:bg-gray-50'
+                            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                          >
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white ${
+                              acct.platform === 'facebook' ? 'bg-blue-600' : acct.platform === 'instagram' ? 'bg-gradient-to-br from-purple-600 to-pink-500' : acct.platform === 'linkedin' ? 'bg-blue-700' : acct.platform === 'tiktok' ? 'bg-black' : acct.platform === 'google_business' ? 'bg-green-600' : 'bg-gray-500'
+                            }`}>
+                              {(() => { const PIcon = PLATFORMS.find(p => p.id === acct.platform)?.icon; return PIcon ? <PIcon className="w-4 h-4" /> : <Link2 className="w-4 h-4" />; })()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-800 truncate">{platformLabel} — {acct.name}</p>
+                            </div>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                              selected ? 'border-blue-600 bg-blue-600' : 'border-gray-300'
+                            }`}>
+                              {selected && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Schedule datetime */}
@@ -1205,18 +1248,18 @@ export default function PublishingDashboard() {
                 <div className="flex flex-wrap gap-3">
                   <button
                     onClick={() => publishContent('now')}
-                    disabled={selectedPlatforms.size === 0 || publishing}
+                    disabled={selectedPlatforms.size === 0 || publishing || ghlAccounts.length === 0}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={selectedPlatforms.size === 0 ? 'Select at least one platform' : 'Post immediately'}
+                    title={selectedPlatforms.size === 0 ? 'Select at least one channel' : 'Post immediately'}
                   >
                     {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
                     {publishing ? 'Publishing…' : 'Post Now'}
                   </button>
                   <button
                     onClick={() => publishContent('schedule')}
-                    disabled={selectedPlatforms.size === 0 || !scheduleTime || publishing}
+                    disabled={selectedPlatforms.size === 0 || !scheduleTime || publishing || ghlAccounts.length === 0}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white text-gray-700 text-sm font-semibold border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={!scheduleTime ? 'Set a schedule time first' : selectedPlatforms.size === 0 ? 'Select at least one platform' : 'Schedule post'}
+                    title={!scheduleTime ? 'Set a schedule time first' : selectedPlatforms.size === 0 ? 'Select at least one channel' : 'Schedule post'}
                   >
                     {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
                     Schedule
@@ -1228,64 +1271,8 @@ export default function PublishingDashboard() {
                   </p>
                 )}
                 <p className="text-xs text-gray-400 mt-2">
-                  Posts are queued for publishing — actual delivery depends on connected social accounts.
+                  Publishing is handled through Launch CRM Social Planner.
                 </p>
-              </div>
-
-              {/* ── Connected Accounts (placeholder) ─────────────────── */}
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-                    <Link2 className="w-4 h-4" /> Connected Accounts
-                  </h3>
-                  <span className="text-[10px] text-gray-500 font-medium bg-gray-50 px-2 py-0.5 rounded-full">
-                    via Launch CRM
-                  </span>
-                </div>
-
-                {accountsLoading ? (
-                  <div className="flex items-center justify-center py-6">
-                    <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
-                  </div>
-                ) : connectedAccounts.length === 0 ? (
-                  <div className="py-6 text-center">
-                    <Link2 className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                    <p className="text-sm text-gray-500">Accounts connected via Launch CRM</p>
-                    <p className="text-xs text-gray-400 mt-1">
-                      Publishing is handled through your Launch CRM Social Planner integration.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {connectedAccounts.map(acct => {
-                      const platformCfg = PLATFORMS.find(p => p.id === acct.platform);
-                      const Icon = platformCfg?.icon ?? Link2;
-                      const colorClass = platformCfg?.color ?? 'bg-gray-500';
-                      return (
-                        <div
-                          key={acct.id}
-                          className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-gray-100 bg-gray-50/50"
-                        >
-                          <span className={`w-7 h-7 rounded-md flex items-center justify-center text-white ${colorClass}`}>
-                            <Icon className="w-3.5 h-3.5" />
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-800 truncate">
-                              {acct.account_name}
-                            </p>
-                            <p className="text-[10px] text-gray-400">{acct.platform}</p>
-                          </div>
-                          <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-                            {acct.connection_status}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    <p className="text-xs text-gray-400 mt-2 text-center">
-                      Managed via Launch CRM
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           )}

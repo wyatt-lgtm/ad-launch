@@ -134,15 +134,6 @@ export default function SchedulingWizard({
         }),
       });
 
-      // Create social connections (placeholders for selected platforms)
-      for (const platform of selectedPlatforms) {
-        await fetch(`/api/businesses/${businessId}/social-connections`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ platform }),
-        });
-      }
-
       // Schedule the posts
       const res = await fetch(`/api/businesses/${businessId}/schedule-posts`, {
         method: 'POST',
