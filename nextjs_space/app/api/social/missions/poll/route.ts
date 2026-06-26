@@ -79,6 +79,16 @@ export async function POST(req: NextRequest) {
     if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const userId = (session.user as any).id;
 
+    // Parse optional businessId filter from request body
+    let requestBusinessId: string | null = null;
+    try {
+      const body = await req.json().catch(() => ({}));
+      requestBusinessId = body?.businessId || null;
+    } catch { /* no body */ }
+
+    console.log(`[missions/poll] ====== POLL START ======`);
+    console.log(`[missions/poll] userId=${userId}, requestBusinessId=${requestBusinessId}`);
+
     // Get all analyses that have any workflow IDs
     const analyses = await prisma.analysis.findMany({
       where: {
@@ -98,7 +108,7 @@ export async function POST(req: NextRequest) {
         userId,
         tombstoneBusinessId: { not: null },
       },
-      select: { id: true, tombstoneBusinessId: true },
+      select: { id: true, tombstoneBusinessId: true, businessName: true },
     });
     // Map tombstoneBusinessId → Launch OS businessId for attribution
     const tombstoneBizMap = new Map<number, string>();
@@ -108,14 +118,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Log business mapping details
+    for (const biz of businessesWithTombstone) {
+      console.log(`[missions/poll] Business: name="${biz.businessName}" launchId=${biz.id} tombstoneBusinessId=${biz.tombstoneBusinessId}`);
+    }
+
     const workflowIds = collectWorkflowIds(analyses);
     const workflowMap = buildWorkflowMap(analyses);
 
     const hasWorkflows = workflowIds.length > 0;
     const hasBusinessIds = tombstoneBizMap.size > 0;
 
+    console.log(`[missions/poll] Lane 1 enabled=${hasWorkflows} (${workflowIds.length} workflow IDs)`);
+    console.log(`[missions/poll] Lane 2 enabled=${hasBusinessIds} (${tombstoneBizMap.size} tombstone businesses)`);
+    if (hasWorkflows) console.log(`[missions/poll] Lane 1 workflow IDs: ${workflowIds.slice(0, 10).join(', ')}${workflowIds.length > 10 ? '...' : ''}`);
+
     if (!hasWorkflows && !hasBusinessIds && analyses.length === 0) {
-      return NextResponse.json({ polled: 0, imported: 0, pending: 0, status: 'no_missions' });
+      console.log(`[missions/poll] No workflows and no tombstone businesses — returning no_missions`);
+      return NextResponse.json({ polled: 0, imported: 0, skipped: 0, pending: 0, status: 'no_missions' });
     }
 
     // Get existing tombstoneTaskIds to skip already-imported tasks
@@ -125,7 +145,7 @@ export async function POST(req: NextRequest) {
     });
     const importedTaskIds = new Set(existingPosts.map(p => p.tombstoneTaskId));
 
-    console.log(`[missions/poll] Discovery: ${workflowIds.length} workflows, ${tombstoneBizMap.size} tombstone businesses (${importedTaskIds.size} already imported)`);
+    console.log(`[missions/poll] Already imported task IDs: ${importedTaskIds.size} (sample: ${[...importedTaskIds].slice(0, 5).join(', ')})`);
 
     // ── Lane 1: Workflow-based discovery ──
     let workflowQueueItems: any[] = [];
@@ -137,7 +157,10 @@ export async function POST(req: NextRequest) {
         );
         if (queueRes.ok) {
           const items = await queueRes.json();
-          if (Array.isArray(items)) workflowQueueItems = items;
+          if (Array.isArray(items)) {
+            workflowQueueItems = items;
+            console.log(`[missions/poll] Lane 1 returned ${items.length} items from workflow query`);
+          }
         } else {
           console.warn(`[missions/poll] Workflow queue fetch failed: ${queueRes.status}`);
         }
@@ -159,6 +182,7 @@ export async function POST(req: NextRequest) {
           if (bizQueueRes.ok) {
             const items = await bizQueueRes.json();
             if (Array.isArray(items)) {
+              console.log(`[missions/poll] Lane 2 biz=${tsBizId} (launchId=${launchBizId}) returned ${items.length} items: task_ids=[${items.map((i: any) => i.task_id).join(',')}]`);
               for (const item of items) {
                 taskToBizMap.set(String(item.task_id), launchBizId);
               }
@@ -197,9 +221,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Log all discovered task IDs
+    const allDiscoveredTaskIds = queueItems.map((item: any) => String(item.task_id));
+    console.log(`[missions/poll] All discovered task IDs (${allDiscoveredTaskIds.length}): ${allDiscoveredTaskIds.join(', ')}`);
+
     if (queueItems.length === 0) {
+      console.log(`[missions/poll] No queue items found from either lane — returning no_content`);
       return NextResponse.json({
-        polled: workflowIds.length, imported: 0, pending: 0,
+        polled: workflowIds.length, imported: 0, skipped: 0, pending: 0,
         status: 'no_content',
         message: 'No completed render tasks found yet. Posts may still be generating.',
       });
@@ -208,20 +237,32 @@ export async function POST(req: NextRequest) {
     console.log(`[missions/poll] Found ${queueItems.length} queue items, enriching with details...`);
 
     // Filter out already-imported tasks
+    const skippedTaskIds: string[] = [];
     const newItems = queueItems.filter((item: any) => {
       const taskId = String(item.task_id);
-      return !importedTaskIds.has(taskId);
+      if (importedTaskIds.has(taskId)) {
+        skippedTaskIds.push(taskId);
+        return false;
+      }
+      return true;
     });
 
+    if (skippedTaskIds.length > 0) {
+      console.log(`[missions/poll] Skipped (already imported): ${skippedTaskIds.join(', ')}`);
+    }
+
     if (newItems.length === 0) {
+      console.log(`[missions/poll] All ${queueItems.length} tasks already imported — returning all_imported`);
       return NextResponse.json({
-        polled: workflowIds.length, imported: 0, pending: 0,
+        polled: workflowIds.length, imported: 0, skipped: skippedTaskIds.length, pending: 0,
         status: 'all_imported',
         totalPosts: importedTaskIds.size,
         message: `All ${importedTaskIds.size} posts already imported.`,
       });
     }
 
+    const newTaskIds = newItems.map((item: any) => String(item.task_id));
+    console.log(`[missions/poll] New items to enrich (${newItems.length}): ${newTaskIds.join(', ')}`);
     console.log(`[missions/poll] ${newItems.length} new items to enrich (${queueItems.length} total, ${importedTaskIds.size} already imported)`);
 
     // Enrich each item with caption/hashtag data from the detail endpoint
@@ -517,6 +558,7 @@ export async function POST(req: NextRequest) {
 
     const totalImported = createdPosts.count + incompleteCreated;
     console.log(`[missions/poll] Imported ${createdPosts.count} complete + ${incompleteCreated} incomplete social posts (runId=${generationRun?.id || 'none'})`);
+    console.log(`[missions/poll] ====== POLL END: imported=${totalImported}, skipped=${skippedTaskIds.length} ======`);
 
     // ── Fetch render failure events for all relevant businesses ──
     let renderFailures: any[] = [];
@@ -545,6 +587,7 @@ export async function POST(req: NextRequest) {
       imported: totalImported,
       importedComplete: createdPosts.count,
       importedIncomplete: incompleteCreated,
+      skipped: skippedTaskIds.length,
       pending: 0,
       status: 'imported',
       message: `Imported ${createdPosts.count} post${createdPosts.count !== 1 ? 's' : ''}` +
