@@ -1309,15 +1309,24 @@ export default function SocialDashboard() {
         body: JSON.stringify({ accountIds: postNowAccountIds, includeLandingPage: postNowIncludeLanding }),
       });
       const data = await res.json();
+      setPostNowResult(data);
       if (res.ok && data.success) {
-        setPostNowResult(data);
-        setActionToast(`Published through Launch CRM${data.diagnostics?.selectedAccount?.name ? ` → ${data.diagnostics.selectedAccount.name}` : ''}`);
+        const resultsList: any[] = data.results || [];
+        const succeededNames = resultsList.filter((r: any) => r.success).map((r: any) => r.accountName).join(', ');
+        const toastMsg = data.partial_success
+          ? `Partially published — succeeded: ${succeededNames}`
+          : `Published through Launch CRM${succeededNames ? ` → ${succeededNames}` : ''}`;
+        setActionToast(toastMsg);
         setTimeout(() => setActionToast(null), 6000);
         await fetchPosts();
       } else {
-        setPostNowError(data.error || data.message || 'Failed to publish post.');
-        if (data.publishTraceId) {
-          setPostNowResult(data);
+        // All channels failed
+        const resultsList: any[] = data.results || [];
+        if (resultsList.length > 0) {
+          const errors = resultsList.filter((r: any) => !r.success).map((r: any) => `${r.accountName}: ${r.error}`).join(' | ');
+          setPostNowError(errors || data.error || 'Failed to publish post.');
+        } else {
+          setPostNowError(data.error || data.message || 'Failed to publish post.');
         }
       }
     } catch {
@@ -3359,20 +3368,42 @@ export default function SocialDashboard() {
               </div>
             )}
 
-            {/* Success diagnostics panel */}
-            {postNowResult?.success && (
+            {/* Per-channel results panel */}
+            {postNowResult?.success && Array.isArray(postNowResult.results) && postNowResult.results.length > 0 && (
+              <div className="px-6 py-2 space-y-1.5">
+                {postNowResult.partial_success && (
+                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                    <p className="text-xs font-medium text-amber-700">Partial success — some channels failed</p>
+                  </div>
+                )}
+                {postNowResult.results.map((r: any, i: number) => (
+                  <div key={r.accountId || i} className={`border rounded-lg p-3 space-y-0.5 ${r.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-2">
+                      {r.success
+                        ? <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        : <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                      }
+                      <p className={`text-xs font-medium ${r.success ? 'text-green-700' : 'text-red-700'}`}>
+                        {r.accountName || r.platform} — {r.success ? 'Published' : 'Failed'}
+                      </p>
+                    </div>
+                    <p className={`text-[11px] ml-6 capitalize ${r.success ? 'text-green-600' : 'text-red-500'}`}>Platform: {r.platform}</p>
+                    {r.ghlPostId && <p className="text-[11px] text-green-600 ml-6 font-mono">Post ID: {r.ghlPostId}</p>}
+                    {r.error && <p className="text-[11px] text-red-500 ml-6">{r.error}</p>}
+                    {r.traceId && <p className="text-[10px] ml-6 font-mono opacity-60">Trace: {r.traceId}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Legacy single-result success (no results array) */}
+            {postNowResult?.success && !Array.isArray(postNowResult.results) && (
               <div className="px-6 py-2">
                 <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
                     <p className="text-xs font-medium text-green-700">Published successfully</p>
                   </div>
-                  {postNowResult.diagnostics?.selectedAccount?.name && (
-                    <p className="text-[11px] text-green-600 ml-6">Account: {postNowResult.diagnostics.selectedAccount.name}</p>
-                  )}
-                  {postNowResult.diagnostics?.ghlPostId && (
-                    <p className="text-[11px] text-green-600 ml-6 font-mono">Post ID: {postNowResult.diagnostics.ghlPostId}</p>
-                  )}
                   {postNowResult.publishTraceId && (
                     <p className="text-[11px] text-green-600 ml-6 font-mono">Trace: {postNowResult.publishTraceId}</p>
                   )}

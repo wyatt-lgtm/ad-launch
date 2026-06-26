@@ -188,10 +188,11 @@ export async function POST(req: NextRequest, context: RouteContext) {
     }
     trace.push(traceStep('GHL_ACCOUNTS_LOOKUP_SUCCEEDED', `${accountsResult.accounts.length} accounts found`));
 
-    // ── Select the correct account ───────────────────────────────────
-    // New: accept explicit accountIds from frontend (channel-level selection)
-    // Fall back to platform-based lookup for backwards compatibility
-    let account: typeof accountsResult.accounts[0];
+    // ── Resolve target accounts ──────────────────────────────────────
+    // Build an array of accounts to publish to — one per selected channel.
+    // Each gets its own independent createGhlSocialPost call.
+    type GhlAccount = typeof accountsResult.accounts[0];
+    let targetAccounts: GhlAccount[] = [];
 
     if (requestedAccountIds.length > 0) {
       // Validate that requested account IDs belong to this business
@@ -210,15 +211,18 @@ export async function POST(req: NextRequest, context: RouteContext) {
         }
       }
 
-      // Use the first requested account
-      const found = accountsResult.accounts.find(a => a.id === requestedAccountIds[0]);
-      if (!found) {
-        return fail(publishTraceId, trace, 'Selected channel not found.', 422, post.id);
+      // Map each requested ID to the full account object
+      for (const reqId of requestedAccountIds) {
+        const found = accountsResult.accounts.find(a => a.id === reqId);
+        if (found) targetAccounts.push(found);
       }
-      account = found;
-      trace.push(traceStep('GHL_ACCOUNT_SELECTED_BY_ID', `name="${account.name}" platform=${account.platform} id=${account.id}`));
+
+      if (targetAccounts.length === 0) {
+        return fail(publishTraceId, trace, 'None of the selected channels were found.', 422, post.id);
+      }
+      trace.push(traceStep('GHL_ACCOUNTS_SELECTED_BY_ID', `count=${targetAccounts.length} ids=${targetAccounts.map(a => a.id).join(',')}`));
     } else {
-      // Legacy: platform-based lookup
+      // Legacy: platform-based lookup → single account
       const targetPlatform = platforms.includes('facebook') ? 'facebook'
         : platforms.includes('tiktok') ? 'tiktok'
         : platforms[0] || business.defaultGhlSocialPlatform || 'facebook';
@@ -237,19 +241,20 @@ export async function POST(req: NextRequest, context: RouteContext) {
           422, post.id
         );
       }
-      account = selection.selected;
-      trace.push(traceStep('GHL_ACCOUNT_SELECTED', `name="${account.name}" platform=${account.platform} originId=${account.originId}`));
+      targetAccounts = [selection.selected];
+      trace.push(traceStep('GHL_ACCOUNT_SELECTED', `name="${selection.selected.name}" platform=${selection.selected.platform} originId=${selection.selected.originId}`));
     }
 
-    // ── Cache/update the default account if not already saved ────────
-    if (!business.defaultGhlSocialAccountId || business.defaultGhlSocialAccountId !== account.id) {
+    // Cache the first selected account as default if not already saved
+    const firstAccount = targetAccounts[0];
+    if (!business.defaultGhlSocialAccountId || business.defaultGhlSocialAccountId !== firstAccount.id) {
       await prisma.business.update({
         where: { id: business.id },
         data: {
-          defaultGhlSocialAccountId: account.id,
-          defaultGhlSocialAccountName: account.name,
-          defaultGhlSocialPlatform: account.platform,
-          defaultGhlSocialOriginId: account.originId,
+          defaultGhlSocialAccountId: firstAccount.id,
+          defaultGhlSocialAccountName: firstAccount.name,
+          defaultGhlSocialPlatform: firstAccount.platform,
+          defaultGhlSocialOriginId: firstAccount.originId,
         },
       }).catch(err => {
         console.warn('[post-now] Failed to cache default GHL account:', err.message);
@@ -371,111 +376,167 @@ export async function POST(req: NextRequest, context: RouteContext) {
       }
     }
 
-    // ── Build post payload ───────────────────────────────────────────
-    const ghlPayload = {
-      accountIds: [account.id],
-      userId: resolvedUserId!,
-      summary: finalCaption,
-      media,
-      type: 'post' as const,
+    // ── Publish to each channel independently ────────────────────────
+    // Each target account gets its own createGhlSocialPost call.
+    // Media + userId are shared — only the accountId changes per call.
+    type ChannelResult = {
+      accountId: string;
+      accountName: string;
+      platform: string;
+      success: boolean;
+      ghlPostId: string | null;
+      ghlStatus: string | null;
+      error: string | null;
+      traceId: string;
     };
 
-    trace.push(traceStep('POST_PAYLOAD_BUILT', `caption_len=${finalCaption.length} media_count=${media.length} account=${account.name}`));
+    const channelResults: ChannelResult[] = [];
 
-    // Log the payload for diagnostics (no secrets)
-    console.log(`[post-now] [${publishTraceId}] Creating GHL post:`, {
-      businessId: business.id,
-      businessName: business.businessName,
-      ghlLocationId: business.ghlLocationId,
-      accountId: account.id,
-      accountName: account.name,
-      platform: account.platform,
-      captionLength: finalCaption.length,
-      mediaCount: media.length,
-      ghlUserId: resolvedUserId,
-      landingPageApplied,
-    });
+    for (const account of targetAccounts) {
+      const channelTraceId = targetAccounts.length > 1
+        ? `${publishTraceId}-${account.platform.slice(0, 3)}`
+        : publishTraceId;
 
-    // ── Call GHL Create Post API ─────────────────────────────────────
-    trace.push(traceStep('GHL_CREATE_POST_REQUESTED'));
-    const createResult = await createGhlSocialPost(
-      business.ghlLocationId,
-      business.ghlApiToken,
-      ghlPayload
-    );
+      const ghlPayload = {
+        accountIds: [account.id],
+        userId: resolvedUserId!,
+        summary: finalCaption,
+        media,
+        type: 'post' as const,
+      };
 
-    if (!createResult.success) {
-      console.error(`[post-now] [${publishTraceId}] GHL Create Post FAILED:`, createResult.error);
-      trace.push(traceStep('GHL_CREATE_POST_FAILED', createResult.error));
+      trace.push(traceStep('GHL_CREATE_POST_REQUESTED', `account=${account.name} platform=${account.platform} channelTrace=${channelTraceId}`));
 
-      // Update post status to failed
-      await prisma.socialPost.update({
-        where: { id: post.id },
-        data: {
-          status: 'failed_to_publish',
-          ghlSocialAccountId: account.id,
-          ghlSocialAccountName: account.name,
-          ghlSocialOriginId: account.originId,
-          ghlStatus: 'error',
-          publishResponseSummary: (createResult.error || '').slice(0, 1000),
-          ...(finalCaption !== post.caption ? { caption: finalCaption } : {}),
-        },
+      console.log(`[post-now] [${channelTraceId}] Creating GHL post for channel:`, {
+        businessId: business.id,
+        businessName: business.businessName,
+        ghlLocationId: business.ghlLocationId,
+        accountId: account.id,
+        accountName: account.name,
+        platform: account.platform,
+        captionLength: finalCaption.length,
+        mediaCount: media.length,
+        ghlUserId: resolvedUserId,
+        landingPageApplied,
       });
 
-      return NextResponse.json({
-        success: false,
-        error: createResult.error || 'Launch CRM rejected the post.',
-        publishTraceId,
-        diagnostics: buildDiagnostics(publishTraceId, business, account, landingPageApplied, null, createResult.error || null, trace),
-      }, { status: 502 });
+      try {
+        const createResult = await createGhlSocialPost(
+          business.ghlLocationId,
+          business.ghlApiToken,
+          ghlPayload
+        );
+
+        if (!createResult.success) {
+          console.error(`[post-now] [${channelTraceId}] GHL Create Post FAILED for ${account.name}:`, createResult.error);
+          trace.push(traceStep('GHL_CREATE_POST_FAILED', `account=${account.name} error=${createResult.error}`));
+          channelResults.push({
+            accountId: account.id,
+            accountName: account.name,
+            platform: account.platform,
+            success: false,
+            ghlPostId: null,
+            ghlStatus: 'error',
+            error: createResult.error || 'Launch CRM rejected the post.',
+            traceId: channelTraceId,
+          });
+        } else {
+          trace.push(traceStep('GHL_CREATE_POST_SUCCEEDED', `account=${account.name} postId=${createResult.postId || 'none'} status=${createResult.status}`));
+          channelResults.push({
+            accountId: account.id,
+            accountName: account.name,
+            platform: account.platform,
+            success: true,
+            ghlPostId: createResult.postId || null,
+            ghlStatus: createResult.status || 'success',
+            error: null,
+            traceId: channelTraceId,
+          });
+        }
+      } catch (err: any) {
+        console.error(`[post-now] [${channelTraceId}] Exception publishing to ${account.name}:`, err.message);
+        trace.push(traceStep('GHL_CREATE_POST_EXCEPTION', `account=${account.name} error=${err.message}`));
+        channelResults.push({
+          accountId: account.id,
+          accountName: account.name,
+          platform: account.platform,
+          success: false,
+          ghlPostId: null,
+          ghlStatus: 'error',
+          error: err.message || 'Unexpected error during publishing.',
+          traceId: channelTraceId,
+        });
+      }
     }
 
-    // ── Success! ─────────────────────────────────────────────────────
-    trace.push(traceStep('GHL_CREATE_POST_SUCCEEDED', `postId=${createResult.postId || 'none'} status=${createResult.status}`));
+    // ── Aggregate results ─────────────────────────────────────────────
+    const succeeded = channelResults.filter(r => r.success);
+    const failed = channelResults.filter(r => !r.success);
+    const allSucceeded = failed.length === 0;
+    const allFailed = succeeded.length === 0;
+    const partialSuccess = succeeded.length > 0 && failed.length > 0;
 
     const textPublished = true;
     const mediaAttached = media.length > 0;
-    const finalStatus = createResult.postId ? 'published_by_ghl' : 'published_unverified';
+
+    // Pick primary result for backward-compatible DB fields
+    const primaryResult = succeeded[0] || channelResults[0];
+    const finalStatus = allFailed
+      ? 'failed_to_publish'
+      : primaryResult.ghlPostId
+        ? 'published_by_ghl'
+        : 'published_unverified';
 
     const updated = await prisma.socialPost.update({
       where: { id: post.id },
       data: {
         status: finalStatus,
-        publishedAt: new Date(),
+        publishedAt: allFailed ? undefined : new Date(),
         platforms,
-        ghlPostId: createResult.postId || null,
-        ghlSocialAccountId: account.id,
-        ghlSocialAccountName: account.name,
-        ghlSocialOriginId: account.originId,
-        ghlStatus: createResult.status || 'success',
+        ghlPostId: primaryResult.ghlPostId,
+        ghlSocialAccountId: primaryResult.accountId,
+        ghlSocialAccountName: primaryResult.accountName,
+        ghlSocialOriginId: targetAccounts.find(a => a.id === primaryResult.accountId)?.originId || null,
+        ghlStatus: primaryResult.ghlStatus || (allFailed ? 'error' : 'success'),
         publishResponseSummary: JSON.stringify({
-          statusCode: createResult.statusCode,
-          postId: createResult.postId,
-          status: createResult.status,
+          multiChannel: true,
+          totalChannels: channelResults.length,
+          succeededCount: succeeded.length,
+          failedCount: failed.length,
+          channels: channelResults.map(r => ({
+            accountId: r.accountId,
+            accountName: r.accountName,
+            platform: r.platform,
+            success: r.success,
+            ghlPostId: r.ghlPostId,
+            error: r.error,
+          })),
           textPublished,
           mediaAttached,
           mediaCount: media.length,
           mediaUploadFailed: mediaUploadFailed && media.length > 0,
-          mediaFailureReason: mediaUploadFailed ? mediaFailureReason : null,
-          mediaHostedOnGhl: media.length > 0,
         }).slice(0, 1000),
         ...(finalCaption !== post.caption ? { caption: finalCaption } : {}),
       },
     });
 
-    trace.push(traceStep('SOCIAL_POST_STATUS_UPDATED', `status=${finalStatus}`));
+    trace.push(traceStep('SOCIAL_POST_STATUS_UPDATED', `status=${finalStatus} succeeded=${succeeded.length} failed=${failed.length}`));
     trace.push(traceStep('POST_NOW_COMPLETED'));
 
-    console.log(`[post-now] [${publishTraceId}] SUCCESS: post=${post.id} ghlPostId=${createResult.postId} status=${finalStatus}`);
+    console.log(`[post-now] [${publishTraceId}] COMPLETED: post=${post.id} status=${finalStatus} succeeded=${succeeded.length}/${channelResults.length}`);
+
+    const overallSuccess = !allFailed;
+    const httpStatus = allFailed ? 502 : 200;
 
     return NextResponse.json({
-      success: true,
+      success: overallSuccess,
+      partial_success: partialSuccess,
+      results: channelResults,
       post: {
         id: updated.id,
         status: updated.status,
         publishedAt: updated.publishedAt,
         platforms: updated.platforms,
-        ghlPostId: createResult.postId,
       },
       mediaStatus: {
         textPublished,
@@ -485,8 +546,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
         mediaUploadFailed: mediaUploadFailed && media.length > 0,
       },
       publishTraceId,
-      diagnostics: buildDiagnostics(publishTraceId, business, account, landingPageApplied, createResult.postId || null, null, trace),
-    });
+    }, { status: httpStatus });
 
   } catch (error: any) {
     console.error(`[post-now] [${publishTraceId}] Unhandled error:`, error);
