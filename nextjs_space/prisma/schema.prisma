@@ -99,6 +99,9 @@ model Business {
   ghlLinkedAt           DateTime?
   ghlLinkNotes          String?
 
+  // ── Linked GHL Social Planner channels for this business ──────
+  ghlLinkedAccountIds         String[]   @default([])
+
   // ── Default GHL Social Planner account ──────────────────────────
   defaultGhlSocialAccountId   String?    // Full GHL Social Planner account ID
   defaultGhlSocialAccountName String?    // Display name (e.g. "Blazing Hog Wireless Internet")

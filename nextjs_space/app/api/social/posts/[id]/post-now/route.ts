@@ -102,6 +102,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
         ghlLocationId: true,
         ghlApiToken: true,
         ghlProvisioningStatus: true,
+        ghlLinkedAccountIds: true,
         defaultSocialLandingPageUrl: true,
         defaultSocialLandingPageEnabled: true,
         defaultSocialCtaText: true,
@@ -143,6 +144,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
 
     // ── Parse request body ───────────────────────────────────────────
     const body = await req.json().catch(() => ({}));
+    const requestedAccountIds: string[] = Array.isArray(body.accountIds) ? body.accountIds.filter((id: any) => typeof id === 'string' && id.trim()) : [];
     const platforms = Array.isArray(body.platforms) ? body.platforms : post.platforms;
     const includeLandingPage = body.includeLandingPage === true;
 
@@ -187,27 +189,57 @@ export async function POST(req: NextRequest, context: RouteContext) {
     trace.push(traceStep('GHL_ACCOUNTS_LOOKUP_SUCCEEDED', `${accountsResult.accounts.length} accounts found`));
 
     // ── Select the correct account ───────────────────────────────────
-    const targetPlatform = platforms.includes('facebook') ? 'facebook'
-      : platforms.includes('tiktok') ? 'tiktok'
-      : platforms[0] || business.defaultGhlSocialPlatform || 'facebook';
+    // New: accept explicit accountIds from frontend (channel-level selection)
+    // Fall back to platform-based lookup for backwards compatibility
+    let account: typeof accountsResult.accounts[0];
 
-    const selection = selectGhlAccount(accountsResult.accounts, {
-      platform: targetPlatform,
-      savedAccountId: business.defaultGhlSocialAccountId,
-      savedOriginId: business.defaultGhlSocialOriginId,
-      savedAccountName: business.defaultGhlSocialAccountName,
-    });
+    if (requestedAccountIds.length > 0) {
+      // Validate that requested account IDs belong to this business
+      const linkedIds = business.ghlLinkedAccountIds || [];
+      const linkedSet = new Set(linkedIds);
+      const allGhlIds = new Set(accountsResult.accounts.map(a => a.id));
 
-    if (!selection.selected) {
-      return fail(
-        publishTraceId, trace,
-        selection.error || 'No connected account/page found in Launch CRM Social Planner.',
-        422, post.id
-      );
+      for (const reqId of requestedAccountIds) {
+        if (!allGhlIds.has(reqId)) {
+          console.warn(`[post-now] [${publishTraceId}] REJECTED: accountId=${reqId} not found in GHL accounts for business=${business.id}`);
+          return fail(publishTraceId, trace, `Channel ${reqId} is not connected to this business's Launch CRM location.`, 403, post.id);
+        }
+        if (linkedSet.size > 0 && !linkedSet.has(reqId)) {
+          console.warn(`[post-now] [${publishTraceId}] REJECTED cross-business channel: accountId=${reqId} not in ghlLinkedAccountIds for business=${business.id}`);
+          return fail(publishTraceId, trace, `Channel ${reqId} is not linked to this business. Cross-business publishing is not allowed.`, 403, post.id);
+        }
+      }
+
+      // Use the first requested account
+      const found = accountsResult.accounts.find(a => a.id === requestedAccountIds[0]);
+      if (!found) {
+        return fail(publishTraceId, trace, 'Selected channel not found.', 422, post.id);
+      }
+      account = found;
+      trace.push(traceStep('GHL_ACCOUNT_SELECTED_BY_ID', `name="${account.name}" platform=${account.platform} id=${account.id}`));
+    } else {
+      // Legacy: platform-based lookup
+      const targetPlatform = platforms.includes('facebook') ? 'facebook'
+        : platforms.includes('tiktok') ? 'tiktok'
+        : platforms[0] || business.defaultGhlSocialPlatform || 'facebook';
+
+      const selection = selectGhlAccount(accountsResult.accounts, {
+        platform: targetPlatform,
+        savedAccountId: business.defaultGhlSocialAccountId,
+        savedOriginId: business.defaultGhlSocialOriginId,
+        savedAccountName: business.defaultGhlSocialAccountName,
+      });
+
+      if (!selection.selected) {
+        return fail(
+          publishTraceId, trace,
+          selection.error || 'No connected account/page found in Launch CRM Social Planner.',
+          422, post.id
+        );
+      }
+      account = selection.selected;
+      trace.push(traceStep('GHL_ACCOUNT_SELECTED', `name="${account.name}" platform=${account.platform} originId=${account.originId}`));
     }
-
-    const account = selection.selected;
-    trace.push(traceStep('GHL_ACCOUNT_SELECTED', `name="${account.name}" platform=${account.platform} originId=${account.originId}`));
 
     // ── Cache/update the default account if not already saved ────────
     if (!business.defaultGhlSocialAccountId || business.defaultGhlSocialAccountId !== account.id) {

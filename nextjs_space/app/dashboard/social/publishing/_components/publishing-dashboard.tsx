@@ -421,8 +421,8 @@ export default function PublishingDashboard() {
     toastTimer.current = setTimeout(() => setInlineToast(null), 4000);
   }, []);
 
-  // Publish controls state
-  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
+  // Publish controls state — keyed by unique GHL account ID, not platform
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
   const [scheduleTime, setScheduleTime] = useState('');
   const [publishing, setPublishing] = useState(false);
 
@@ -618,18 +618,18 @@ export default function PublishingDashboard() {
 
   const selectItem = (taskId: number) => {
     setSelectedTaskId(taskId);
-    setSelectedPlatforms(new Set());
+    setSelectedAccountIds(new Set());
     setScheduleTime('');
     fetchDetail(taskId);
   };
 
-  // ── Platform toggle ────────────────────────────────────────────────────────
+  // ── Channel toggle (by unique account ID) ────────────────────────────
 
-  const togglePlatform = (platformId: string) => {
-    setSelectedPlatforms(prev => {
+  const toggleAccountId = (accountId: string) => {
+    setSelectedAccountIds(prev => {
       const next = new Set(prev);
-      if (next.has(platformId)) next.delete(platformId);
-      else next.add(platformId);
+      if (next.has(accountId)) next.delete(accountId);
+      else next.add(accountId);
       return next;
     });
   };
@@ -716,8 +716,8 @@ export default function PublishingDashboard() {
 
   const publishContent = useCallback(async (mode: 'now' | 'schedule') => {
     if (!selectedTaskId || publishing) return;
-    if (selectedPlatforms.size === 0) {
-      showToast('error', 'Select at least one platform');
+    if (selectedAccountIds.size === 0) {
+      showToast('error', 'Select at least one channel');
       return;
     }
     if (mode === 'schedule' && !scheduleTime) {
@@ -737,7 +737,7 @@ export default function PublishingDashboard() {
     }
 
     const payload: Record<string, any> = {
-      platforms: Array.from(selectedPlatforms),
+      accountIds: Array.from(selectedAccountIds),
       content: {
         caption: editCaption || null,
         platform_variants: Object.keys(pv).length > 0 ? pv : null,
@@ -766,9 +766,9 @@ export default function PublishingDashboard() {
         throw new Error(resBody.error || `Publish failed (${res.status})`);
       }
 
-      const platformCount = payload.platforms.length;
+      const channelCount = payload.accountIds.length;
       const statusLabel = mode === 'schedule' ? 'scheduled' : 'queued';
-      showToast('success', `${platformCount} platform(s) ${statusLabel} successfully`);
+      showToast('success', `${channelCount} channel(s) ${statusLabel} successfully`);
 
       // Update local queue item status
       setQueue(prev => prev.map(item =>
@@ -777,8 +777,8 @@ export default function PublishingDashboard() {
           : item
       ));
 
-      // Clear platform selection + schedule after success
-      setSelectedPlatforms(new Set());
+      // Clear channel selection + schedule after success
+      setSelectedAccountIds(new Set());
       setScheduleTime('');
 
       // Refresh queue in background to pick up accurate server state
@@ -789,7 +789,7 @@ export default function PublishingDashboard() {
     } finally {
       setPublishing(false);
     }
-  }, [selectedTaskId, publishing, selectedPlatforms, scheduleTime, editCaption, editHashtags, editCta, editPlatformCaptions, showToast, fetchQueue]);
+  }, [selectedTaskId, publishing, selectedAccountIds, scheduleTime, editCaption, editHashtags, editCta, editPlatformCaptions, showToast, fetchQueue]);
 
   // ── Render helpers ─────────────────────────────────────────────────────────
 
@@ -1201,11 +1201,11 @@ export default function PublishingDashboard() {
                       <p className="text-xs text-emerald-700 font-medium">Connected through Launch CRM:</p>
                       {ghlAccounts.map(acct => {
                         const platformLabel = acct.platform.charAt(0).toUpperCase() + acct.platform.slice(1).replace('_', ' ');
-                        const selected = selectedPlatforms.has(acct.platform);
+                        const selected = selectedAccountIds.has(acct.id);
                         return (
                           <button
                             key={acct.id}
-                            onClick={() => togglePlatform(acct.platform)}
+                            onClick={() => toggleAccountId(acct.id)}
                             disabled={publishing}
                             className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg border text-left transition-all ${
                               selected ? 'border-blue-300 bg-blue-50 ring-2 ring-blue-200' : 'border-gray-200 bg-white hover:bg-gray-50'
@@ -1248,18 +1248,18 @@ export default function PublishingDashboard() {
                 <div className="flex flex-wrap gap-3">
                   <button
                     onClick={() => publishContent('now')}
-                    disabled={selectedPlatforms.size === 0 || publishing || ghlAccounts.length === 0}
+                    disabled={selectedAccountIds.size === 0 || publishing || ghlAccounts.length === 0}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={selectedPlatforms.size === 0 ? 'Select at least one channel' : 'Post immediately'}
+                    title={selectedAccountIds.size === 0 ? 'Select at least one channel' : 'Post immediately'}
                   >
                     {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
                     {publishing ? 'Publishing…' : 'Post Now'}
                   </button>
                   <button
                     onClick={() => publishContent('schedule')}
-                    disabled={selectedPlatforms.size === 0 || !scheduleTime || publishing || ghlAccounts.length === 0}
+                    disabled={selectedAccountIds.size === 0 || !scheduleTime || publishing || ghlAccounts.length === 0}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white text-gray-700 text-sm font-semibold border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={!scheduleTime ? 'Set a schedule time first' : selectedPlatforms.size === 0 ? 'Select at least one channel' : 'Schedule post'}
+                    title={!scheduleTime ? 'Set a schedule time first' : selectedAccountIds.size === 0 ? 'Select at least one channel' : 'Schedule post'}
                   >
                     {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
                     Schedule

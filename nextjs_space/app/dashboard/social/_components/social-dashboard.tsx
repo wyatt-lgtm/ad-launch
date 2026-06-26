@@ -243,11 +243,11 @@ export default function SocialDashboard() {
 
   // Post Now / Schedule Post modal state
   const [postNowTarget, setPostNowTarget] = useState<SocialPost | null>(null);
-  const [postNowPlatforms, setPostNowPlatforms] = useState<string[]>([]);
+  const [postNowAccountIds, setPostNowAccountIds] = useState<string[]>([]);
   const [postNowLoading, setPostNowLoading] = useState(false);
   const [postNowError, setPostNowError] = useState<string | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<SocialPost | null>(null);
-  const [schedulePlatforms, setSchedulePlatforms] = useState<string[]>([]);
+  const [scheduleAccountIds, setScheduleAccountIds] = useState<string[]>([]);
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('10:00');
   const [scheduleTimezone, setScheduleTimezone] = useState('America/Denver');
@@ -1287,7 +1287,9 @@ export default function SocialDashboard() {
   // ── Post Now handler ──
   const openPostNowModal = (post: SocialPost) => {
     setPostNowTarget(post);
-    setPostNowPlatforms(post.platforms.length > 0 ? [...post.platforms] : (ghlAccounts.length > 0 ? ghlAccounts.map(a => a.platform) : ['facebook']));
+    // Pre-select the default account if available, otherwise empty
+    const defaultAcct = ghlAccounts.find(a => a.isDefault);
+    setPostNowAccountIds(defaultAcct ? [defaultAcct.id] : []);
     setPostNowIncludeLanding(landingPageConfig?.enabled && !!landingPageConfig?.url ? true : false);
     setPostNowError(null);
     setPostNowLoading(false);
@@ -1304,7 +1306,7 @@ export default function SocialDashboard() {
       const res = await fetch(`/api/social/posts/${postNowTarget.id}/post-now`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platforms: postNowPlatforms, includeLandingPage: postNowIncludeLanding }),
+        body: JSON.stringify({ accountIds: postNowAccountIds, includeLandingPage: postNowIncludeLanding }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -1327,7 +1329,8 @@ export default function SocialDashboard() {
   // ── Schedule Post handler ──
   const openScheduleModal = (post: SocialPost) => {
     setScheduleTarget(post);
-    setSchedulePlatforms(post.platforms.length > 0 ? [...post.platforms] : (ghlAccounts.length > 0 ? ghlAccounts.map(a => a.platform) : ['facebook']));
+    const defaultAcct = ghlAccounts.find(a => a.isDefault);
+    setScheduleAccountIds(defaultAcct ? [defaultAcct.id] : []);
     setScheduleIncludeLanding(landingPageConfig?.enabled && !!landingPageConfig?.url ? true : false);
     // Default to tomorrow 10 AM
     const tomorrow = new Date();
@@ -1348,7 +1351,7 @@ export default function SocialDashboard() {
       const res = await fetch(`/api/social/posts/${scheduleTarget.id}/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scheduledFor, timezone: scheduleTimezone, platforms: schedulePlatforms, includeLandingPage: scheduleIncludeLanding }),
+        body: JSON.stringify({ scheduledFor, timezone: scheduleTimezone, accountIds: scheduleAccountIds, includeLandingPage: scheduleIncludeLanding }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -1365,8 +1368,8 @@ export default function SocialDashboard() {
     setScheduleLoading(false);
   };
 
-  const togglePlatform = (platformId: string, list: string[], setList: (v: string[]) => void) => {
-    setList(list.includes(platformId) ? list.filter(p => p !== platformId) : [...list, platformId]);
+  const toggleChannelId = (channelId: string, list: string[], setList: (v: string[]) => void) => {
+    setList(list.includes(channelId) ? list.filter(id => id !== channelId) : [...list, channelId]);
   };
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -3274,11 +3277,11 @@ export default function SocialDashboard() {
                 <div className="space-y-2">
                   {ghlAccounts.map(acct => {
                     const platformLabel = acct.platform.charAt(0).toUpperCase() + acct.platform.slice(1).replace('_', ' ');
-                    const selected = postNowPlatforms.includes(acct.platform);
+                    const selected = postNowAccountIds.includes(acct.id);
                     return (
                       <button
                         key={acct.id}
-                        onClick={() => togglePlatform(acct.platform, postNowPlatforms, setPostNowPlatforms)}
+                        onClick={() => toggleChannelId(acct.id, postNowAccountIds, setPostNowAccountIds)}
                         className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left border transition-colors ${
                           selected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:bg-gray-50'
                         }`}
@@ -3381,7 +3384,7 @@ export default function SocialDashboard() {
               <button onClick={() => setPostNowTarget(null)} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
               <button
                 onClick={executePostNow}
-                disabled={postNowLoading || postNowPlatforms.length === 0 || ghlAccounts.length === 0}
+                disabled={postNowLoading || postNowAccountIds.length === 0 || ghlAccounts.length === 0}
                 className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
               >
                 {postNowLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -3469,11 +3472,11 @@ export default function SocialDashboard() {
                 <div className="space-y-2">
                   {ghlAccounts.map(acct => {
                     const platformLabel = acct.platform.charAt(0).toUpperCase() + acct.platform.slice(1).replace('_', ' ');
-                    const selected = schedulePlatforms.includes(acct.platform);
+                    const selected = scheduleAccountIds.includes(acct.id);
                     return (
                       <button
                         key={acct.id}
-                        onClick={() => togglePlatform(acct.platform, schedulePlatforms, setSchedulePlatforms)}
+                        onClick={() => toggleChannelId(acct.id, scheduleAccountIds, setScheduleAccountIds)}
                         className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left border transition-colors ${
                           selected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:bg-gray-50'
                         }`}
@@ -3543,7 +3546,7 @@ export default function SocialDashboard() {
               <button onClick={() => setScheduleTarget(null)} className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
               <button
                 onClick={executeSchedule}
-                disabled={scheduleLoading || !scheduleDate || !scheduleTime || schedulePlatforms.length === 0}
+                disabled={scheduleLoading || !scheduleDate || !scheduleTime || scheduleAccountIds.length === 0}
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
               >
                 {scheduleLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

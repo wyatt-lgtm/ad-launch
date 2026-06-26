@@ -6,16 +6,18 @@ import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { listGhlSocialAccounts } from '@/lib/ghl-social-planner';
 
+type RouteContext = { params: { id: string } };
+
 /**
  * GET /api/businesses/[id]/ghl/social-accounts
  *
  * Fetch social accounts connected in Launch CRM (GHL Social Planner)
- * for a given business. Returns accounts from GHL's API, not from
- * Launch OS SocialConnection rows.
+ * for a given business. Filters to only business-linked channels when
+ * ghlLinkedAccountIds is non-empty.
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: RouteContext
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -32,6 +34,7 @@ export async function GET(
         ghlLocationId: true,
         ghlApiToken: true,
         ghlProvisioningStatus: true,
+        ghlLinkedAccountIds: true,
         defaultGhlSocialAccountId: true,
         defaultGhlSocialAccountName: true,
         defaultGhlSocialPlatform: true,
@@ -72,8 +75,26 @@ export async function GET(
     // Filter out deleted accounts
     const activeAccounts = result.accounts.filter(a => !a.deleted);
 
+    // ── Business-scope filtering ──────────────────────────────────
+    // If ghlLinkedAccountIds is populated, only show accounts in that list.
+    // If empty but defaultGhlSocialAccountId is set, show only the default.
+    // If both empty, show ALL accounts (initial setup / unfiltered mode).
+    const linked = business.ghlLinkedAccountIds || [];
+    const defaultId = business.defaultGhlSocialAccountId;
+    let filtered = activeAccounts;
+    let filterMode: 'linked' | 'default_only' | 'unfiltered' = 'unfiltered';
+
+    if (linked.length > 0) {
+      const linkedSet = new Set(linked);
+      filtered = activeAccounts.filter(a => linkedSet.has(a.id));
+      filterMode = 'linked';
+    } else if (defaultId) {
+      filtered = activeAccounts.filter(a => a.id === defaultId);
+      filterMode = 'default_only';
+    }
+
     // Map to a safe response shape
-    const accounts = activeAccounts.map(a => ({
+    const accounts = filtered.map(a => ({
       id: a.id,
       name: a.name,
       platform: a.platform,
@@ -81,19 +102,36 @@ export async function GET(
       originId: a.originId,
       avatar: a.avatar,
       isExpired: a.isExpired,
-      isDefault: a.id === business.defaultGhlSocialAccountId,
+      isDefault: a.id === defaultId,
+    }));
+
+    // Also return the full unfiltered list for the management UI
+    const allAccounts = activeAccounts.map(a => ({
+      id: a.id,
+      name: a.name,
+      platform: a.platform,
+      type: a.type,
+      originId: a.originId,
+      avatar: a.avatar,
+      isExpired: a.isExpired,
+      isLinked: linked.length > 0 ? linked.includes(a.id) : (defaultId ? a.id === defaultId : true),
     }));
 
     return NextResponse.json({
       connected: true,
       reason: accounts.length > 0 ? 'accounts_found' : 'no_accounts',
       message: accounts.length > 0
-        ? `Found ${accounts.length} social account${accounts.length !== 1 ? 's' : ''} connected through Launch CRM.`
-        : 'No social accounts are connected inside Launch CRM Social Planner. Connect your social accounts in Launch CRM, then refresh here.',
+        ? `Found ${accounts.length} publishing channel${accounts.length !== 1 ? 's' : ''} for this business.`
+        : filterMode === 'unfiltered'
+          ? 'No social accounts are connected inside Launch CRM Social Planner. Connect your social accounts in Launch CRM, then refresh here.'
+          : 'No linked publishing channels for this business. Go to Publish Options to link channels.',
       accounts,
-      defaultAccount: business.defaultGhlSocialAccountId
+      allAccounts,
+      filterMode,
+      linkedAccountIds: linked,
+      defaultAccount: defaultId
         ? {
-            id: business.defaultGhlSocialAccountId,
+            id: defaultId,
             name: business.defaultGhlSocialAccountName,
             platform: business.defaultGhlSocialPlatform,
           }
@@ -101,6 +139,50 @@ export async function GET(
     });
   } catch (err: any) {
     console.error('[ghl-social-accounts GET]', err);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+/**
+ * PUT /api/businesses/[id]/ghl/social-accounts
+ *
+ * Link or unlink GHL social accounts for this business.
+ * Body: { accountIds: string[] }
+ * Sets ghlLinkedAccountIds to the provided list.
+ */
+export async function PUT(
+  request: NextRequest,
+  { params }: RouteContext
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const userId = (session.user as any).id;
+    const businessId = params.id;
+
+    const business = await prisma.business.findFirst({
+      where: { id: businessId, userId },
+      select: { id: true },
+    });
+    if (!business) {
+      return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+    }
+
+    const body = await request.json();
+    const accountIds = Array.isArray(body.accountIds) ? body.accountIds.filter((id: any) => typeof id === 'string' && id.trim()) : [];
+
+    await prisma.business.update({
+      where: { id: businessId },
+      data: { ghlLinkedAccountIds: accountIds },
+    });
+
+    console.log(`[ghl-social-accounts PUT] Business ${businessId}: linked ${accountIds.length} account(s):`, accountIds);
+
+    return NextResponse.json({ success: true, linkedAccountIds: accountIds });
+  } catch (err: any) {
+    console.error('[ghl-social-accounts PUT]', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
