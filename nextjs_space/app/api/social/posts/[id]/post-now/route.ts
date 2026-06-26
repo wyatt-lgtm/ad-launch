@@ -275,21 +275,35 @@ export async function POST(req: NextRequest, context: RouteContext) {
     }
 
     // ── Resolve GHL userId ─────────────────────────────────────────
-    // Priority: 1) saved defaultGhlUserId, 2) dynamic Users API lookup
+    // Priority: A) saved defaultGhlUserId  B) auto-discover via Users API
     let resolvedUserId: string | null = business.defaultGhlUserId || null;
     let resolvedUserName: string | null = business.defaultGhlUserName || null;
 
     if (resolvedUserId) {
-      trace.push(traceStep('GHL_USER_FROM_SAVED', `userId=${resolvedUserId} name=${resolvedUserName}`));
+      console.log('[post-now] Using cached publishing user', {
+        businessId: business.id, ghlLocationId: business.ghlLocationId,
+        userId: resolvedUserId, userName: resolvedUserName,
+        email: business.defaultGhlUserEmail, source: 'cached',
+      });
+      trace.push(traceStep('GHL_USER_FROM_CACHE', `userId=${resolvedUserId} name=${resolvedUserName}`));
     } else {
-      trace.push(traceStep('GHL_USER_LOOKUP_REQUESTED', 'No saved defaultGhlUserId — attempting Users API'));
+      // Auto-discover: call Users API for THIS business's own location/token
+      console.log('[post-now] No cached publishing user — auto-discovering via Users API', {
+        businessId: business.id, ghlLocationId: business.ghlLocationId,
+      });
+      trace.push(traceStep('GHL_USER_AUTO_DISCOVER', `locationId=${business.ghlLocationId}`));
       const userLookup = await lookupGhlUserId(business.ghlLocationId, business.ghlApiToken);
 
       if (userLookup.userId) {
         resolvedUserId = userLookup.userId;
         resolvedUserName = userLookup.userName;
-        trace.push(traceStep('GHL_USER_RESOLVED', `userId=${resolvedUserId} name=${resolvedUserName}`));
-        // Cache for future use
+        console.log('[post-now] Auto-discovered publishing user', {
+          businessId: business.id, ghlLocationId: business.ghlLocationId,
+          userId: resolvedUserId, userName: resolvedUserName,
+          email: userLookup.userEmail, status: 'auto_selected',
+        });
+        trace.push(traceStep('GHL_USER_AUTO_SELECTED', `userId=${resolvedUserId} name=${resolvedUserName} email=${userLookup.userEmail || ''}`));
+        // Cache on this business row for future use
         await prisma.business.update({
           where: { id: business.id },
           data: {
@@ -298,18 +312,28 @@ export async function POST(req: NextRequest, context: RouteContext) {
             defaultGhlUserEmail: userLookup.userEmail,
             lastGhlUserVerifiedAt: new Date(),
           },
-        }).catch(err => console.warn('[post-now] Failed to cache GHL user:', err.message));
+        }).catch(err => console.warn('[post-now] Failed to cache auto-discovered GHL user:', err.message));
       } else if (userLookup.errorCode === 'auth_failed') {
-        trace.push(traceStep('GHL_USER_LOOKUP_AUTH_FAILED', userLookup.error || ''));
+        console.warn('[post-now] Users API auth failed — manual fallback needed', {
+          businessId: business.id, ghlLocationId: business.ghlLocationId, status: 'auth_failed',
+        });
+        trace.push(traceStep('GHL_USER_AUTH_FAILED', userLookup.error || ''));
         return fail(
           publishTraceId, trace,
-          'Launch CRM is connected, but no publishing user is saved and the API token does not have access to the Users API. Add the Launch CRM staff user ID for this business in Publish Options, or update the Launch CRM API token to include Users access.',
+          'Launch CRM connected, but staff user lookup is not available for this token. Add a default publishing user in Publish Options or reconnect with a token that includes staff user access.',
           422, post.id
         );
       } else if (userLookup.errorCode === 'no_users') {
-        trace.push(traceStep('GHL_USER_LOOKUP_NO_USERS', userLookup.error || ''));
-        return fail(publishTraceId, trace, userLookup.error || 'No eligible Launch CRM staff user was returned for this location.', 422, post.id);
+        console.warn('[post-now] Users API returned no eligible users', {
+          businessId: business.id, ghlLocationId: business.ghlLocationId, status: 'no_users',
+        });
+        trace.push(traceStep('GHL_USER_NO_USERS', userLookup.error || ''));
+        return fail(publishTraceId, trace, 'No eligible Launch CRM staff user was returned for this location. Add a default publishing user in Publish Options.', 422, post.id);
       } else {
+        console.warn('[post-now] Users API lookup failed', {
+          businessId: business.id, ghlLocationId: business.ghlLocationId,
+          status: 'network_error', error: userLookup.error,
+        });
         trace.push(traceStep('GHL_USER_LOOKUP_FAILED', userLookup.error || ''));
         return fail(publishTraceId, trace, `Could not look up Launch CRM staff user. ${userLookup.error || ''}`, 422, post.id);
       }

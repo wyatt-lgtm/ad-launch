@@ -47,13 +47,24 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     let lookupError: string | null = null;
 
     if (business.ghlLocationId && business.ghlApiToken) {
+      console.log('[ghl-publishing-user] Auto-discovering users', {
+        businessId: business.id, ghlLocationId: business.ghlLocationId,
+      });
       const result = await lookupGhlUserId(business.ghlLocationId, business.ghlApiToken);
       if (result.userId) {
         lookupStatus = 'success';
         availableUsers = [{ id: result.userId, name: result.userName || '', email: result.userEmail || '', role: 'admin' }];
+        console.log('[ghl-publishing-user] Auto-discovered user', {
+          businessId: business.id, ghlLocationId: business.ghlLocationId,
+          userId: result.userId, userName: result.userName, email: result.userEmail,
+        });
       } else {
         lookupStatus = result.errorCode || 'error';
         lookupError = result.error || null;
+        console.warn('[ghl-publishing-user] User lookup failed', {
+          businessId: business.id, ghlLocationId: business.ghlLocationId,
+          status: lookupStatus, error: lookupError,
+        });
       }
     }
 
@@ -63,6 +74,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       lookupStatus,
       lookupError,
       canUseSavedUser: !!savedUser,
+      autoDiscoveryAvailable: lookupStatus === 'success',
     });
   } catch (err: any) {
     console.error('[ghl-publishing-user GET]', err);

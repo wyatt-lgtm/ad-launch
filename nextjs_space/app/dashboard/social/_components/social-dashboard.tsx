@@ -3036,7 +3036,7 @@ export default function SocialDashboard() {
                   Publishing User (Staff)
                 </h4>
                 <p className="text-xs text-gray-500 mb-3">
-                  Launch CRM requires a staff user ID when publishing posts. This is the staff member whose account is used to publish.
+                  Post Now will automatically resolve a Launch CRM staff user for publishing. Use this section to override the auto-selected user or manually set one if automatic lookup is unavailable.
                 </p>
 
                 {ghlPublishingUserLoading ? (
@@ -3067,8 +3067,17 @@ export default function SocialDashboard() {
                 ) : (
                   /* No saved user or editing — show form */
                   <div className="space-y-3">
+                    {/* Auto-discovery available: reassure user */}
+                    {pubUserLookupStatus === 'success' && pubUserAvailable.length > 0 && !showPublishingUserForm && (
+                      <div className="flex items-start gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                        <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                        <p className="text-xs text-blue-800">
+                          Auto-discovery is available. Post Now will automatically select a staff user from this location. You can optionally pin a specific user below.
+                        </p>
+                      </div>
+                    )}
                     {/* If Users API returned available users, show dropdown */}
-                    {pubUserLookupStatus === 'ok' && pubUserAvailable.length > 0 && (
+                    {pubUserLookupStatus === 'success' && pubUserAvailable.length > 0 && (
                       <div>
                         <label className="text-xs font-medium text-gray-600 mb-1 block">Select a staff user:</label>
                         <div className="space-y-1.5">
@@ -3112,7 +3121,7 @@ export default function SocialDashboard() {
                     )}
 
                     {/* Manual entry fields — shown if no dropdown users, or always visible for editing */}
-                    {(pubUserLookupStatus !== 'ok' || pubUserAvailable.length === 0 || pubUserIdInput) && (
+                    {(pubUserLookupStatus !== 'success' || pubUserAvailable.length === 0 || pubUserIdInput) && (
                       <div className="space-y-2">
                         <div>
                           <label className="text-xs font-medium text-gray-600 mb-1 block">User ID <span className="text-red-400">*</span></label>
