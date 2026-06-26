@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     // Load analysis and verify ownership
     const analysis = await prisma.analysis.findUnique({
       where: { id: analysis_id },
-      include: { ads: true },
+      include: { ads: true, business: { select: { tombstoneBusinessId: true, tombstoneBusinessUuid: true } } },
     });
     if (!analysis) {
       return NextResponse.json({ error: 'Analysis not found' }, { status: 404 });
@@ -105,13 +105,50 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Resolve tombstoneBusinessId: Analysis → Business → null
+    const tombstoneBusinessId = analysis.tombstoneBusinessId
+      ?? (analysis as any).business?.tombstoneBusinessId
+      ?? null;
+
     console.log('[regenerate-lane] Starting single-lane regeneration', {
       analysisId: analysis_id,
       businessId: analysis.businessId,
+      tombstoneBusinessId,
       lane: canonicalLane,
       existingAssetId: existing_asset_id || null,
       reason: reason || 'user_requested_regeneration',
     });
+
+    // Tombstone /commands requires business_id — if missing, try to provision one
+    let resolvedTombstoneId = tombstoneBusinessId;
+    if (!resolvedTombstoneId && analysis.businessId) {
+      try {
+        const { createProvisionalBusiness } = await import('@/lib/tombstone');
+        const provResult = await createProvisionalBusiness({
+          businessName: businessName || 'Business',
+          website: analysis.websiteUrl || '',
+        });
+        if (provResult.businessId) {
+          resolvedTombstoneId = provResult.businessId;
+          // Cache on both Analysis and Business for future use
+          await prisma.analysis.update({
+            where: { id: analysis_id },
+            data: { tombstoneBusinessId: provResult.businessId },
+          }).catch(() => {});
+          if (analysis.businessId) {
+            await prisma.business.update({
+              where: { id: analysis.businessId },
+              data: { tombstoneBusinessId: provResult.businessId },
+            }).catch(() => {});
+          }
+          console.log('[regenerate-lane] Provisioned tombstone business', {
+            analysisId: analysis_id, tombstoneBusinessId: provResult.businessId,
+          });
+        }
+      } catch (provErr) {
+        console.warn('[regenerate-lane] Failed to provision tombstone business:', (provErr as Error).message);
+      }
+    }
 
     // Create a single-post lane mission (count=1)
     const result = await createLaneMission(
@@ -122,12 +159,26 @@ export async function POST(request: NextRequest) {
       undefined,
       analysis.businessId || undefined,
       businessName,
-      analysis.tombstoneBusinessId,
+      resolvedTombstoneId,
     );
 
     if (!result.success || !result.workflowId) {
-      console.error('[regenerate-lane] createLaneMission failed', { analysisId: analysis_id, lane: canonicalLane });
-      return NextResponse.json({ error: 'Failed to start lane regeneration' }, { status: 502 });
+      const backendErr = (result as any).backendError || 'Unknown Tombstone error';
+      const backendStatus = (result as any).backendStatus || null;
+      console.error('[regenerate-lane] createLaneMission failed', {
+        analysisId: analysis_id,
+        lane: canonicalLane,
+        backendStatus,
+        backendError: backendErr,
+        workflowId: result.workflowId,
+        businessId: analysis.businessId,
+        tombstoneBusinessId: analysis.tombstoneBusinessId,
+        websiteUrl: analysis.websiteUrl,
+      });
+      return NextResponse.json(
+        { error: `Lane regeneration failed: ${backendErr}`, backendStatus },
+        { status: 502 },
+      );
     }
 
     console.log('[regenerate-lane] Lane mission created', {
