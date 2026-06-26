@@ -518,6 +518,28 @@ export async function POST(req: NextRequest) {
     const totalImported = createdPosts.count + incompleteCreated;
     console.log(`[missions/poll] Imported ${createdPosts.count} complete + ${incompleteCreated} incomplete social posts (runId=${generationRun?.id || 'none'})`);
 
+    // ── Fetch render failure events for all relevant businesses ──
+    let renderFailures: any[] = [];
+    try {
+      const bizIds = Array.from(tombstoneBizMap.keys());
+      if (bizIds.length > 0) {
+        const failureFetches = bizIds.map(async (tsBizId) => {
+          try {
+            const res = await fetch(
+              `${TOMBSTONE_URL}/render-failures?business_id=${tsBizId}&limit=10`,
+              { headers: { Accept: 'application/json' }, cache: 'no-store' }
+            );
+            if (res.ok) return await res.json();
+          } catch { /* non-critical */ }
+          return [];
+        });
+        const results = await Promise.all(failureFetches);
+        renderFailures = results.flat();
+      }
+    } catch (e: any) {
+      console.warn('[missions/poll] Render failure fetch error:', e.message);
+    }
+
     return NextResponse.json({
       polled: workflowIds.length,
       imported: totalImported,
@@ -527,6 +549,8 @@ export async function POST(req: NextRequest) {
       status: 'imported',
       message: `Imported ${createdPosts.count} post${createdPosts.count !== 1 ? 's' : ''}` +
         (incompleteCreated > 0 ? ` (${incompleteCreated} incomplete/failed)` : '') + '.',
+      renderFailures: renderFailures.length > 0 ? renderFailures : undefined,
+      renderFailureCount: renderFailures.length > 0 ? renderFailures.length : undefined,
       diagnostics: incompletePosts.map(p => ({
         tombstoneTaskId: p.tombstoneTaskId,
         workflowId: p.workflowId,
