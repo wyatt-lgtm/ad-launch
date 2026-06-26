@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Download, Sparkles, Image as ImageIcon, Loader2, AlertCircle, Globe, ThumbsUp, MessageCircle, Share2, MoreHorizontal, Building2, Newspaper, CalendarHeart, Calendar, CheckCircle2 } from 'lucide-react';
+import { Download, Sparkles, Image as ImageIcon, Loader2, AlertCircle, Globe, ThumbsUp, MessageCircle, Share2, MoreHorizontal, Building2, Newspaper, CalendarHeart, Calendar, CheckCircle2, RefreshCw } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
 const SchedulingWizard = dynamic(() => import('../../../components/scheduling-wizard'), { ssr: false });
@@ -36,6 +36,14 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
   const [error, setError] = useState('');
   const { data: session, status: sessionStatus } = useSession() || {};
   const router = useRouter();
+  const [localAds, setLocalAds] = useState<Ad[]>([]);
+  const [regenLoading, setRegenLoading] = useState<Record<string, boolean>>({});
+  const [regenError, setRegenError] = useState<Record<string, string | null>>({});
+
+  // Keep ads in sync when analysis loads/refetches
+  useEffect(() => {
+    if (analysis?.ads) setLocalAds(analysis.ads);
+  }, [analysis]);
 
   useEffect(() => {
     if (sessionStatus === 'unauthenticated') {
@@ -109,8 +117,6 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
     );
   }
 
-  const ads: Ad[] = analysis?.ads ?? [];
-
   // If analysis isn't completed yet, redirect back to the tracker page
   if (analysis && analysis.status !== 'completed') {
     return (
@@ -127,6 +133,8 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
       </div>
     );
   }
+
+  const ads = localAds;
 
   // Analysis is completed but zero ads exist — something went wrong in generation
   if (analysis && ads.length === 0) {
@@ -156,6 +164,49 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
   const websiteUrl = analysis?.websiteUrl ?? '';
   const displayDomain = (() => { try { return new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`).hostname.replace(/^www\./, ''); } catch { return ''; } })();
   const initials = businessName.split(' ').slice(0, 2).map((w: string) => w[0]?.toUpperCase() ?? '').join('');
+
+  const handleRegenerateLane = async (lane: string, existingAdId?: string) => {
+    setRegenLoading(prev => ({ ...prev, [lane]: true }));
+    setRegenError(prev => ({ ...prev, [lane]: null }));
+    try {
+      const res = await fetch('/api/post-assets/regenerate-lane', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          analysis_id: analysisId,
+          lane_type: lane,
+          existing_asset_id: existingAdId,
+          reason: 'user_requested_regeneration',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setRegenError(prev => ({ ...prev, [lane]: data.error || 'Regeneration failed' }));
+        return;
+      }
+      // Replace the ad in local state — only this lane
+      setLocalAds(prevAds => {
+        const newAd: Ad = data.ad;
+        if (existingAdId) {
+          return prevAds.map(a => a.id === existingAdId ? newAd : a);
+        }
+        // Remove old ads for this lane and add the new one
+        const withoutLane = prevAds.filter(a => {
+          const aLane = a.lane === 'seasonal' ? 'holiday' : a.lane;
+          return aLane !== lane;
+        });
+        return [...withoutLane, newAd];
+      });
+      // Show image_missing warning if applicable
+      if (data.asset_status === 'image_missing') {
+        setRegenError(prev => ({ ...prev, [lane]: 'Post regenerated but the image is still generating. Try again in a moment.' }));
+      }
+    } catch (err: any) {
+      setRegenError(prev => ({ ...prev, [lane]: err.message || 'Regeneration failed' }));
+    } finally {
+      setRegenLoading(prev => ({ ...prev, [lane]: false }));
+    }
+  };
 
   // Group ads by lane (deduplicated: latest per lane wins)
   const adsByLane: Record<string, Ad[]> = { website: [], news: [], holiday: [] };
@@ -282,17 +333,51 @@ export default function ResultsContent({ analysisId }: { analysisId: string }) {
                           window.open(ad.imageUrl, '_blank');
                         }
                       }}
-                      className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                      className={`w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 ${!ad?.imageUrl ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      disabled={!ad?.imageUrl}
                     >
                       <Download className="w-4 h-4" /> Download Post
                     </button>
+                    <button
+                      onClick={() => handleRegenerateLane(lane, ad?.id)}
+                      disabled={!!regenLoading[lane]}
+                      className="w-full py-2 mt-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {regenLoading[lane] ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> Regenerating…</>
+                      ) : (
+                        <><RefreshCw className="w-4 h-4" /> Regenerate This Post</>
+                      )}
+                    </button>
+                    {regenError[lane] && (
+                      <div className="mt-2 flex items-start gap-1.5 text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                        <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                        <span>{regenError[lane]}</span>
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               )) : (
                 <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-8 text-center">
                   <Icon className="w-8 h-8 text-gray-300 mx-auto mb-2" />
                   <p className="text-sm text-gray-400">This lane didn&apos;t produce a post this time</p>
-                  <p className="text-xs text-gray-300 mt-1">Try generating again to fill this slot</p>
+                  <button
+                    onClick={() => handleRegenerateLane(lane)}
+                    disabled={!!regenLoading[lane]}
+                    className="mt-3 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {regenLoading[lane] ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+                    ) : (
+                      <><RefreshCw className="w-4 h-4" /> Generate This Post</>
+                    )}
+                  </button>
+                  {regenError[lane] && (
+                    <div className="mt-2 flex items-start gap-1.5 text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                      <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                      <span>{regenError[lane]}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
