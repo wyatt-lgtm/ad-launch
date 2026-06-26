@@ -109,6 +109,9 @@ export async function POST(req: NextRequest, context: RouteContext) {
         defaultGhlSocialAccountName: true,
         defaultGhlSocialPlatform: true,
         defaultGhlSocialOriginId: true,
+        defaultGhlUserId: true,
+        defaultGhlUserName: true,
+        defaultGhlUserEmail: true,
       },
     });
     if (!business) {
@@ -271,18 +274,51 @@ export async function POST(req: NextRequest, context: RouteContext) {
       return fail(publishTraceId, trace, `Could not upload any media to GHL. ${mediaFailureReason}`, 422, post.id);
     }
 
-    // ── Lookup GHL userId ────────────────────────────────────────────
-    trace.push(traceStep('GHL_USER_LOOKUP_REQUESTED'));
-    const userLookup = await lookupGhlUserId(business.ghlLocationId, business.ghlApiToken);
-    if (!userLookup.userId) {
-      return fail(publishTraceId, trace, `Could not find a GHL user for this location. ${userLookup.error || ''}`, 422, post.id);
+    // ── Resolve GHL userId ─────────────────────────────────────────
+    // Priority: 1) saved defaultGhlUserId, 2) dynamic Users API lookup
+    let resolvedUserId: string | null = business.defaultGhlUserId || null;
+    let resolvedUserName: string | null = business.defaultGhlUserName || null;
+
+    if (resolvedUserId) {
+      trace.push(traceStep('GHL_USER_FROM_SAVED', `userId=${resolvedUserId} name=${resolvedUserName}`));
+    } else {
+      trace.push(traceStep('GHL_USER_LOOKUP_REQUESTED', 'No saved defaultGhlUserId — attempting Users API'));
+      const userLookup = await lookupGhlUserId(business.ghlLocationId, business.ghlApiToken);
+
+      if (userLookup.userId) {
+        resolvedUserId = userLookup.userId;
+        resolvedUserName = userLookup.userName;
+        trace.push(traceStep('GHL_USER_RESOLVED', `userId=${resolvedUserId} name=${resolvedUserName}`));
+        // Cache for future use
+        await prisma.business.update({
+          where: { id: business.id },
+          data: {
+            defaultGhlUserId: resolvedUserId,
+            defaultGhlUserName: resolvedUserName,
+            defaultGhlUserEmail: userLookup.userEmail,
+            lastGhlUserVerifiedAt: new Date(),
+          },
+        }).catch(err => console.warn('[post-now] Failed to cache GHL user:', err.message));
+      } else if (userLookup.errorCode === 'auth_failed') {
+        trace.push(traceStep('GHL_USER_LOOKUP_AUTH_FAILED', userLookup.error || ''));
+        return fail(
+          publishTraceId, trace,
+          'Launch CRM is connected, but no publishing user is saved and the API token does not have access to the Users API. Add the Launch CRM staff user ID for this business in Publish Options, or update the Launch CRM API token to include Users access.',
+          422, post.id
+        );
+      } else if (userLookup.errorCode === 'no_users') {
+        trace.push(traceStep('GHL_USER_LOOKUP_NO_USERS', userLookup.error || ''));
+        return fail(publishTraceId, trace, userLookup.error || 'No eligible Launch CRM staff user was returned for this location.', 422, post.id);
+      } else {
+        trace.push(traceStep('GHL_USER_LOOKUP_FAILED', userLookup.error || ''));
+        return fail(publishTraceId, trace, `Could not look up Launch CRM staff user. ${userLookup.error || ''}`, 422, post.id);
+      }
     }
-    trace.push(traceStep('GHL_USER_RESOLVED', `userId=${userLookup.userId} name=${userLookup.userName}`));
 
     // ── Build post payload ───────────────────────────────────────────
     const ghlPayload = {
       accountIds: [account.id],
-      userId: userLookup.userId,
+      userId: resolvedUserId!,
       summary: finalCaption,
       media,
       type: 'post' as const,
@@ -300,7 +336,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
       platform: account.platform,
       captionLength: finalCaption.length,
       mediaCount: media.length,
-      ghlUserId: userLookup.userId,
+      ghlUserId: resolvedUserId,
       landingPageApplied,
     });
 

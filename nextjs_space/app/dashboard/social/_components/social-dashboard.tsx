@@ -11,7 +11,7 @@ import {
   Facebook, Instagram, Youtube, MapPin, Eye, LayoutGrid,
   List, AlertCircle, Sparkles, Building2, Download, Check, Square, CheckSquare,
   PenLine, Image as ImageIcon, Coins, Lock, Lightbulb, AlertTriangle, Layers,
-  CalendarPlus, Globe, Linkedin
+  CalendarPlus, Globe, Linkedin, UserCircle
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import { BusinessPickerGrid, ActiveBusinessBanner } from '@/components/business-picker';
@@ -175,6 +175,16 @@ export default function SocialDashboard() {
   const [ghlAccounts, setGhlAccounts] = useState<Array<{ id: string; name: string; platform: string; type: string; originId: string; avatar: string; isExpired: boolean; isDefault: boolean }>>([]);
   const [ghlAccountsLoading, setGhlAccountsLoading] = useState(false);
   const [ghlAccountsStatus, setGhlAccountsStatus] = useState<{ connected: boolean; reason: string; message: string } | null>(null);
+  // GHL Publishing User state
+  const [ghlPublishingUser, setGhlPublishingUser] = useState<{ id: string; name: string | null; email: string | null; verifiedAt: string | null } | null>(null);
+  const [ghlPublishingUserLoading, setGhlPublishingUserLoading] = useState(false);
+  const [showPublishingUserForm, setShowPublishingUserForm] = useState(false);
+  const [pubUserIdInput, setPubUserIdInput] = useState('');
+  const [pubUserNameInput, setPubUserNameInput] = useState('');
+  const [pubUserEmailInput, setPubUserEmailInput] = useState('');
+  const [pubUserSaving, setPubUserSaving] = useState(false);
+  const [pubUserLookupStatus, setPubUserLookupStatus] = useState<string | null>(null);
+  const [pubUserAvailable, setPubUserAvailable] = useState<Array<{ id: string; name: string; email: string; role: string }>>([]);
   const [scoutError, setScoutError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [pollStatus, setPollStatus] = useState<string | null>(null);
@@ -1219,6 +1229,50 @@ export default function SocialDashboard() {
   }, [activeBusinessId]);
 
   useEffect(() => { fetchGhlAccounts(); }, [fetchGhlAccounts]);
+
+  // ── Fetch GHL publishing user ──
+  const fetchGhlPublishingUser = useCallback(async () => {
+    if (!activeBusinessId) return;
+    setGhlPublishingUserLoading(true);
+    try {
+      const res = await fetch(`/api/businesses/${activeBusinessId}/ghl/publishing-user`);
+      const data = await res.json();
+      setGhlPublishingUser(data.savedUser || null);
+      setPubUserLookupStatus(data.lookupStatus || null);
+      setPubUserAvailable(data.availableUsers || []);
+      if (data.savedUser) {
+        setPubUserIdInput(data.savedUser.id);
+        setPubUserNameInput(data.savedUser.name || '');
+        setPubUserEmailInput(data.savedUser.email || '');
+      }
+    } catch {
+      // Silently fail — user can still manually enter
+    } finally {
+      setGhlPublishingUserLoading(false);
+    }
+  }, [activeBusinessId]);
+
+  useEffect(() => {
+    if (ghlAccountsStatus?.connected) fetchGhlPublishingUser();
+  }, [ghlAccountsStatus?.connected, fetchGhlPublishingUser]);
+
+  const saveGhlPublishingUser = async (userId: string, userName?: string, userEmail?: string) => {
+    if (!activeBusinessId || !userId.trim()) return;
+    setPubUserSaving(true);
+    try {
+      const res = await fetch(`/api/businesses/${activeBusinessId}/ghl/publishing-user`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ghlUserId: userId, ghlUserName: userName, ghlUserEmail: userEmail }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setGhlPublishingUser(data.savedUser);
+        setShowPublishingUserForm(false);
+      }
+    } catch { /* handled */ }
+    setPubUserSaving(false);
+  };
 
   // ── Post eligibility check ──
   const isPostEligible = (post: SocialPost) => {
@@ -2973,6 +3027,150 @@ export default function SocialDashboard() {
                 </div>
               )}
             </div>
+
+            {/* ── Publishing User Section ──────────────────────── */}
+            {ghlAccountsStatus?.connected && (
+              <div className="mt-6 pt-5 border-t border-gray-100">
+                <h4 className="text-sm font-semibold text-gray-800 mb-1 flex items-center gap-1.5">
+                  <UserCircle className="w-4 h-4 text-gray-500" />
+                  Publishing User (Staff)
+                </h4>
+                <p className="text-xs text-gray-500 mb-3">
+                  Launch CRM requires a staff user ID when publishing posts. This is the staff member whose account is used to publish.
+                </p>
+
+                {ghlPublishingUserLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Loading publishing user…
+                  </div>
+                ) : ghlPublishingUser && !showPublishingUserForm ? (
+                  /* Saved user display */
+                  <div className="flex items-center gap-3 px-3 py-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
+                    <div className="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center">
+                      <UserCircle className="w-5 h-5 text-emerald-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{ghlPublishingUser.name || 'Unnamed User'}</p>
+                      <p className="text-[11px] text-gray-500 truncate">
+                        {ghlPublishingUser.email && <span>{ghlPublishingUser.email} · </span>}
+                        ID: {ghlPublishingUser.id.slice(0, 12)}…
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowPublishingUserForm(true)}
+                      className="text-xs font-medium text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-white transition-colors"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                ) : (
+                  /* No saved user or editing — show form */
+                  <div className="space-y-3">
+                    {/* If Users API returned available users, show dropdown */}
+                    {pubUserLookupStatus === 'ok' && pubUserAvailable.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-gray-600 mb-1 block">Select a staff user:</label>
+                        <div className="space-y-1.5">
+                          {pubUserAvailable.map(u => (
+                            <button
+                              key={u.id}
+                              onClick={() => {
+                                setPubUserIdInput(u.id);
+                                setPubUserNameInput(u.name);
+                                setPubUserEmailInput(u.email);
+                              }}
+                              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left border transition-colors ${
+                                pubUserIdInput === u.id ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:bg-gray-50'
+                              }`}
+                            >
+                              <UserCircle className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-sm font-medium truncate ${pubUserIdInput === u.id ? 'text-blue-700' : 'text-gray-900'}`}>{u.name}</p>
+                                <p className="text-[11px] text-gray-400 truncate">{u.email} · {u.role}</p>
+                              </div>
+                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                pubUserIdInput === u.id ? 'border-blue-600 bg-blue-600' : 'border-gray-300'
+                              }`}>
+                                {pubUserIdInput === u.id && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* If Users API returned auth_failed (401), show manual entry hint */}
+                    {pubUserLookupStatus === 'auth_failed' && (
+                      <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                        <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                        <p className="text-xs text-amber-800">
+                          Could not fetch staff users from Launch CRM (token lacks <code className="bg-amber-100 px-1 rounded">users.readonly</code> scope). 
+                          Enter the user details manually below.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Manual entry fields — shown if no dropdown users, or always visible for editing */}
+                    {(pubUserLookupStatus !== 'ok' || pubUserAvailable.length === 0 || pubUserIdInput) && (
+                      <div className="space-y-2">
+                        <div>
+                          <label className="text-xs font-medium text-gray-600 mb-1 block">User ID <span className="text-red-400">*</span></label>
+                          <input
+                            type="text"
+                            value={pubUserIdInput}
+                            onChange={e => setPubUserIdInput(e.target.value)}
+                            placeholder="e.g. aBC12dEfGhIjKlMnO"
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs font-medium text-gray-600 mb-1 block">Name</label>
+                            <input
+                              type="text"
+                              value={pubUserNameInput}
+                              onChange={e => setPubUserNameInput(e.target.value)}
+                              placeholder="e.g. Russell Fuller"
+                              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-gray-600 mb-1 block">Email</label>
+                            <input
+                              type="text"
+                              value={pubUserEmailInput}
+                              onChange={e => setPubUserEmailInput(e.target.value)}
+                              placeholder="e.g. user@example.com"
+                              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveGhlPublishingUser(pubUserIdInput, pubUserNameInput, pubUserEmailInput)}
+                        disabled={!pubUserIdInput.trim() || pubUserSaving}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {pubUserSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        Save Publishing User
+                      </button>
+                      {showPublishingUserForm && ghlPublishingUser && (
+                        <button
+                          onClick={() => setShowPublishingUserForm(false)}
+                          className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 rounded-lg hover:bg-gray-100 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3133,6 +3331,14 @@ export default function SocialDashboard() {
                   <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                   <div>
                     <p>{postNowError}</p>
+                    {(postNowError.toLowerCase().includes('publish options') || postNowError.toLowerCase().includes('staff user') || postNowError.toLowerCase().includes('publishing user')) && (
+                      <button
+                        onClick={() => { setPostNowTarget(null); setActiveTab('accounts'); }}
+                        className="mt-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 underline"
+                      >
+                        Go to Publish Options →
+                      </button>
+                    )}
                     {postNowResult?.publishTraceId && (
                       <p className="text-[10px] text-red-400 mt-1 font-mono">Trace: {postNowResult.publishTraceId}</p>
                     )}

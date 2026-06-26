@@ -113,14 +113,31 @@ function sanitizeError(raw: string): string {
 export async function lookupGhlUserId(
   locationId: string,
   apiToken: string
-): Promise<{ userId: string | null; userName: string | null; error?: string }> {
+): Promise<{
+  userId: string | null;
+  userName: string | null;
+  userEmail: string | null;
+  error?: string;
+  errorCode?: 'auth_failed' | 'no_users' | 'network_error';
+}> {
   try {
     const res = await fetchWithTimeout(
       `${GHL_BASE_URL}/users/?locationId=${encodeURIComponent(locationId)}`,
       { method: 'GET', headers: ghlHeaders(apiToken) }
     );
+    if (res.status === 401 || res.status === 403) {
+      return {
+        userId: null, userName: null, userEmail: null,
+        error: `Token does not have access to the Users API (HTTP ${res.status}). Token may be missing users.readonly scope.`,
+        errorCode: 'auth_failed',
+      };
+    }
     if (!res.ok) {
-      return { userId: null, userName: null, error: `GHL users API returned ${res.status}` };
+      return {
+        userId: null, userName: null, userEmail: null,
+        error: `GHL Users API returned ${res.status}`,
+        errorCode: 'network_error',
+      };
     }
     const data = await res.json().catch(() => ({ users: [] }));
     const users = data?.users || [];
@@ -128,10 +145,14 @@ export async function lookupGhlUserId(
     const admin = users.find((u: any) => u.roles?.role === 'admin' && !u.deleted);
     const fallback = users.find((u: any) => !u.deleted);
     const pick = admin || fallback;
-    if (!pick) return { userId: null, userName: null, error: 'No users found in GHL location' };
-    return { userId: pick.id, userName: pick.name };
+    if (!pick) return {
+      userId: null, userName: null, userEmail: null,
+      error: 'No eligible Launch CRM staff user was returned for this location.',
+      errorCode: 'no_users',
+    };
+    return { userId: pick.id, userName: pick.name || pick.firstName || null, userEmail: pick.email || null };
   } catch (err: any) {
-    return { userId: null, userName: null, error: err.message };
+    return { userId: null, userName: null, userEmail: null, error: err.message, errorCode: 'network_error' };
   }
 }
 

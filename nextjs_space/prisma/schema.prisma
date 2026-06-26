@@ -105,6 +105,12 @@ model Business {
   defaultGhlSocialPlatform    String?    // facebook | tiktok | instagram | etc.
   defaultGhlSocialOriginId    String?    // GHL platform-specific origin ID
 
+  // ── Default GHL Publishing User ────────────────────────────────
+  defaultGhlUserId            String?    // GHL user ID for Social Planner post payloads
+  defaultGhlUserName          String?    // Display name (e.g. "Russell Fuller")
+  defaultGhlUserEmail         String?    // Email (e.g. "rjsautomotivecenter@gmail.com")
+  lastGhlUserVerifiedAt       DateTime?  // When userId was last confirmed valid
+
   @@unique([userId, websiteUrl])
   @@index([userId])
 }
