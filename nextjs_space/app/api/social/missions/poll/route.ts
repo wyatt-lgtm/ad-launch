@@ -67,6 +67,11 @@ function buildWorkflowMap(analyses: AnalysisRef[]): Map<string, { analysisId: st
  * Fetches completed render tasks from Tombstone's content queue (same source
  * as the Publish Queue), enriches each with caption/hashtag data from the
  * detail endpoint, and writes them to the SocialPost table.
+ *
+ * Discovery happens via TWO lanes:
+ *  1) Workflow-based: workflow IDs stored on Analysis.missionId / socialMissionId
+ *  2) Business-based: businesses with tombstoneBusinessId → /content/queue?business_id=…
+ *     This catches Tombstone-originated workflows that weren't created through Launch OS.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -87,14 +92,30 @@ export async function POST(req: NextRequest) {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (analyses.length === 0) {
-      return NextResponse.json({ polled: 0, imported: 0, pending: 0, status: 'no_missions' });
+    // ── Business-level discovery: businesses with tombstoneBusinessId ──
+    const businessesWithTombstone = await prisma.business.findMany({
+      where: {
+        userId,
+        tombstoneBusinessId: { not: null },
+      },
+      select: { id: true, tombstoneBusinessId: true },
+    });
+    // Map tombstoneBusinessId → Launch OS businessId for attribution
+    const tombstoneBizMap = new Map<number, string>();
+    for (const biz of businessesWithTombstone) {
+      if (biz.tombstoneBusinessId != null) {
+        tombstoneBizMap.set(biz.tombstoneBusinessId, biz.id);
+      }
     }
 
     const workflowIds = collectWorkflowIds(analyses);
     const workflowMap = buildWorkflowMap(analyses);
-    if (workflowIds.length === 0) {
-      return NextResponse.json({ polled: 0, imported: 0, pending: 0, status: 'no_workflows' });
+
+    const hasWorkflows = workflowIds.length > 0;
+    const hasBusinessIds = tombstoneBizMap.size > 0;
+
+    if (!hasWorkflows && !hasBusinessIds && analyses.length === 0) {
+      return NextResponse.json({ polled: 0, imported: 0, pending: 0, status: 'no_missions' });
     }
 
     // Get existing tombstoneTaskIds to skip already-imported tasks
@@ -104,19 +125,79 @@ export async function POST(req: NextRequest) {
     });
     const importedTaskIds = new Set(existingPosts.map(p => p.tombstoneTaskId));
 
-    console.log(`[missions/poll] Fetching content queue for ${workflowIds.length} workflows (${importedTaskIds.size} already imported)`);
+    console.log(`[missions/poll] Discovery: ${workflowIds.length} workflows, ${tombstoneBizMap.size} tombstone businesses (${importedTaskIds.size} already imported)`);
 
-    // Fetch completed render tasks from Tombstone content queue
-    const queueRes = await fetch(
-      `${TOMBSTONE_URL}/content/queue?limit=50&workflow_ids=${encodeURIComponent(workflowIds.join(','))}`,
-      { headers: { Accept: 'application/json' }, cache: 'no-store' }
-    );
-    if (!queueRes.ok) {
-      return NextResponse.json({ error: 'Failed to fetch content queue' }, { status: 502 });
+    // ── Lane 1: Workflow-based discovery ──
+    let workflowQueueItems: any[] = [];
+    if (hasWorkflows) {
+      try {
+        const queueRes = await fetch(
+          `${TOMBSTONE_URL}/content/queue?limit=50&workflow_ids=${encodeURIComponent(workflowIds.join(','))}`,
+          { headers: { Accept: 'application/json' }, cache: 'no-store' }
+        );
+        if (queueRes.ok) {
+          const items = await queueRes.json();
+          if (Array.isArray(items)) workflowQueueItems = items;
+        } else {
+          console.warn(`[missions/poll] Workflow queue fetch failed: ${queueRes.status}`);
+        }
+      } catch (e: any) {
+        console.warn(`[missions/poll] Workflow queue fetch error:`, e.message);
+      }
     }
-    const queueItems = await queueRes.json();
 
-    if (!Array.isArray(queueItems) || queueItems.length === 0) {
+    // ── Lane 2: Business-based discovery (catches Tombstone-originated workflows) ──
+    let businessQueueItems: any[] = [];
+    const taskToBizMap = new Map<string, string>(); // taskId → Launch OS businessId
+    if (hasBusinessIds) {
+      const bizFetches = Array.from(tombstoneBizMap.entries()).map(async ([tsBizId, launchBizId]) => {
+        try {
+          const bizQueueRes = await fetch(
+            `${TOMBSTONE_URL}/content/queue?limit=50&business_id=${tsBizId}`,
+            { headers: { Accept: 'application/json' }, cache: 'no-store' }
+          );
+          if (bizQueueRes.ok) {
+            const items = await bizQueueRes.json();
+            if (Array.isArray(items)) {
+              for (const item of items) {
+                taskToBizMap.set(String(item.task_id), launchBizId);
+              }
+              return items;
+            }
+          } else {
+            console.warn(`[missions/poll] Business queue fetch failed for biz=${tsBizId}: ${bizQueueRes.status}`);
+          }
+        } catch (e: any) {
+          console.warn(`[missions/poll] Business queue fetch error for biz=${tsBizId}:`, e.message);
+        }
+        return [];
+      });
+      const results = await Promise.all(bizFetches);
+      businessQueueItems = results.flat();
+    }
+
+    // ── Merge & deduplicate by task_id ──
+    const seenTaskIds = new Set<string>();
+    const queueItems: any[] = [];
+    // Workflow items first (they have richer attribution via workflowMap)
+    for (const item of workflowQueueItems) {
+      const tid = String(item.task_id);
+      if (!seenTaskIds.has(tid)) {
+        seenTaskIds.add(tid);
+        queueItems.push(item);
+      }
+    }
+    // Then business-discovered items (new tasks from Tombstone-originated workflows)
+    for (const item of businessQueueItems) {
+      const tid = String(item.task_id);
+      if (!seenTaskIds.has(tid)) {
+        seenTaskIds.add(tid);
+        item._discoveredViaBusiness = true;
+        queueItems.push(item);
+      }
+    }
+
+    if (queueItems.length === 0) {
       return NextResponse.json({
         polled: workflowIds.length, imported: 0, pending: 0,
         status: 'no_content',
@@ -329,10 +410,12 @@ export async function POST(req: NextRequest) {
     const createdPosts = await prisma.socialPost.createMany({
       data: completePosts.map((post) => {
         const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
-        // Fallback priority: workflowMap > generationRun.businessId > socialDefault
-        const fallbackBusinessId = generationRun?.businessId || socialDefaultBusinessId;
+        // For business-discovered tasks, use taskToBizMap for attribution
+        const bizDiscoveredBusinessId = taskToBizMap.get(post.tombstoneTaskId) || null;
+        // Fallback priority: workflowMap > business-discovery > generationRun > socialDefault
+        const fallbackBusinessId = bizDiscoveredBusinessId || generationRun?.businessId || socialDefaultBusinessId;
         if (!ref && post.workflowId) {
-          console.warn(`[missions/poll] workflowMap miss for wf=${post.workflowId} task=${post.tombstoneTaskId} — using fallback biz=${fallbackBusinessId} (genRun=${generationRun?.id || 'none'})`);
+          console.warn(`[missions/poll] workflowMap miss for wf=${post.workflowId} task=${post.tombstoneTaskId} — using fallback biz=${fallbackBusinessId} (bizDiscovered=${!!bizDiscoveredBusinessId}, genRun=${generationRun?.id || 'none'})`);
         }
         return {
           userId,
@@ -373,6 +456,7 @@ export async function POST(req: NextRequest) {
       const result = await prisma.socialPost.createMany({
         data: incompletePosts.map((post) => {
           const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
+          const incBizDiscoveredId = taskToBizMap.get(post.tombstoneTaskId) || null;
           const status = post._importStatus || 'generation_failed';
           // Build caption with diagnostic info for failed/incomplete posts
           const diagCaption = post.caption?.trim()
@@ -381,7 +465,7 @@ export async function POST(req: NextRequest) {
           return {
             userId,
             analysisId: ref?.analysisId || socialDefaultAnalysisId,
-            businessId: ref?.businessId || socialDefaultBusinessId,
+            businessId: ref?.businessId || incBizDiscoveredId || socialDefaultBusinessId,
             caption: diagCaption,
             hashtags: [],
             imageUrl: post.imageUrl || null,
