@@ -1,24 +1,25 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  X, Upload, FileText, AlertCircle, CheckCircle, Loader2, Info,
+  X, Upload, FileText, AlertCircle, CheckCircle, Loader2, Info, ShieldCheck,
 } from 'lucide-react';
 import {
   ASSET_CATEGORIES, ASSET_TYPES, CATEGORY_LABELS,
-  TEXT_ASSET_TYPES, getValidationRules,
+  TEXT_ASSET_TYPES, INTENDED_USE_OPTIONS, getValidationRules,
   type AssetCategory,
 } from '@/lib/asset-validation';
 
 interface Props {
   businessId: string;
+  defaultCategory?: AssetCategory;
   onClose: () => void;
   onUploaded: () => void;
 }
 
-export default function AssetUploadModal({ businessId, onClose, onUploaded }: Props) {
+export default function AssetUploadModal({ businessId, defaultCategory, onClose, onUploaded }: Props) {
   const [step, setStep] = useState<'select' | 'upload' | 'uploading' | 'done'>('select');
-  const [category, setCategory] = useState<AssetCategory | ''>('');
+  const [category, setCategory] = useState<AssetCategory | ''>(defaultCategory || '');
   const [assetType, setAssetType] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -31,7 +32,7 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // Optional metadata
+  // Existing optional metadata
   const [usageRights, setUsageRights] = useState('');
   const [sourcePlatform, setSourcePlatform] = useState('');
   const [customerPermission, setCustomerPermission] = useState('');
@@ -40,7 +41,21 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
   const [pairRole, setPairRole] = useState('');
   const [expirationDate, setExpirationDate] = useState('');
 
+  // NEW: Enhanced metadata fields
+  const [intendedUses, setIntendedUses] = useState<string[]>([]);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
+  const [peopleOrCustomerContent, setPeopleOrCustomerContent] = useState(false);
+  const [customerPermissionConfirmed, setCustomerPermissionConfirmed] = useState(false);
+  const [approvedForAI, setApprovedForAI] = useState(true);
+  const [publicUseAllowed, setPublicUseAllowed] = useState(true);
+  const [notesForAI, setNotesForAI] = useState('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // If defaultCategory changes, update category
+  useEffect(() => {
+    if (defaultCategory) setCategory(defaultCategory);
+  }, [defaultCategory]);
 
   const isTextType = TEXT_ASSET_TYPES.includes(assetType);
   const isTestimonial = ['testimonial_screenshot', 'review_screenshot'].includes(assetType);
@@ -64,6 +79,12 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
     if (!title) setTitle(f.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '));
   };
 
+  const toggleIntendedUse = (use: string) => {
+    setIntendedUses(prev =>
+      prev.includes(use) ? prev.filter(u => u !== use) : [...prev, use]
+    );
+  };
+
   const handleSubmit = async () => {
     setError('');
     setWarning('');
@@ -83,6 +104,11 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
       return;
     }
 
+    if (!rightsConfirmed) {
+      setError('Please confirm you have the rights to use this asset.');
+      return;
+    }
+
     setUploading(true);
     setStep('uploading');
     setProgress(10);
@@ -99,6 +125,14 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
         tags: tagArr,
         usageRights: usageRights || undefined,
         approvedForAds,
+        // New fields
+        intendedUses: intendedUses.length > 0 ? intendedUses : undefined,
+        rightsConfirmed,
+        peopleOrCustomerContent,
+        customerPermissionConfirmed: peopleOrCustomerContent ? customerPermissionConfirmed : undefined,
+        approvedForAI,
+        publicUseAllowed,
+        notesForAI: notesForAI.trim() || undefined,
       };
 
       if (isTextType) {
@@ -142,6 +176,13 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
       }
 
       if (data.warning) setWarning(data.warning);
+      // Show quality warnings from server
+      if (data.qualityWarnings && data.qualityWarnings.length > 0) {
+        setWarning(prev => {
+          const existing = prev ? prev + ' ' : '';
+          return existing + data.qualityWarnings.join(' ');
+        });
+      }
       setProgress(40);
 
       if (data.mode === 'text') {
@@ -232,7 +273,7 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
                   Done
                 </button>
                 <button
-                  onClick={() => { setStep('select'); setFile(null); setTitle(''); setDescription(''); setTextContent(''); setError(''); setWarning(''); }}
+                  onClick={() => { setStep('select'); setFile(null); setTitle(''); setDescription(''); setTextContent(''); setError(''); setWarning(''); setRightsConfirmed(false); setIntendedUses([]); }}
                   className="px-5 py-2 border border-gray-200 text-gray-700 rounded-lg font-medium text-sm hover:bg-gray-50 transition-colors"
                 >
                   Upload Another
@@ -396,6 +437,29 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
                 </div>
               )}
 
+              {/* === NEW: Intended Uses === */}
+              {assetType && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Intended Uses</label>
+                  <div className="flex flex-wrap gap-2">
+                    {INTENDED_USE_OPTIONS.map(opt => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => toggleIntendedUse(opt.value)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                          intendedUses.includes(opt.value)
+                            ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                            : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Conditional metadata fields */}
               {isTestimonial && (
                 <div className="grid grid-cols-2 gap-3">
@@ -501,6 +565,88 @@ export default function AssetUploadModal({ businessId, onClose, onUploaded }: Pr
                       />
                       Approved for advertising
                     </label>
+                  </div>
+                </div>
+              )}
+
+              {/* === NEW: Rights, People, AI Approval section === */}
+              {assetType && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <ShieldCheck className="w-4 h-4 text-gray-500" />
+                    <span className="text-sm font-medium text-gray-700">Rights &amp; AI Permissions</span>
+                  </div>
+
+                  {/* Rights confirmation */}
+                  <label className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rightsConfirmed}
+                      onChange={(e) => setRightsConfirmed(e.target.checked)}
+                      className="rounded border-gray-300 mt-0.5"
+                    />
+                    <span>I confirm I have the legal right to use this asset for marketing purposes. *</span>
+                  </label>
+
+                  {/* People or customer content */}
+                  <label className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={peopleOrCustomerContent}
+                      onChange={(e) => {
+                        setPeopleOrCustomerContent(e.target.checked);
+                        if (!e.target.checked) setCustomerPermissionConfirmed(false);
+                      }}
+                      className="rounded border-gray-300 mt-0.5"
+                    />
+                    <span>This asset contains recognizable people or customer content</span>
+                  </label>
+
+                  {/* Customer permission (shown only if people content) */}
+                  {peopleOrCustomerContent && (
+                    <label className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer ml-5">
+                      <input
+                        type="checkbox"
+                        checked={customerPermissionConfirmed}
+                        onChange={(e) => setCustomerPermissionConfirmed(e.target.checked)}
+                        className="rounded border-gray-300 mt-0.5"
+                      />
+                      <span>I have permission from all identifiable individuals to use their likeness</span>
+                    </label>
+                  )}
+
+                  {/* AI approval */}
+                  <label className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={approvedForAI}
+                      onChange={(e) => setApprovedForAI(e.target.checked)}
+                      className="rounded border-gray-300 mt-0.5"
+                    />
+                    <span>Approved for AI-generated content (AI may reference or use this asset)</span>
+                  </label>
+
+                  {/* Public use */}
+                  <label className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={publicUseAllowed}
+                      onChange={(e) => setPublicUseAllowed(e.target.checked)}
+                      className="rounded border-gray-300 mt-0.5"
+                    />
+                    <span>Approved for public-facing use (website, social, ads)</span>
+                  </label>
+
+                  {/* Notes for AI */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Notes for AI (optional)</label>
+                    <input
+                      type="text"
+                      value={notesForAI}
+                      onChange={(e) => setNotesForAI(e.target.value)}
+                      placeholder="e.g., Use this logo only on dark backgrounds"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
                   </div>
                 </div>
               )}

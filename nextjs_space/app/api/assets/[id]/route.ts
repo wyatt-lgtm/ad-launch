@@ -41,6 +41,10 @@ export async function PATCH(
       'allowedChannels', 'disallowedChannels', 'priorityScore',
       'expiresAt', 'sourcePlatform', 'customerPermission', 'approvedForAds',
       'exampleType', 'pairTag', 'pairRole', 'expirationDate', 'textContent',
+      // New enhanced metadata fields
+      'intendedUses', 'rightsConfirmed', 'peopleOrCustomerContent',
+      'customerPermissionConfirmed', 'approvedForAI', 'publicUseAllowed',
+      'notesForAI', 'relatedServiceTopic',
     ];
 
     for (const field of allowedFields) {

@@ -75,6 +75,8 @@ model Business {
   communitySettings   CommunityEngagementSettings?
   communitySources    CommunitySource[]
   communityOpps       CommunityEngagementOpportunity[]
+  profileInterviews   BusinessProfileInterview[]
+  profileDocuments    GeneratedBusinessProfileDocument[]
 
   // ── Service area & website build mode ──────────────────────────────
   serviceAreaMode       String?          // local | regional | national | multi_location
@@ -736,6 +738,24 @@ model BusinessAsset {
   business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   uploadedBy            User      @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
 
+  // Extended metadata for enhanced asset library
+  duration              Float?    // seconds for video/audio
+  orientation           String?   // horizontal, vertical, square
+  hasAudio              Boolean?  // for video files
+  hasTransparency       Boolean?  // for images
+  wordCount             Int?      // for documents
+  extractedTextPreview  String?   // first ~200 chars of document text
+  intendedUses          String[]  @default([]) // website, social, video, ads, seo, email, print, internal
+  qualityStatus         String?   // good, warning, needs_review, low_quality
+  qualityWarnings       String[]  @default([]) // list of warning messages
+  rightsConfirmed       Boolean   @default(false)
+  peopleOrCustomerContent Boolean @default(false)
+  customerPermissionConfirmed Boolean @default(false)
+  approvedForAI         Boolean   @default(false)
+  publicUseAllowed      Boolean   @default(false)
+  notesForAI            String?   // freeform notes for AI workflows
+  relatedServiceTopic   String?   // service type or topic this asset relates to
+
   @@index([businessId])
   @@index([businessId, category])
   @@index([businessId, approvalStatus])
@@ -1134,4 +1154,45 @@ model CommunityContentMatch {
 
   @@index([opportunityId])
   @@index([businessId])
+}
+
+// ── Business Profile Interview & Generated Documents ──────────────────────
+
+model BusinessProfileInterview {
+  id                    String    @id @default(cuid())
+  businessId            String
+  status                String    @default("draft") // draft, completed, approved
+  currentStep           Int       @default(0)
+  answersJson           Json?     // structured answers per step
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  completedAt           DateTime?
+  approvedAt            DateTime?
+  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  generatedDocuments    GeneratedBusinessProfileDocument[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+}
+
+model GeneratedBusinessProfileDocument {
+  id                    String    @id @default(cuid())
+  businessId            String
+  interviewId           String?
+  documentType          String    // owner_bio, founder_story, company_profile, mission_statement, service_area, customer_profile, differentiators, credentials, faq_source, objections_guide, brand_voice, claims_avoid, master_profile
+  title                 String
+  content               String    @db.Text
+  status                String    @default("draft") // draft, approved, private, needs_review
+  approvedForAI         Boolean   @default(false)
+  publicUseAllowed      Boolean   @default(false)
+  requiresReview        Boolean   @default(true)
+  source                String    @default("guided_interview") // guided_interview, manual_upload
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  interview             BusinessProfileInterview? @relation(fields: [interviewId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, documentType])
+  @@index([interviewId])
 }

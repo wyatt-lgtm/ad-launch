@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAssetAccess } from '@/lib/asset-access';
-import { validateAssetFile, sanitizeSvg, TEXT_ASSET_TYPES } from '@/lib/asset-validation';
+import { validateAssetFile, sanitizeSvg, TEXT_ASSET_TYPES, generateQualityWarnings } from '@/lib/asset-validation';
 import { generatePresignedUploadUrl } from '@/lib/s3';
 import { prisma } from '@/lib/db';
 
@@ -48,6 +48,15 @@ export async function POST(req: NextRequest) {
       pairTag,
       pairRole,
       expirationDate,
+      // New enhanced metadata fields
+      intendedUses,
+      rightsConfirmed = false,
+      peopleOrCustomerContent = false,
+      customerPermissionConfirmed = false,
+      approvedForAI = true,
+      publicUseAllowed = true,
+      notesForAI,
+      relatedServiceTopic,
     } = body;
 
     // Validate required fields
@@ -78,6 +87,7 @@ export async function POST(req: NextRequest) {
         select: { tombstoneBusinessId: true, tombstoneBusinessUuid: true },
       });
 
+      const textWordCount = textContent.trim().split(/\s+/).filter(Boolean).length;
       const asset = await prisma.businessAsset.create({
         data: {
           businessId,
@@ -103,6 +113,19 @@ export async function POST(req: NextRequest) {
           expiresAt: expiresAt ? new Date(expiresAt) : undefined,
           approvedForAds,
           expirationDate: expirationDate ? new Date(expirationDate) : undefined,
+          // New fields
+          wordCount: textWordCount,
+          extractedTextPreview: textContent.trim().substring(0, 500),
+          intendedUses: intendedUses || [],
+          rightsConfirmed,
+          peopleOrCustomerContent,
+          customerPermissionConfirmed,
+          approvedForAI,
+          publicUseAllowed,
+          notesForAI: notesForAI || null,
+          relatedServiceTopic: relatedServiceTopic || null,
+          qualityStatus: 'good',
+          qualityWarnings: [],
         },
       });
 
@@ -136,6 +159,18 @@ export async function POST(req: NextRequest) {
       select: { tombstoneBusinessId: true, tombstoneBusinessUuid: true },
     });
 
+    // Generate quality warnings
+    const qualityWarnings = generateQualityWarnings(assetType, mimeType, fileSizeBytes, width, height);
+    const qualityStatus = qualityWarnings.length > 0 ? 'warning' : 'good';
+
+    // Determine orientation from dimensions
+    let orientation: string | null = null;
+    if (width && height) {
+      if (width > height) orientation = 'landscape';
+      else if (height > width) orientation = 'portrait';
+      else orientation = 'square';
+    }
+
     // Create asset record in pending state
     const asset = await prisma.businessAsset.create({
       data: {
@@ -168,6 +203,18 @@ export async function POST(req: NextRequest) {
         pairTag,
         pairRole,
         expirationDate: expirationDate ? new Date(expirationDate) : undefined,
+        // New fields
+        orientation,
+        intendedUses: intendedUses || [],
+        qualityStatus,
+        qualityWarnings,
+        rightsConfirmed,
+        peopleOrCustomerContent,
+        customerPermissionConfirmed,
+        approvedForAI,
+        publicUseAllowed,
+        notesForAI: notesForAI || null,
+        relatedServiceTopic: relatedServiceTopic || null,
       },
     });
 
@@ -175,7 +222,8 @@ export async function POST(req: NextRequest) {
       asset,
       uploadUrl,
       cloud_storage_path,
-      warning: validation.warning,
+      warning: validation.warnings?.join(' '),
+      qualityWarnings,
       mode: 'file',
     });
   } catch (err: any) {
