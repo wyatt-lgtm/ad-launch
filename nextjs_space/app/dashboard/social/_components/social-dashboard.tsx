@@ -149,6 +149,86 @@ const LANE_LABELS: Record<string, { label: string; color: string; bg: string }> 
   holiday: { label: '🎉 Holiday/Event', color: 'text-purple-700', bg: 'bg-purple-50' },
 };
 
+// ── Create Post Dropdown ─────────────────────────────────────────────────────
+function CreatePostDropdown({
+  onScout, onDraft, onWeeklyTip, onCarousel,
+  disabled, showDraftForm, showWeeklyTipForm, scouting, generating, activeBusinessId,
+}: {
+  onScout: () => void;
+  onDraft: () => void;
+  onWeeklyTip: () => void;
+  onCarousel: () => void;
+  disabled: boolean;
+  showDraftForm: boolean;
+  showWeeklyTipForm: boolean;
+  scouting: boolean;
+  generating: boolean;
+  activeBusinessId: string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const label = scouting ? 'Scouting...' : generating ? 'Creating...' : 'Create Post';
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        disabled={disabled}
+        className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
+      >
+        {(scouting || generating) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+        {label}
+        <ChevronDown className="w-3 h-3" />
+      </button>
+      {open && (
+        <div className="absolute top-full mt-1 right-0 w-56 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-50">
+          <button
+            onClick={() => { setOpen(false); onScout(); }}
+            disabled={disabled}
+            className="flex items-center gap-2 w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 text-gray-700 disabled:opacity-40"
+          >
+            <Zap className="w-4 h-4 text-blue-600" /> Scout Story
+          </button>
+          <button
+            onClick={() => { setOpen(false); onDraft(); }}
+            disabled={disabled}
+            className={`flex items-center gap-2 w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 disabled:opacity-40 ${
+              showDraftForm ? 'text-purple-700 bg-purple-50' : 'text-gray-700'
+            }`}
+          >
+            <PenLine className="w-4 h-4 text-purple-600" /> My Own Post
+          </button>
+          <button
+            onClick={() => { setOpen(false); onWeeklyTip(); }}
+            disabled={disabled}
+            className={`flex items-center gap-2 w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 disabled:opacity-40 ${
+              showWeeklyTipForm ? 'text-amber-700 bg-amber-50' : 'text-gray-700'
+            }`}
+          >
+            <Lightbulb className="w-4 h-4 text-amber-600" /> Weekly Tip
+          </button>
+          <button
+            onClick={() => { setOpen(false); onCarousel(); }}
+            disabled={!activeBusinessId}
+            className="flex items-center gap-2 w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 text-gray-700 disabled:opacity-40"
+          >
+            <Layers className="w-4 h-4 text-indigo-600" /> Article Carousel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Component ──────────────────────────────────────────────────────────
 
 export default function SocialDashboard() {
@@ -1606,46 +1686,19 @@ export default function SocialDashboard() {
           <p className="text-gray-500 mt-1 text-sm">Clark Kent scouts local news and writes posts for your business.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={scoutForPosts}
-            disabled={scouting || generating || showStoryPicker || draftSubmitting}
-            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-60 shadow-sm"
-          >
-            {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            {scouting ? 'Scouting...' : generating ? 'Creating post...' : 'Scout Stories'}
-          </button>
-          <button
-            onClick={() => setShowDraftForm(v => !v)}
-            disabled={scouting || draftSubmitting}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-colors shadow-sm ${
-              showDraftForm
-                ? 'bg-purple-600 text-white hover:bg-purple-700'
-                : 'bg-white text-purple-700 border border-purple-200 hover:bg-purple-50'
-            } disabled:opacity-60`}
-          >
-            <PenLine className="w-4 h-4" />
-            My Own Post
-          </button>
-          <button
-            onClick={() => { setShowWeeklyTipForm(v => !v); if (showDraftForm) setShowDraftForm(false); }}
-            disabled={scouting || wtSubmitting}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-colors shadow-sm ${
-              showWeeklyTipForm
-                ? 'bg-amber-600 text-white hover:bg-amber-700'
-                : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50'
-            } disabled:opacity-60`}
-          >
-            <Lightbulb className="w-4 h-4" />
-            Weekly Tip
-          </button>
-          <button
-            onClick={() => setShowCarouselCreator(true)}
-            disabled={!activeBusinessId}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-colors shadow-sm bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-60"
-          >
-            <Layers className="w-4 h-4" />
-            Article Carousel
-          </button>
+          {/* Compact Create Post dropdown */}
+          <CreatePostDropdown
+            onScout={scoutForPosts}
+            onDraft={() => setShowDraftForm(v => !v)}
+            onWeeklyTip={() => { setShowWeeklyTipForm(v => !v); if (showDraftForm) setShowDraftForm(false); }}
+            onCarousel={() => setShowCarouselCreator(true)}
+            disabled={scouting || generating || draftSubmitting}
+            showDraftForm={showDraftForm}
+            showWeeklyTipForm={showWeeklyTipForm}
+            scouting={scouting}
+            generating={generating}
+            activeBusinessId={activeBusinessId}
+          />
           {/* Persistent Sync from Tombstone button */}
           {activeBusinessId && (
             <button
