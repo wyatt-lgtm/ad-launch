@@ -48,6 +48,16 @@ export interface AgentAllowedAsset {
   qualityStatus?: string;
   qualityWarnings: string[];
   restrictions: string[];
+  // Extended context fields
+  textContent?: string;
+  extractedTextPreview?: string;
+  wordCount?: number;
+  hasAudio?: boolean;
+  relatedServiceTopic?: string;
+  scope?: string;              // shared asset scope (global, industry, brand_oem, etc.)
+  rightsHolder?: string;       // shared asset rights holder
+  attributionText?: string;    // shared asset attribution text
+  maxResolution?: string;      // shared asset max resolution
   // Ranking metadata
   _rankScore: number;
   _skipReason?: string;
@@ -184,6 +194,12 @@ function normalizeBusinessAsset(asset: any): AgentAllowedAsset {
     qualityStatus: asset.qualityStatus || undefined,
     qualityWarnings: asset.qualityWarnings || [],
     restrictions,
+    // Extended context fields
+    textContent: asset.textContent || undefined,
+    extractedTextPreview: asset.extractedTextPreview || undefined,
+    wordCount: asset.wordCount || undefined,
+    hasAudio: asset.hasAudio ?? undefined,
+    relatedServiceTopic: asset.relatedServiceTopic || undefined,
     _rankScore: 0,
   };
 }
@@ -232,6 +248,11 @@ function normalizeSharedAsset(asset: any, source: 'shared' | 'shared_pack'): Age
     qualityStatus: undefined,
     qualityWarnings: [],
     restrictions,
+    // Extended context fields
+    scope: asset.scope || undefined,
+    rightsHolder: asset.rightsHolder || undefined,
+    attributionText: asset.attributionText || undefined,
+    maxResolution: asset.maxResolution || undefined,
     _rankScore: 0,
   };
 }
