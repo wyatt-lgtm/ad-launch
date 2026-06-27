@@ -1892,6 +1892,26 @@ export default function SocialDashboard() {
             )}
           </div>
         )}
+
+        {/* Scout Stories action button */}
+        <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+          <p className="text-xs text-gray-400">
+            {scoutMode === 'local_only'
+              ? 'Scout will find local news from your trade area.'
+              : selectedCategories.size === 0
+                ? 'Select at least one category above, then scout for stories.'
+                : `Ready to scout ${selectedCategories.size} categor${selectedCategories.size === 1 ? 'y' : 'ies'}${scoutMode === 'local_plus_interests' ? ' + local news' : ''}.`
+            }
+          </p>
+          <button
+            onClick={scoutForPosts}
+            disabled={scouting || generating || savingContentSettings || showStoryPicker || (scoutMode !== 'local_only' && selectedCategories.size === 0)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm"
+          >
+            {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            {scouting ? 'Scouting...' : 'Scout Stories'}
+          </button>
+        </div>
       </div>
 
       {/* ── Weekly Tip Form ─────────────────────────────────────── */}
