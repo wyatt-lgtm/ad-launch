@@ -171,9 +171,17 @@ export async function getAllowedAssetsForBusiness(
   });
   if (!business) return [];
 
-  // 2. Get all approved shared asset IDs for this business
+  // 2. Get all approved shared asset IDs for this business (exclude expired)
+  const now = new Date();
   const approvals = await prisma.businessSharedAssetApproval.findMany({
-    where: { businessId, status: 'approved' },
+    where: {
+      businessId,
+      status: 'approved',
+      OR: [
+        { expiresAt: null },
+        { expiresAt: { gt: now } },
+      ],
+    },
     select: { sharedAssetId: true },
   });
   const approvedAssetIds = approvals.map(a => a.sharedAssetId);
@@ -216,8 +224,7 @@ export async function getAllowedAssetsForBusiness(
     orderBy: { title: 'asc' },
   });
 
-  // 7. Filter out geographically restricted and expired
-  const now = new Date();
+  // 7. Filter out geographically restricted and expired licenses
   return assets.filter(a => {
     if (a.licenseExpiry && a.licenseExpiry < now) return false;
     return true;

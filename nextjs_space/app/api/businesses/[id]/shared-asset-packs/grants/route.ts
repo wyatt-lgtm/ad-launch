@@ -21,6 +21,15 @@ export async function GET(
     }
 
     const businessId = params.id;
+    const userId = (session.user as any).id;
+    const userRole = (session.user as any).role;
+
+    // Cross-business isolation: verify ownership
+    const business = await prisma.business.findUnique({ where: { id: businessId }, select: { userId: true } });
+    if (!business || (business.userId !== userId && userRole !== 'admin')) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const { searchParams } = new URL(req.url);
     const status = searchParams.get('status');
 
