@@ -1,4 +1,5 @@
 import { loadBusinessProfile, formatProfileForCommand, isStale } from '@/lib/business-profile';
+import { buildAssetContextForMission, type TombstoneAssetContext } from '@/lib/tombstone-asset-bridge';
 
 const TOMBSTONE_URL = process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
@@ -439,6 +440,18 @@ export async function buildLaneCommands(
   const profileBlock = await getBusinessProfileBlock(businessId);
   const identityLock = buildIdentityLockBlock(businessName, normalizedUrl, normalizedUrl);
 
+  // Fetch approved asset context for social generation
+  let assetPromptBlock = '';
+  if (businessId) {
+    try {
+      const bridge = await buildAssetContextForMission(businessId, 'social');
+      assetPromptBlock = bridge.promptBlock;
+      console.log(`[tombstone] Asset context for lane commands: ${bridge.context.totalRetrieved} assets, ${bridge.context.totalSkipped} skipped`);
+    } catch (err: any) {
+      console.error('[tombstone] Asset bridge failed for lane commands (non-fatal):', err?.message);
+    }
+  }
+
   const ctaRules = [
     `CTA RULES:`,
     `- The CTA button MUST relate to the business's actual service/product found on the website.`,
@@ -454,6 +467,7 @@ export async function buildLaneCommands(
     `Use colors, logo, and brand voice from the website. Make it feel authentic — like the business owner wrote it.`,
     profileBlock,
     `Additional context:\nBusiness: ${businessName} in ${businessCity}, ${businessState}`,
+    assetPromptBlock,
   ].filter(Boolean).join('\n');
 
   const evergreenCommand = [
@@ -463,6 +477,7 @@ export async function buildLaneCommands(
     `Use the business brand colors and voice from the website.`,
     profileBlock,
     ctaRules,
+    assetPromptBlock,
     ``,
     `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
     holidayContext,
@@ -476,6 +491,7 @@ export async function buildLaneCommands(
     `Use the business brand colors and voice from the website.`,
     profileBlock,
     ctaRules,
+    assetPromptBlock,
     ``,
     `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
     newsContext,
@@ -650,6 +666,18 @@ export async function createLaneMission(
     normalizedUrl,
   );
 
+  // Fetch approved asset context for social generation
+  let assetPromptBlock = '';
+  if (businessId) {
+    try {
+      const bridge = await buildAssetContextForMission(businessId, 'social');
+      assetPromptBlock = bridge.promptBlock;
+      console.log(`[tombstone] Asset context for lane mission (${lane}): ${bridge.context.totalRetrieved} assets, ${bridge.context.totalSkipped} skipped`);
+    } catch (err: any) {
+      console.error(`[tombstone] Asset bridge failed for lane mission ${lane} (non-fatal):`, err?.message);
+    }
+  }
+
   let command = '';
   if (lane === 'website') {
     command = [
@@ -658,6 +686,7 @@ export async function createLaneMission(
       `Focus on the business brand, services, offers, and unique value proposition found on the website.`,
       `Use colors, logo, and brand voice from the website. Make it feel authentic — like the business owner wrote it.`,
       profileBlock,
+      assetPromptBlock,
       context ? `\nAdditional context:\n${context}` : '',
     ].filter(Boolean).join('\n');
   } else if (lane === 'news') {
@@ -672,6 +701,7 @@ export async function createLaneMission(
       `- Good examples: "Get a Free Quote", "Book Now", "Schedule Service", "Shop Now", "Learn More", "Call Today"`,
       `- NEVER use generic CTAs like "Check Availability" unless the business is actually a booking/reservation service (hotels, rentals, venues).`,
       `- Read the website to understand what action a customer would take, then make the CTA match that action.`,
+      assetPromptBlock,
       ``,
       `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
       `${context}`,
@@ -689,6 +719,7 @@ export async function createLaneMission(
       `- Good examples: "Get a Free Quote", "Book Now", "Schedule Service", "Shop Now", "Learn More", "Call Today"`,
       `- NEVER use generic CTAs like "Check Availability" unless the business is actually a booking/reservation service (hotels, rentals, venues).`,
       `- Read the website to understand what action a customer would take, then make the CTA match that action.`,
+      assetPromptBlock,
       ``,
       `--- RSS STORY METADATA (preserve exactly — do not alter) ---`,
       `${context}`,
@@ -768,6 +799,18 @@ export async function createSocialMissions(
     throw new Error(preflight.error);
   }
 
+  // Fetch approved asset context for social generation
+  let assetPromptBlock = '';
+  if (options.businessId) {
+    try {
+      const bridge = await buildAssetContextForMission(options.businessId, 'social');
+      assetPromptBlock = bridge.promptBlock;
+      console.log(`[tombstone] Asset context for social missions: ${bridge.context.totalRetrieved} assets, ${bridge.context.totalSkipped} skipped`);
+    } catch (err: any) {
+      console.error('[tombstone] Asset bridge failed for social missions (non-fatal):', err?.message);
+    }
+  }
+
   // If no individual stories provided, fall back to single command with full brief
   if (stories.length === 0) {
     console.log(`[tombstone] No individual stories — sending single command for: ${normalizedUrl}`);
@@ -779,6 +822,7 @@ export async function createSocialMissions(
       `Make it feel authentic — like a real small business owner wrote it.`,
       `Target platforms: ${platforms.join(', ')}.`,
       profileBlock,
+      assetPromptBlock,
       scoutSummary ? `\nContext from scout brief:\n${scoutSummary}` : '',
     ].filter(Boolean).join('\n');
 
@@ -802,7 +846,7 @@ export async function createSocialMissions(
   // Process sequentially — Tombstone serialises commands so parallel sends cause timeouts
   for (let i = 0; i < stories.length; i++) {
     const story = stories[i];
-    const command = buildStoryCommand(normalizedUrl, story, platforms, mode, profileBlock, identityLockBlock);
+    const command = buildStoryCommand(normalizedUrl, story, platforms, mode, profileBlock, identityLockBlock, assetPromptBlock);
     console.log(`[tombstone] Sending command ${i + 1}/${stories.length}: "${story.headline?.slice(0, 60)}..." (${story.type || 'interest'})`);
 
     const result = await sendCommand(command, undefined, options.tombstoneBusinessId);
@@ -940,6 +984,7 @@ function buildStoryCommand(
   mode: string,
   profileBlock: string = '',
   identityLockBlock: string = '',
+  assetPromptBlock: string = '',
 ): string {
   const type = story.type || 'interest';
   const platformStr = platforms.join(', ');
@@ -968,6 +1013,7 @@ function buildStoryCommand(
       `Target platforms: ${platformStr}.`,
       portraitInstruction,
       profileBlock,
+      assetPromptBlock,
       rssMetaBlock,
     ].filter(Boolean).join('\n');
   }
@@ -981,6 +1027,7 @@ function buildStoryCommand(
       `Target platforms: ${platformStr}.`,
       portraitInstruction,
       profileBlock,
+      assetPromptBlock,
       rssMetaBlock,
     ].filter(Boolean).join('\n');
   }
@@ -994,6 +1041,7 @@ function buildStoryCommand(
       `Target platforms: ${platformStr}.`,
       portraitInstruction,
       profileBlock,
+      assetPromptBlock,
     ].filter(Boolean).join('\n');
   }
 
@@ -1006,6 +1054,7 @@ function buildStoryCommand(
     `Target platforms: ${platformStr}.`,
     portraitInstruction,
     profileBlock,
+    assetPromptBlock,
     rssMetaBlock,
   ].filter(Boolean).join('\n');
 }
@@ -1048,6 +1097,18 @@ export async function createScoutStoryMission(
     normalizedUrl,
   );
 
+  // Fetch approved asset context for scout story post
+  let assetPromptBlock = '';
+  if (meta.businessId) {
+    try {
+      const bridge = await buildAssetContextForMission(meta.businessId, 'social');
+      assetPromptBlock = bridge.promptBlock;
+      console.log(`[tombstone] Asset context for scout story: ${bridge.context.totalRetrieved} assets, ${bridge.context.totalSkipped} skipped`);
+    } catch (err: any) {
+      console.error('[tombstone] Asset bridge failed for scout story (non-fatal):', err?.message);
+    }
+  }
+
   const command = [
     identityLock,
     `review ${normalizedUrl} and create 1 social media post based on the story below.`,
@@ -1057,6 +1118,7 @@ export async function createScoutStoryMission(
     `Target platforms: facebook, instagram.`,
     `Image creative MUST be portrait 4:5 aspect ratio (1080×1350), mobile-first, full-frame composition. Do NOT generate landscape images.`,
     profileBlock,
+    assetPromptBlock,
     `--- SCOUT STORY CONTEXT ---`,
     `source: daily_scout_email`,
     `workflow_type: single_story_post`,
@@ -1117,6 +1179,17 @@ export async function createWeeklyTipMission(
   const profileBlock = opts.businessId ? await getBusinessProfileBlock(opts.businessId) : '';
   const identityLock = buildIdentityLockBlock(opts.businessName || '', normalizedUrl, normalizedUrl);
 
+  // Fetch approved asset context for weekly tip posts
+  let assetPromptBlock = '';
+  if (opts.businessId) {
+    try {
+      const bridge = await buildAssetContextForMission(opts.businessId, 'social');
+      assetPromptBlock = bridge.promptBlock;
+    } catch (err) {
+      console.warn('[tombstone] asset bridge error (weekly tip) — continuing without assets', err);
+    }
+  }
+
   const command = [
     identityLock,
     `review ${normalizedUrl} and create 1 social media post based on the weekly tip topic below.`,
@@ -1156,6 +1229,7 @@ export async function createWeeklyTipMission(
     `--- END BUSINESS PROFILE ---`,
     ``,
     `IMPORTANT: This is intent=weekly_tip, source=weekly_tip. Do NOT run RSS scouting or story discovery.`,
+    assetPromptBlock,
   ].filter(Boolean).join('\n');
 
   console.log(`[tombstone] Weekly tip mission for: ${normalizedUrl} — "${opts.topic.slice(0, 60)}" (business_id=${opts.tombstoneBusinessId ?? 'none'})`);
@@ -1185,10 +1259,23 @@ export async function createDraftPolishMission(
     artDirection?: string;
     generateArt?: boolean;
     tombstoneBusinessId?: number | null;
+    businessId?: string;
   } = {},
 ) {
   const normalizedUrl = websiteUrl?.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
   const generateArt = options.generateArt !== false;
+
+  // Fetch approved asset context for draft polish
+  let assetPromptBlock = '';
+  if (options.businessId) {
+    try {
+      const bridge = await buildAssetContextForMission(options.businessId, 'social');
+      assetPromptBlock = bridge.promptBlock;
+      console.log(`[tombstone] Asset context for draft polish: ${bridge.context.totalRetrieved} assets, ${bridge.context.totalSkipped} skipped`);
+    } catch (err: any) {
+      console.error('[tombstone] Asset bridge failed for draft polish (non-fatal):', err?.message);
+    }
+  }
 
   const commandParts = [
     `review ${normalizedUrl} and polish the following user-written social media post draft.`,
@@ -1221,6 +1308,8 @@ export async function createDraftPolishMission(
   commandParts.push(`Each line should be concise (e.g. "Jun 12 vs Paraguay" not full sentences).`);
   commandParts.push(`These lines appear below the headline and above the CTA in the rendered image.`);
   commandParts.push(`Also ensure people/subjects in the image face TOWARD the main action/screen, not away from it.`);
+
+  if (assetPromptBlock) commandParts.push(assetPromptBlock);
 
   commandParts.push(`\nIMPORTANT: This is intent=copy_edit_user_post, source=user_written_post. Do NOT run RSS scouting or story discovery.`);
 
@@ -1981,6 +2070,8 @@ export interface ConceptWebsitePayload {
     feedback: string;
     requested_action?: string;
   }>;
+  // Approved asset context from Launch OS asset permission layer
+  asset_context?: TombstoneAssetContext;
 }
 
 /**

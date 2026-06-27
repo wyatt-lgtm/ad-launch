@@ -5,6 +5,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { createConceptWebsiteMission, type ConceptWebsitePayload } from '@/lib/tombstone';
+import { buildWebsiteAssetContext } from '@/lib/tombstone-asset-bridge';
 
 /**
  * POST /api/site-revision
@@ -53,6 +54,17 @@ export async function POST(request: NextRequest) {
       businessId = analysis?.businessId ?? '';
     } catch { /* non-critical */ }
 
+    // Fetch approved asset context for revision
+    let assetContext;
+    if (businessId) {
+      try {
+        const bridge = await buildWebsiteAssetContext(businessId);
+        assetContext = bridge.context;
+      } catch (err: any) {
+        console.warn('[site-revision] Asset bridge failed (non-fatal):', err?.message);
+      }
+    }
+
     // Trigger a new concept website workflow with feedback attached
     const payload: ConceptWebsitePayload = {
       website_url: websiteUrl || '',
@@ -63,6 +75,7 @@ export async function POST(request: NextRequest) {
       user_id: (session.user as any).id || '',
       google_maps_api_key: process.env.GOOGLE_MAPS_API_KEY || '',
       owner_feedback: ownerFeedback,
+      asset_context: assetContext,
     };
 
     const result = await createConceptWebsiteMission(payload);

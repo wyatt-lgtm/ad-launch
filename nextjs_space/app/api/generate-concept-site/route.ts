@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { createConceptWebsiteMission } from '@/lib/tombstone';
 import { prisma } from '@/lib/db';
+import { buildWebsiteAssetContext } from '@/lib/tombstone-asset-bridge';
 
 /**
  * POST /api/generate-concept-site
@@ -113,6 +114,18 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // Fetch approved asset context for website generation
+        let assetContext;
+        if (businessId) {
+          try {
+            const bridge = await buildWebsiteAssetContext(businessId);
+            assetContext = bridge.context;
+            console.log(`[generate-concept-site] Asset context: ${bridge.context.totalRetrieved} assets, ${bridge.context.totalSkipped} skipped`);
+          } catch (err: any) {
+            console.warn('[generate-concept-site] Asset bridge failed (non-fatal):', err?.message);
+          }
+        }
+
         const result = await createConceptWebsiteMission({
           website_url: websiteUrl || '',
           business_name: businessName || 'the business',
@@ -143,6 +156,8 @@ export async function POST(request: NextRequest) {
           competitor_count: 3,
           // Owner feedback for revision pass
           owner_feedback: Array.isArray(ownerFeedback) ? ownerFeedback : undefined,
+          // Approved asset context from Launch OS
+          asset_context: assetContext,
         });
 
         if (result.success && result.workflowId) {

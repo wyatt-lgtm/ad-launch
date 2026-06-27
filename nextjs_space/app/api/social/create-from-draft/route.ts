@@ -306,6 +306,7 @@ export async function POST(req: NextRequest) {
       artDirection: artDirection || undefined,
       generateArt,
       tombstoneBusinessId,
+      businessId: resolvedBusinessId || undefined,
     });
 
     if (!result.success) {
