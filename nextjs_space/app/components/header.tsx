@@ -263,7 +263,59 @@ export default function Header() {
                   <span className="hidden xl:inline">Search</span>
                 </Link>
 
-                {/* Create Dropdown */}
+                {/* Social */}
+                <Link href="/dashboard/social" className={navCls('/dashboard/social')}>
+                  <Newspaper className="w-4 h-4" />
+                  Social
+                  <AlertBadge count={alerts.social.count} severity={alerts.social.severity} />
+                </Link>
+
+                {/* Website + SEO Dropdown */}
+                <Dropdown
+                  trigger={
+                    <div className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      (isNavActive('/dashboard/website') || isNavActive('/dashboard/seo'))
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    }`}>
+                      <Globe className="w-4 h-4" />
+                      Website
+                      <ChevronDown className="w-3 h-3" />
+                      <AlertBadge count={alerts.website.count + alerts.seo.count} severity={alerts.website.severity !== 'none' ? alerts.website.severity : alerts.seo.severity} />
+                    </div>
+                  }
+                  width="w-64"
+                >
+                  <DropdownSection title="Website">
+                    <DropdownItem href="/dashboard/website" icon={Globe} label="Overview" desc="Website dashboard" />
+                    <DropdownItem href="/dashboard/website" icon={FileText} label="Pages" desc="Manage site pages" />
+                    <DropdownItem href="/dashboard/website" icon={Eye} label="Edit Site" desc="Visual editor" disabled />
+                    <DropdownItem href="/dashboard/website" icon={Wrench} label="Website Generator" desc="AI site builder" />
+                    <DropdownItem href="/dashboard/website" icon={Layout} label="Forms & CTAs" disabled />
+                    <DropdownItem href="/dashboard/website" icon={ImageIcon} label="Site Assets" disabled />
+                    <DropdownItem href="/dashboard/website" icon={ArrowUpRight} label="Revisions" disabled />
+                    <DropdownItem href="/dashboard/website" icon={Bug} label="Diagnostics" disabled />
+                  </DropdownSection>
+                  <DropdownDivider />
+                  <DropdownSection title="SEO">
+                    <DropdownItem href="/dashboard/seo" icon={Compass} label="SEO Overview" desc="Audit & scores" />
+                    <DropdownItem href="/dashboard/seo" icon={TrendingUp} label="Page Scores" />
+                    <DropdownItem href="/dashboard/seo" icon={Target} label="Keywords" disabled />
+                    <DropdownItem href="/dashboard/seo" icon={MapPin} label="Local SEO" disabled />
+                    <DropdownItem href="/dashboard/seo" icon={Lightbulb} label="Recommendations" disabled />
+                    <DropdownItem href="/dashboard/seo" icon={AlertTriangle} label="Issues" disabled />
+                    <DropdownItem href="/dashboard/seo" icon={Link2} label="Internal Links" disabled />
+                  </DropdownSection>
+                </Dropdown>
+
+                {/* Insights */}
+                <Link href="/dashboard/insights" className={navCls('/dashboard/insights')}>
+                  <BarChart3 className="w-4 h-4" />
+                  Insights
+                  <AlertBadge count={alerts.insights.count} severity={alerts.insights.severity} />
+                </Link>
+
+                {/* Create Dropdown (between Insights and Account) */}
                 <Dropdown
                   trigger={
                     <div className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:bg-gray-100 hover:text-gray-900`}>
@@ -273,6 +325,7 @@ export default function Header() {
                       <AlertBadge count={alerts.create.count} severity={alerts.create.severity} />
                     </div>
                   }
+                  align="right"
                   width="w-72"
                 >
                   <DropdownSection title="Social Post">
@@ -299,34 +352,6 @@ export default function Header() {
                   <DropdownItem href="/dashboard/social" icon={Mail} label="Email Campaign" disabled />
                   <DropdownItem href="/dashboard/social" icon={Upload} label="Upload Source / Brief" disabled />
                 </Dropdown>
-
-                {/* Social */}
-                <Link href="/dashboard/social" className={navCls('/dashboard/social')}>
-                  <Newspaper className="w-4 h-4" />
-                  Social
-                  <AlertBadge count={alerts.social.count} severity={alerts.social.severity} />
-                </Link>
-
-                {/* Website */}
-                <Link href="/dashboard/website" className={navCls('/dashboard/website')}>
-                  <Globe className="w-4 h-4" />
-                  Website
-                  <AlertBadge count={alerts.website.count} severity={alerts.website.severity} />
-                </Link>
-
-                {/* SEO */}
-                <Link href="/dashboard/seo" className={navCls('/dashboard/seo')}>
-                  <Compass className="w-4 h-4" />
-                  SEO
-                  <AlertBadge count={alerts.seo.count} severity={alerts.seo.severity} />
-                </Link>
-
-                {/* Insights */}
-                <Link href="/dashboard/insights" className={navCls('/dashboard/insights')}>
-                  <BarChart3 className="w-4 h-4" />
-                  Insights
-                  <AlertBadge count={alerts.insights.count} severity={alerts.insights.severity} />
-                </Link>
 
                 {/* Account Dropdown */}
                 <Dropdown
@@ -410,9 +435,14 @@ export default function Header() {
                 {/* Mobile nav links */}
                 <MobileNavLink href="/dashboard" icon={LayoutDashboard} label="Dashboard" pathname={pathname} onClick={() => setMobileOpen(false)} />
                 <MobileNavLink href="/dashboard/social" icon={Newspaper} label="Social" pathname={pathname} badge={alerts.social} onClick={() => setMobileOpen(false)} />
-                <MobileNavLink href="/dashboard/website" icon={Globe} label="Website" pathname={pathname} badge={alerts.website} onClick={() => setMobileOpen(false)} />
-                <MobileNavLink href="/dashboard/seo" icon={Compass} label="SEO" pathname={pathname} badge={alerts.seo} onClick={() => setMobileOpen(false)} />
+                <MobileNavLink href="/dashboard/website" icon={Globe} label="Website" pathname={pathname} badge={{ count: alerts.website.count + alerts.seo.count, severity: alerts.website.severity !== 'none' ? alerts.website.severity : alerts.seo.severity }} onClick={() => setMobileOpen(false)} />
                 <MobileNavLink href="/dashboard/insights" icon={BarChart3} label="Insights" pathname={pathname} badge={alerts.insights} onClick={() => setMobileOpen(false)} />
+
+                <div className="border-t border-gray-100 my-2 pt-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 px-1">Website & SEO</div>
+                  <MobileNavLink href="/dashboard/website" icon={Globe} label="Website Overview" pathname={pathname} onClick={() => setMobileOpen(false)} exact />
+                  <MobileNavLink href="/dashboard/seo" icon={Compass} label="SEO Overview" pathname={pathname} onClick={() => setMobileOpen(false)} />
+                </div>
 
                 <div className="border-t border-gray-100 my-2 pt-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 px-1">Social</div>
