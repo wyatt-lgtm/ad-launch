@@ -237,6 +237,7 @@ export default function SocialDashboard() {
   const searchParams = useSearchParams();
   const autoScout = searchParams.get('scout') === '1';
   const fromFeeds = searchParams.get('fromFeeds') === '1';
+  const actionParam = searchParams.get('action');
   const bizCtx = useActiveBusiness();
   const [showPicker, setShowPicker] = useState(false);
 
@@ -285,7 +286,7 @@ export default function SocialDashboard() {
   const [contentSettingsLoaded, setContentSettingsLoaded] = useState(false);
   const [savingContentSettings, setSavingContentSettings] = useState(false);
   const [contentSettingsSaved, setContentSettingsSaved] = useState(false);
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(true);
   const contentSettingsLoadedBizRef = useRef<string | null>(null);
 
   // Load content settings (mode + categories) when business changes
@@ -699,17 +700,36 @@ export default function SocialDashboard() {
     setScouting(false);
   };
 
-  // Auto-trigger scouting when arriving from Content Sources with ?scout=1
+  // Auto-trigger scouting when arriving from Content Sources with ?scout=1 OR top nav ?action=scout
   const autoScoutFired = useRef(false);
   useEffect(() => {
-    if (autoScout && !loading && !autoScoutFired.current && sessionStatus === 'authenticated' && bizCtx.activeBusiness) {
+    const shouldScout = autoScout || actionParam === 'scout';
+    if (shouldScout && !loading && !autoScoutFired.current && sessionStatus === 'authenticated' && bizCtx.activeBusiness) {
       autoScoutFired.current = true;
-      // Clear the query param so refresh doesn't re-trigger
       router.replace('/dashboard/social', { scroll: false });
       scoutForPosts();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoScout, loading, sessionStatus, bizCtx.activeBusiness]);
+  }, [autoScout, actionParam, loading, sessionStatus, bizCtx.activeBusiness]);
+
+  // Auto-activate panels from top nav ?action= params (tip, draft, carousel)
+  const actionFired = useRef(false);
+  useEffect(() => {
+    if (!actionParam || loading || actionFired.current || sessionStatus !== 'authenticated' || !bizCtx.activeBusiness) return;
+    if (actionParam === 'scout') return; // handled above
+    actionFired.current = true;
+    router.replace('/dashboard/social', { scroll: false });
+    if (actionParam === 'tip') {
+      setShowWeeklyTipForm(true);
+      setShowDraftForm(false);
+    } else if (actionParam === 'draft') {
+      setShowDraftForm(true);
+      setShowWeeklyTipForm(false);
+    } else if (actionParam === 'carousel') {
+      setShowCarouselCreator(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionParam, loading, sessionStatus, bizCtx.activeBusiness]);
 
   // Auto-trigger generation when arriving from Content Feeds with ?fromFeeds=1
   const fromFeedsFired = useRef(false);
@@ -1838,9 +1858,9 @@ export default function SocialDashboard() {
           <div className="mt-3 pt-3 border-t border-gray-100">
             <button
               onClick={() => setShowCategoryPicker(v => !v)}
-              className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
+              className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 hover:text-blue-700 transition-colors py-1 px-1 -ml-1 rounded hover:bg-blue-50"
             >
-              {showCategoryPicker ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              {showCategoryPicker ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
               Interest Categories ({selectedCategories.size} selected)
             </button>
             {showCategoryPicker && (
