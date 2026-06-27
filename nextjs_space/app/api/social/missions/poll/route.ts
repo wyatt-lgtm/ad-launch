@@ -383,32 +383,34 @@ export async function POST(req: NextRequest) {
     const socialDefaultAnalysisId = socialAnalysis?.id || defaultAnalysisId;
     const socialDefaultBusinessId = socialAnalysis?.businessId || defaultBusinessId;
 
-    // Find matching GenerationRun for these workflow IDs
-    const postWorkflowIds = [...new Set(posts.map((p: any) => p.workflowId).filter(Boolean))];
-    let generationRun: any = null;
-    if (postWorkflowIds.length > 0) {
-      generationRun = await prisma.generationRun.findFirst({
-        where: {
-          userId,
-          workflowIds: { hasSome: postWorkflowIds },
-          status: { not: 'completed' },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-    }
-    // Fallback: if no workflow match, find the most recent pending GenerationRun for this user
-    if (!generationRun) {
-      generationRun = await prisma.generationRun.findFirst({
-        where: {
-          userId,
-          status: { not: 'completed' },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-      if (generationRun) {
-        console.log(`[missions/poll] No workflow match — using most recent GenerationRun ${generationRun.id} (biz=${generationRun.businessId})`);
+    // Find ALL pending GenerationRuns for this user (there may be multiple)
+    const pendingRuns = await prisma.generationRun.findMany({
+      where: {
+        userId,
+        status: { not: 'completed' },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Build a set of workflow IDs owned by each run for precise attribution
+    const runByWorkflowId = new Map<string, typeof pendingRuns[0]>();
+    for (const run of pendingRuns) {
+      for (const wfId of (run.workflowIds || [])) {
+        runByWorkflowId.set(wfId, run);
       }
     }
+
+    // For each post, determine which GenerationRun (if any) it belongs to
+    // Only attribute generationRunId to posts whose workflowId matches the run's workflowIds
+    const getRunForPost = (post: any): typeof pendingRuns[0] | null => {
+      if (post.workflowId && runByWorkflowId.has(post.workflowId)) {
+        return runByWorkflowId.get(post.workflowId)!;
+      }
+      return null;
+    };
+
+    // For backward compat, keep a reference to the most recent pending run (used only for fallback logging)
+    const generationRun = pendingRuns[0] || null;
 
     const now = new Date();
 
@@ -453,11 +455,13 @@ export async function POST(req: NextRequest) {
         const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
         // For business-discovered tasks, use taskToBizMap for attribution
         const bizDiscoveredBusinessId = taskToBizMap.get(post.tombstoneTaskId) || null;
-        // Fallback priority: workflowMap > business-discovery > generationRun > socialDefault
-        const fallbackBusinessId = bizDiscoveredBusinessId || generationRun?.businessId || socialDefaultBusinessId;
+        // Fallback priority: workflowMap > business-discovery > socialDefault
+        const fallbackBusinessId = bizDiscoveredBusinessId || socialDefaultBusinessId;
         if (!ref && post.workflowId) {
-          console.warn(`[missions/poll] workflowMap miss for wf=${post.workflowId} task=${post.tombstoneTaskId} — using fallback biz=${fallbackBusinessId} (bizDiscovered=${!!bizDiscoveredBusinessId}, genRun=${generationRun?.id || 'none'})`);
+          console.warn(`[missions/poll] workflowMap miss for wf=${post.workflowId} task=${post.tombstoneTaskId} — using fallback biz=${fallbackBusinessId} (bizDiscovered=${!!bizDiscoveredBusinessId})`);
         }
+        // Only attribute generationRunId to posts whose workflow matches a pending run
+        const matchedRun = getRunForPost(post);
         return {
           userId,
           analysisId: ref?.analysisId || socialDefaultAnalysisId,
@@ -480,11 +484,11 @@ export async function POST(req: NextRequest) {
           sourceArticleTitle: post.sourceArticleTitle || null,
           sourceArticleUrl: post.sourceArticleUrl || null,
           cta: post.cta || null,
-          generationRunId: generationRun?.id || null,
-          generationStartedAt: generationRun?.clickedAt || null,
+          generationRunId: matchedRun?.id || null,
+          generationStartedAt: matchedRun?.clickedAt || null,
           generationCompletedAt: now,
-          totalGenerationTimeMs: generationRun?.clickedAt
-            ? now.getTime() - new Date(generationRun.clickedAt).getTime()
+          totalGenerationTimeMs: matchedRun?.clickedAt
+            ? now.getTime() - new Date(matchedRun.clickedAt).getTime()
             : null,
         };
       }),
@@ -499,10 +503,10 @@ export async function POST(req: NextRequest) {
           const ref = post.workflowId ? workflowMap.get(post.workflowId) : null;
           const incBizDiscoveredId = taskToBizMap.get(post.tombstoneTaskId) || null;
           const status = post._importStatus || 'generation_failed';
-          // Build caption with diagnostic info for failed/incomplete posts
           const diagCaption = post.caption?.trim()
             ? post.caption
             : `[${status === 'generation_incomplete' ? 'Generation incomplete' : 'Generation failed'} — ${post._importError || 'no usable output'}]`;
+          const matchedRun = getRunForPost(post);
           return {
             userId,
             analysisId: ref?.analysisId || socialDefaultAnalysisId,
@@ -525,11 +529,11 @@ export async function POST(req: NextRequest) {
             sourceArticleTitle: post.sourceArticleTitle || null,
             sourceArticleUrl: post.sourceArticleUrl || null,
             cta: post.cta || null,
-            generationRunId: generationRun?.id || null,
-            generationStartedAt: generationRun?.clickedAt || null,
+            generationRunId: matchedRun?.id || null,
+            generationStartedAt: matchedRun?.clickedAt || null,
             generationCompletedAt: now,
-            totalGenerationTimeMs: generationRun?.clickedAt
-              ? now.getTime() - new Date(generationRun.clickedAt).getTime()
+            totalGenerationTimeMs: matchedRun?.clickedAt
+              ? now.getTime() - new Date(matchedRun.clickedAt).getTime()
               : null,
           };
         }),
@@ -539,25 +543,39 @@ export async function POST(req: NextRequest) {
       console.warn(`[missions/poll] Created ${incompleteCreated} incomplete/failed shell records (${incompletePosts.map(p => p._importStatus).join(', ')})`);
     }
 
-    // Update GenerationRun to completed
-    if (generationRun && createdPosts.count > 0) {
-      const totalMs = generationRun.clickedAt
-        ? now.getTime() - new Date(generationRun.clickedAt).getTime()
-        : null;
-      await prisma.generationRun.update({
-        where: { id: generationRun.id },
-        data: {
-          status: 'completed',
-          socialPostCreatedAt: now,
-          completedAt: now,
-          totalTimeMs: totalMs,
-        },
-      });
-      console.log(`[missions/poll] GenerationRun ${generationRun.id} completed in ${totalMs}ms`);
+    // Track per-run import counts so we can complete only runs that received their own posts
+    const runImportCounts = new Map<string, number>();
+    for (const post of [...completePosts, ...incompletePosts]) {
+      const matchedRun = getRunForPost(post);
+      if (matchedRun) {
+        runImportCounts.set(matchedRun.id, (runImportCounts.get(matchedRun.id) || 0) + 1);
+      }
+    }
+
+    // Complete only GenerationRuns whose OWN workflow tasks were imported
+    for (const run of pendingRuns) {
+      const count = runImportCounts.get(run.id) || 0;
+      if (count > 0) {
+        const totalMs = run.clickedAt
+          ? now.getTime() - new Date(run.clickedAt).getTime()
+          : null;
+        await prisma.generationRun.update({
+          where: { id: run.id },
+          data: {
+            status: 'completed',
+            socialPostCreatedAt: now,
+            completedAt: now,
+            totalTimeMs: totalMs,
+          },
+        });
+        console.log(`[missions/poll] GenerationRun ${run.id} completed (${count} posts from its workflows) in ${totalMs}ms`);
+      }
     }
 
     const totalImported = createdPosts.count + incompleteCreated;
-    console.log(`[missions/poll] Imported ${createdPosts.count} complete + ${incompleteCreated} incomplete social posts (runId=${generationRun?.id || 'none'})`);
+    // Count how many were attributed to the most recent pending run (for frontend progress tracking)
+    const importedForActiveRun = generationRun ? (runImportCounts.get(generationRun.id) || 0) : 0;
+    console.log(`[missions/poll] Imported ${createdPosts.count} complete + ${incompleteCreated} incomplete (activeRunImports=${importedForActiveRun}, runId=${generationRun?.id || 'none'})`);
     console.log(`[missions/poll] ====== POLL END: imported=${totalImported}, skipped=${skippedTaskIds.length} ======`);
 
     // ── Fetch render failure events for all relevant businesses ──
@@ -585,6 +603,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       polled: workflowIds.length,
       imported: totalImported,
+      importedForActiveRun,
       importedComplete: createdPosts.count,
       importedIncomplete: incompleteCreated,
       skipped: skippedTaskIds.length,

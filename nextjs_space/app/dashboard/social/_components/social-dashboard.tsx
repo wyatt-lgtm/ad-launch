@@ -275,21 +275,85 @@ export default function SocialDashboard() {
 
   // Scouting mode — default synced from business's contentSourceMode
   type ScoutMode = 'local_only' | 'local_plus_interests' | 'interests_only';
-  const bizMode = bizCtx.activeBusiness?.contentSourceMode as ScoutMode | undefined;
-  const [scoutMode, setScoutMode] = useState<ScoutMode>(bizMode || 'local_plus_interests');
-  const [scoutModeSynced, setScoutModeSynced] = useState(false);
+  const [scoutMode, setScoutMode] = useState<ScoutMode>('local_plus_interests');
   const [missingLocation, setMissingLocation] = useState(false);
 
-  // Sync scoutMode from business contentSourceMode when it first becomes available
+  // Interest categories state
+  type IndustryInfo = { key: string; label: string; description: string; icon: string; feedCount: number; enabled: boolean };
+  const [industries, setIndustries] = useState<IndustryInfo[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
+  const [contentSettingsLoaded, setContentSettingsLoaded] = useState(false);
+  const [savingContentSettings, setSavingContentSettings] = useState(false);
+  const [contentSettingsSaved, setContentSettingsSaved] = useState(false);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const contentSettingsLoadedBizRef = useRef<string | null>(null);
+
+  // Load content settings (mode + categories) when business changes
   useEffect(() => {
-    if (bizMode && !scoutModeSynced) {
-      const validModes: ScoutMode[] = ['local_only', 'local_plus_interests', 'interests_only'];
-      if (validModes.includes(bizMode)) {
-        setScoutMode(bizMode);
+    const bizId = bizCtx.activeBusiness?.id;
+    if (!bizId || contentSettingsLoadedBizRef.current === bizId) return;
+    contentSettingsLoadedBizRef.current = bizId;
+    setContentSettingsLoaded(false);
+    (async () => {
+      try {
+        const res = await fetch(`/api/businesses/${bizId}/content-settings`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const validModes: ScoutMode[] = ['local_only', 'local_plus_interests', 'interests_only'];
+        const mode = validModes.includes(data.contentSourceMode) ? data.contentSourceMode : 'local_plus_interests';
+        setScoutMode(mode);
+        setIndustries(data.industries ?? []);
+        const enabled = new Set<string>((data.selectedInterestCategories ?? []) as string[]);
+        setSelectedCategories(enabled);
+      } catch (e) {
+        console.error('[ContentSettings] Failed to load:', e);
+      } finally {
+        setContentSettingsLoaded(true);
       }
-      setScoutModeSynced(true);
+    })();
+  }, [bizCtx.activeBusiness?.id]);
+
+  // Save content settings (mode + categories)
+  const saveContentSettings = useCallback(async (mode: ScoutMode, cats: Set<string>) => {
+    const bizId = bizCtx.activeBusiness?.id;
+    if (!bizId) return;
+    setSavingContentSettings(true);
+    setContentSettingsSaved(false);
+    try {
+      const res = await fetch(`/api/businesses/${bizId}/content-settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contentSourceMode: mode,
+          selectedInterestCategories: Array.from(cats),
+        }),
+      });
+      if (res.ok) {
+        setContentSettingsSaved(true);
+        setTimeout(() => setContentSettingsSaved(false), 2000);
+      }
+    } catch (e) {
+      console.error('[ContentSettings] Save failed:', e);
+    } finally {
+      setSavingContentSettings(false);
     }
-  }, [bizMode, scoutModeSynced]);
+  }, [bizCtx.activeBusiness?.id]);
+
+  // Handle scout mode change — update local + save
+  const handleScoutModeChange = useCallback((mode: ScoutMode) => {
+    setScoutMode(mode);
+    saveContentSettings(mode, selectedCategories);
+  }, [selectedCategories, saveContentSettings]);
+
+  // Handle category toggle — update local + save
+  const handleCategoryToggle = useCallback((key: string) => {
+    setSelectedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      saveContentSettings(scoutMode, next);
+      return next;
+    });
+  }, [scoutMode, saveContentSettings]);
 
   // Weekly Tip state
   const [showWeeklyTipForm, setShowWeeklyTipForm] = useState(false);
@@ -1072,19 +1136,26 @@ export default function SocialDashboard() {
     // Import completed posts from Tombstone
     // Retry with delays — the Tombstone content queue may not be updated immediately after the workflow completes
     let pollResult = await pollMissions(false);
-    let importedCount = pollResult?.imported ?? 0;
+    // Use importedForActiveRun (posts matching the active GenerationRun's workflows) instead of total imported
+    let importedForRun = pollResult?.importedForActiveRun ?? pollResult?.imported ?? 0;
+    let totalImported = pollResult?.imported ?? 0;
 
-    if (importedCount === 0) {
+    if (importedForRun === 0) {
       const MAX_RETRIES = 8;
       const RETRY_DELAY_MS = 4_000;
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        console.log(`[handleProgressComplete] Poll returned 0 imports, retrying in ${RETRY_DELAY_MS / 1000}s (attempt ${attempt}/${MAX_RETRIES})...`);
+        console.log(`[handleProgressComplete] Poll returned 0 run-specific imports (${totalImported} total), retrying in ${RETRY_DELAY_MS / 1000}s (attempt ${attempt}/${MAX_RETRIES})...`);
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
         pollResult = await pollMissions(false);
-        importedCount = pollResult?.imported ?? 0;
-        if (importedCount > 0) {
-          console.log(`[handleProgressComplete] Retry ${attempt} succeeded: imported ${importedCount} post(s)`);
+        importedForRun = pollResult?.importedForActiveRun ?? pollResult?.imported ?? 0;
+        totalImported = pollResult?.imported ?? 0;
+        if (importedForRun > 0) {
+          console.log(`[handleProgressComplete] Retry ${attempt} succeeded: imported ${importedForRun} post(s) for active run`);
           break;
+        }
+        // If total imports happened but not for this run, the run's render may still be processing
+        if (totalImported > 0 && importedForRun === 0) {
+          console.log(`[handleProgressComplete] Retry ${attempt}: ${totalImported} other posts imported, but 0 for active run — render may still be processing`);
         }
       }
     }
@@ -1093,7 +1164,7 @@ export default function SocialDashboard() {
     await fetchPosts();
 
     // Post-import verification: check if imported post is visible in current queue
-    if (importedCount > 0 && activeBusinessId) {
+    if (importedForRun > 0 && activeBusinessId) {
       try {
         const verifyParams = new URLSearchParams();
         verifyParams.set('businessId', activeBusinessId);
@@ -1103,11 +1174,11 @@ export default function SocialDashboard() {
         const verifyData = await verifyRes.json();
         const freshPosts: SocialPost[] = verifyData.posts || [];
 
-        // Check if any recently created post (within last 60s) exists
+        // Check if any recently created post (within last 5 min) exists
         const now = Date.now();
         const recentPosts = freshPosts.filter(p => {
           const created = p.createdAt ? new Date(p.createdAt).getTime() : 0;
-          return now - created < 60_000;
+          return now - created < 300_000;
         });
 
         if (recentPosts.length === 0) {
@@ -1119,44 +1190,51 @@ export default function SocialDashboard() {
           const allData = await allRes.json();
           const allFresh = (allData.posts || []).filter((p: SocialPost) => {
             const created = p.createdAt ? new Date(p.createdAt).getTime() : 0;
-            return now - created < 60_000;
+            return now - created < 300_000;
           });
 
           if (allFresh.length > 0) {
-            // Post exists but hidden by status filter
             const hidden = allFresh[0];
             const hiddenStatus = hidden.status || 'unknown';
-            const missingFields: string[] = [];
-            if (!hidden.caption?.trim()) missingFields.push('caption');
-            if (!hidden.imageUrl) missingFields.push('imageUrl');
-            if (!hidden.cta) missingFields.push('cta');
-            if (!hidden.sourceName && !hidden.sourceArticleTitle) missingFields.push('source attribution');
-            console.warn(`[handleProgressComplete] Post imported but hidden by filter. Status: ${hiddenStatus}, Missing: ${missingFields.join(', ') || 'none'}`);
+            console.warn(`[handleProgressComplete] Post imported but hidden by filter. Status: ${hiddenStatus}`);
             setScoutError(
-              `Imported post exists (${hiddenStatus}) but is hidden by the current "${statusFilter || 'All'}" filter.` +
-              (missingFields.length > 0 ? ` Missing fields: ${missingFields.join(', ')}.` : '') +
-              ` Post ID: ${hidden.id}. Run: ${hidden.generationRunId || activeGenerationRunId || 'unknown'}.`
+              `Post imported (${hiddenStatus}) but hidden by the "${statusFilter || 'All'}" filter. Clearing filter to show it.`
             );
-            // Clear filter so user can see it
             setStatusFilter('');
             await fetchPosts();
           } else {
             // Post was imported under a different business
-            console.warn(`[handleProgressComplete] Imported ${importedCount} post(s) but none visible for business ${activeBusinessId}. Run #${activeGenerationRunId}`);
+            console.warn(`[handleProgressComplete] Imported ${importedForRun} post(s) but none visible for business ${activeBusinessId}`);
             setScoutError(
-              `Imported ${importedCount} post(s) but none are visible for the current business. ` +
-              `The post may have been created under a different business. ` +
-              `Run: ${activeGenerationRunId || 'unknown'}.`
+              `${importedForRun} post(s) imported but created under a different business. Switch to the business you generated for to see them.`
             );
           }
         }
-        // If recentPosts.length > 0, all good — post is visible, no error needed
       } catch (verifyErr) {
         console.error('[handleProgressComplete] Verification failed:', verifyErr);
       }
-    } else if (importedCount === 0 && activeGenerationRunId) {
-      console.warn(`[handleProgressComplete] Workflow completed but poll returned 0 imports. Run #${activeGenerationRunId}`);
-      setScoutError(`Post generation completed but no posts were imported. Check generation run #${activeGenerationRunId}.`);
+    } else if (importedForRun === 0 && activeGenerationRunId) {
+      // Provide specific reason instead of vague message
+      const pollStatus = pollResult?.status || 'unknown';
+      const totalSkipped = pollResult?.skipped ?? 0;
+      const diagnostics = pollResult?.diagnostics || [];
+      let reason = '';
+      if (pollStatus === 'no_content') {
+        reason = 'The creative team finished processing but no render output was found in the content queue. The render may still be uploading — try Sync again in a minute.';
+      } else if (pollStatus === 'no_captions') {
+        reason = 'Render tasks were found but caption data is not yet available. Try Sync again shortly.';
+      } else if (pollStatus === 'all_imported') {
+        reason = `All ${totalSkipped} existing posts were already imported. The new post may not have appeared in the content queue yet — try Sync again in a minute.`;
+      } else if (totalImported > 0 && importedForRun === 0) {
+        reason = `${totalImported} post(s) from other workflows were imported, but this run's render has not appeared yet. Try Sync again in a minute.`;
+      } else if (diagnostics.length > 0) {
+        const reasons = diagnostics.map((d: any) => d.importError || d.status).join('; ');
+        reason = `Generation produced output but import failed: ${reasons}`;
+      } else {
+        reason = 'The render may still be processing. Try clicking Sync from Tombstone in a minute.';
+      }
+      console.warn(`[handleProgressComplete] Run #${activeGenerationRunId}: importedForRun=0, totalImported=${totalImported}, status=${pollStatus}`);
+      setScoutError(`Post generation completed but import pending. ${reason}`);
     }
 
     setActiveWorkflowIds([]);
@@ -1723,28 +1801,77 @@ export default function SocialDashboard() {
         </div>
       )}
 
-      {/* Scout mode selector */}
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-gray-500 mr-1">Scout mode:</span>
-        {([
-          { value: 'local_only' as ScoutMode, label: '📍 Local Only', desc: 'Local news from your trade area' },
-          { value: 'local_plus_interests' as ScoutMode, label: '📍+🏢 Local + Categories', desc: 'Local news plus your selected industries' },
-          { value: 'interests_only' as ScoutMode, label: '🏢 Categories Only', desc: 'Industry news from your selected categories' },
-        ]).map(mode => (
-          <button
-            key={mode.value}
-            onClick={() => setScoutMode(mode.value)}
-            disabled={scouting}
-            title={mode.desc}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
-              scoutMode === mode.value
-                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-            } disabled:opacity-60`}
-          >
-            {mode.label}
-          </button>
-        ))}
+      {/* Scout mode selector + category picker */}
+      <div className="mb-6 bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-gray-500 mr-1">Scout mode:</span>
+          {([
+            { value: 'local_only' as ScoutMode, label: '📍 Local Only', desc: 'Local news from your trade area' },
+            { value: 'local_plus_interests' as ScoutMode, label: '📍+🏢 Local + Categories', desc: 'Local news plus your selected industries' },
+            { value: 'interests_only' as ScoutMode, label: '🏢 Categories Only', desc: 'Industry news from your selected categories' },
+          ]).map(mode => (
+            <button
+              key={mode.value}
+              onClick={() => handleScoutModeChange(mode.value)}
+              disabled={scouting}
+              title={mode.desc}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
+                scoutMode === mode.value
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+              } disabled:opacity-60`}
+            >
+              {mode.label}
+            </button>
+          ))}
+          {/* Save status indicator */}
+          {savingContentSettings && (
+            <span className="flex items-center gap-1 text-xs text-gray-400"><Loader2 className="w-3 h-3 animate-spin" /> Saving...</span>
+          )}
+          {contentSettingsSaved && !savingContentSettings && (
+            <span className="flex items-center gap-1 text-xs text-green-600"><Check className="w-3 h-3" /> Saved</span>
+          )}
+        </div>
+
+        {/* Category/Interest selector — shown when mode includes interests */}
+        {scoutMode !== 'local_only' && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <button
+              onClick={() => setShowCategoryPicker(v => !v)}
+              className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              {showCategoryPicker ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              Interest Categories ({selectedCategories.size} selected)
+            </button>
+            {showCategoryPicker && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {industries.length === 0 && contentSettingsLoaded && (
+                  <p className="text-xs text-gray-400 italic">No categories available. Check your Content Feeds settings.</p>
+                )}
+                {industries.map(ind => {
+                  const isActive = selectedCategories.has(ind.key);
+                  return (
+                    <button
+                      key={ind.key}
+                      onClick={() => handleCategoryToggle(ind.key)}
+                      disabled={savingContentSettings}
+                      title={ind.description}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                        isActive
+                          ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                          : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100 hover:text-gray-700'
+                      } disabled:opacity-60`}
+                    >
+                      <span>{ind.icon}</span>
+                      <span>{ind.label}</span>
+                      {isActive && <Check className="w-3 h-3 text-blue-600" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Weekly Tip Form ─────────────────────────────────────── */}
