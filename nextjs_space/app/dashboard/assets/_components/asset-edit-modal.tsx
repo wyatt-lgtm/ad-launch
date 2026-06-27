@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { X, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
+import AssetAgentUsage from '@/app/components/asset-agent-usage';
 import {
   APPROVAL_STATUS_LABELS, TEXT_ASSET_TYPES, INTENDED_USE_OPTIONS,
   type ApprovalStatus,
@@ -318,6 +319,9 @@ export default function AssetEditModal({ asset, onClose, onUpdated }: Props) {
               <AlertCircle className="w-4 h-4 flex-shrink-0" /> {error}
             </div>
           )}
+
+          {/* Agent usage indicator */}
+          <AssetAgentUsage assetId={asset.id} />
 
           <div className="flex justify-end gap-3 pt-2">
             <button

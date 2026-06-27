@@ -83,6 +83,7 @@ model Business {
   profileDocuments    GeneratedBusinessProfileDocument[]
   sharedAssetApprovals    BusinessSharedAssetApproval[]
   sharedAssetPackGrants   BusinessSharedAssetPackGrant[]
+  agentAssetUsageLogs    AgentAssetUsageLog[]
 
   // ── Service area & website build mode ──────────────────────────────
   serviceAreaMode       String?          // local | regional | national | multi_location
@@ -1379,4 +1380,28 @@ model SharedAssetAuditLog {
   @@index([businessId])
   @@index([action])
   @@index([createdAt])
+}
+
+model AgentAssetUsageLog {
+  id                    String    @id @default(cuid())
+  businessId            String
+  agentType             String    // website, seo, social, video, community_engagement
+  intendedUse           String    // website, social, seo, video, community_engagement, ads, email
+  workflowId            String?
+  runId                 String?
+  retrievedAssetIds     String[]  @default([])
+  usedAssetIds          String[]  @default([])
+  skippedAssetsJson     Json?     // [{assetId, reason}]
+  totalRetrieved        Int       @default(0)
+  totalUsed             Int       @default(0)
+  totalSkipped          Int       @default(0)
+  createdAt             DateTime  @default(now())
+
+  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([agentType])
+  @@index([intendedUse])
+  @@index([createdAt])
+  @@index([businessId, agentType])
 }
