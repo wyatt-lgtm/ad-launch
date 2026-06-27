@@ -1905,7 +1905,7 @@ export default function SocialDashboard() {
           </p>
           <button
             onClick={scoutForPosts}
-            disabled={scouting || generating || savingContentSettings || showStoryPicker || (scoutMode !== 'local_only' && selectedCategories.size === 0)}
+            disabled={scouting || generating || (scoutMode !== 'local_only' && selectedCategories.size === 0)}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm"
           >
             {scouting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
