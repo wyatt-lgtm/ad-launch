@@ -5,6 +5,7 @@ import { verifyAssetAccess } from '@/lib/asset-access';
 import { sanitizeSvg } from '@/lib/asset-validation';
 import { prisma } from '@/lib/db';
 import { getFileUrl } from '@/lib/s3';
+import { generateAssetContextForBusinessAsset } from '@/lib/asset-context';
 
 /**
  * POST /api/assets/upload/confirm
@@ -63,6 +64,11 @@ export async function POST(req: NextRequest) {
         publicUrl,
         approvalStatus: 'uploaded',
       },
+    });
+
+    // Fire-and-forget context generation — must not break the upload
+    generateAssetContextForBusinessAsset(assetId).catch((e) => {
+      console.error('[upload/confirm] Context generation failed (non-fatal):', e?.message);
     });
 
     return NextResponse.json({ asset: updated });

@@ -38,6 +38,7 @@ model User {
   sharedAssetApprovals     BusinessSharedAssetApproval[]  @relation("SharedAssetApprover")
   sharedAssetPackGrants    BusinessSharedAssetPackGrant[] @relation("SharedAssetPackGrantor")
   sharedAssetAuditLogs     SharedAssetAuditLog[]
+  assetContextReviews      AssetContext[]                @relation("AssetContextReviewer")
 }
 
 model Business {
@@ -744,6 +745,7 @@ model BusinessAsset {
   updatedAt             DateTime  @updatedAt
   business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   uploadedBy            User      @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  assetContext          AssetContext?
 
   // Extended metadata for enhanced asset library
   duration              Float?    // seconds for video/audio
@@ -1266,6 +1268,7 @@ model SharedAsset {
   archivedAt            DateTime?
 
   uploadedBy            User      @relation("SharedAssetUploader", fields: [uploadedByUserId], references: [id])
+  assetContext          AssetContext?
   packItems             SharedAssetPackItem[]
   approvals             BusinessSharedAssetApproval[]
   auditLogs             SharedAssetAuditLog[]
@@ -1404,4 +1407,56 @@ model AgentAssetUsageLog {
   @@index([intendedUse])
   @@index([createdAt])
   @@index([businessId, agentType])
+}
+
+model AssetContext {
+  id                    String    @id @default(cuid())
+  businessAssetId       String?   @unique
+  sharedAssetId         String?   @unique
+
+  // AI-generated descriptions
+  agentDescription      String?   // concise description for AI agents
+  humanDescription      String?   // optional human-edited description
+  suggestedUses         String[]  @default([]) // e.g. ["hero_image", "social_post", "ad_background"]
+  restrictedUses        String[]  @default([]) // e.g. ["not_for_ads", "internal_only"]
+
+  // Visual / media analysis
+  visibleElements       String[]  @default([]) // e.g. ["outdoor_patio", "smiling_staff", "logo_on_wall"]
+  dominantColors        String[]  @default([]) // hex codes or named colors
+  mood                  String?   // e.g. "warm", "professional", "casual"
+  style                 String?   // e.g. "lifestyle", "product_shot", "aerial"
+
+  // Document / text analysis
+  documentSummary       String?   // summary for docs, PDFs, text assets
+  keyPoints             String[]  @default([]) // extracted key points
+  restrictedClaims      String[]  @default([]) // claims that must NOT be made (compliance)
+  requiredDisclosures   String[]  @default([]) // must-include disclaimers
+
+  // Audio / video analysis
+  transcript            String?   // for video/audio assets
+  transcriptSummary     String?   // short summary of transcript
+
+  // Quality / confidence
+  confidenceScore       Float?    // 0.0 – 1.0, AI confidence in analysis
+  qualityNotes          String[]  @default([]) // e.g. ["low_resolution", "watermark_detected"]
+
+  // Review status
+  contextStatus         String    @default("needs_review") // needs_review, approved, rejected, stale
+  aiGeneratedContext    Boolean   @default(true)
+  humanReviewedContext  Boolean   @default(false)
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+  generationModel       String?   // which LLM model was used
+  generationError       String?   // error message if generation failed
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  businessAsset         BusinessAsset? @relation(fields: [businessAssetId], references: [id], onDelete: Cascade)
+  sharedAsset           SharedAsset?   @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
+  reviewedBy            User?          @relation("AssetContextReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([contextStatus])
+  @@index([businessAssetId])
+  @@index([sharedAssetId])
 }

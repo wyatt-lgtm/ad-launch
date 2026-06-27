@@ -51,6 +51,21 @@ export interface TombstoneAssetPayload {
   rightsHolder?: string;
   attributionText?: string;
   restrictions?: string[];
+  // Enriched context fields
+  enrichedDescription?: string;
+  enrichedSuggestedUses?: string[];
+  enrichedRestrictedUses?: string[];
+  enrichedVisibleElements?: string[];
+  enrichedMood?: string;
+  enrichedStyle?: string;
+  enrichedDocumentSummary?: string;
+  enrichedKeyPoints?: string[];
+  enrichedRestrictedClaims?: string[];
+  enrichedRequiredDisclosures?: string[];
+  enrichedTranscriptSummary?: string;
+  enrichedQualityNotes?: string[];
+  enrichedConfidence?: number;
+  enrichedHumanReviewed?: boolean;
 }
 
 export interface TombstoneSkippedAsset {
@@ -198,6 +213,25 @@ function compactAsset(a: AgentAllowedAsset): TombstoneAssetPayload {
   if (a.rightsHolder) payload.rightsHolder = a.rightsHolder;
   if (a.attributionText) payload.attributionText = a.attributionText;
   if (a.restrictions?.length) payload.restrictions = a.restrictions;
+  // Enriched context (skip if rejected — already filtered by normalizer)
+  if (a.enrichedContext) {
+    const ec = a.enrichedContext;
+    const desc = ec.humanDescription || ec.agentDescription;
+    if (desc) payload.enrichedDescription = desc;
+    if (ec.suggestedUses?.length) payload.enrichedSuggestedUses = ec.suggestedUses;
+    if (ec.restrictedUses?.length) payload.enrichedRestrictedUses = ec.restrictedUses;
+    if (ec.visibleElements?.length) payload.enrichedVisibleElements = ec.visibleElements;
+    if (ec.mood) payload.enrichedMood = ec.mood;
+    if (ec.style) payload.enrichedStyle = ec.style;
+    if (ec.documentSummary) payload.enrichedDocumentSummary = ec.documentSummary;
+    if (ec.keyPoints?.length) payload.enrichedKeyPoints = ec.keyPoints;
+    if (ec.restrictedClaims?.length) payload.enrichedRestrictedClaims = ec.restrictedClaims;
+    if (ec.requiredDisclosures?.length) payload.enrichedRequiredDisclosures = ec.requiredDisclosures;
+    if (ec.transcriptSummary) payload.enrichedTranscriptSummary = ec.transcriptSummary;
+    if (ec.qualityNotes?.length) payload.enrichedQualityNotes = ec.qualityNotes;
+    if (ec.confidenceScore != null) payload.enrichedConfidence = ec.confidenceScore;
+    if (ec.humanReviewed) payload.enrichedHumanReviewed = true;
+  }
   return payload;
 }
 
@@ -238,6 +272,11 @@ function buildPromptBlock(
     '- Prefer business-owned assets over shared assets.',
     '- Use shared Brand/OEM assets ONLY if they appear in this approved list.',
     '- If no suitable asset exists for a visual, generate text-only or request missing assets.',
+    '- Prefer human-reviewed context (✓ marker) over AI-generated context.',
+    '- Low-confidence context (⚠ marker) should be used cautiously.',
+    '- Restricted claims MUST NOT appear in generated content.',
+    '- Required disclosures MUST be included where applicable.',
+    '- Use suggested uses to match assets to content slots.',
     '',
   ];
 
@@ -300,10 +339,31 @@ function formatAssetLine(a: TombstoneAssetPayload): string {
     `  • [${a.source}] ${a.title} (${a.assetType})`,
   ];
   if (a.fileUrl) parts.push(`    URL: ${a.fileUrl}`);
-  if (a.description) parts.push(`    Desc: ${a.description}`);
+  // Prefer enriched description over raw description
+  if (a.enrichedDescription) {
+    parts.push(`    Desc: ${a.enrichedDescription}`);
+  } else if (a.description) {
+    parts.push(`    Desc: ${a.description}`);
+  }
   if (a.notesForAI) parts.push(`    AI Notes: ${a.notesForAI}`);
   if (a.relatedServiceTopic) parts.push(`    Topic: ${a.relatedServiceTopic}`);
   if (a.textContent) parts.push(`    Content: ${a.textContent.slice(0, 200)}${a.textContent.length > 200 ? '…' : ''}`);
+  // Enriched context
+  if (a.enrichedSuggestedUses?.length) parts.push(`    Suggested uses: ${a.enrichedSuggestedUses.join(', ')}`);
+  if (a.enrichedVisibleElements?.length) parts.push(`    Visible: ${a.enrichedVisibleElements.join(', ')}`);
+  if (a.enrichedMood || a.enrichedStyle) {
+    const ms = [a.enrichedMood, a.enrichedStyle].filter(Boolean).join(', ');
+    parts.push(`    Mood/Style: ${ms}`);
+  }
+  if (a.enrichedDocumentSummary) parts.push(`    Summary: ${a.enrichedDocumentSummary.slice(0, 300)}${a.enrichedDocumentSummary.length > 300 ? '…' : ''}`);
+  if (a.enrichedKeyPoints?.length) parts.push(`    Key points: ${a.enrichedKeyPoints.join('; ')}`);
+  if (a.enrichedTranscriptSummary) parts.push(`    Transcript: ${a.enrichedTranscriptSummary.slice(0, 200)}${a.enrichedTranscriptSummary.length > 200 ? '…' : ''}`);
+  if (a.enrichedRestrictedUses?.length) parts.push(`    ⚠ Restricted uses: ${a.enrichedRestrictedUses.join(', ')}`);
+  if (a.enrichedRestrictedClaims?.length) parts.push(`    ⚠ Restricted claims: ${a.enrichedRestrictedClaims.join('; ')}`);
+  if (a.enrichedRequiredDisclosures?.length) parts.push(`    ⚠ Required disclosures: ${a.enrichedRequiredDisclosures.join('; ')}`);
+  if (a.enrichedQualityNotes?.length) parts.push(`    ⚠ Quality: ${a.enrichedQualityNotes.join(', ')}`);
+  if (a.enrichedHumanReviewed) parts.push(`    ✓ Human-reviewed context`);
+  if (a.enrichedConfidence != null && a.enrichedConfidence < 0.6) parts.push(`    ⚠ Low AI confidence (${(a.enrichedConfidence * 100).toFixed(0)}%)`);
   if (a.attributionText) parts.push(`    ⚠ Attribution required: ${a.attributionText}`);
   if (a.restrictions?.length) parts.push(`    ⚠ Restrictions: ${a.restrictions.join('; ')}`);
   if (a.rightsHolder) parts.push(`    Rights: ${a.rightsHolder}`);

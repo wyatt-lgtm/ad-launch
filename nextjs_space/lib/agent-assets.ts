@@ -58,6 +58,26 @@ export interface AgentAllowedAsset {
   rightsHolder?: string;       // shared asset rights holder
   attributionText?: string;    // shared asset attribution text
   maxResolution?: string;      // shared asset max resolution
+  // Enriched context (from AssetContext model)
+  enrichedContext?: {
+    agentDescription: string | null;
+    humanDescription: string | null;
+    suggestedUses: string[];
+    restrictedUses: string[];
+    visibleElements: string[];
+    dominantColors: string[];
+    mood: string | null;
+    style: string | null;
+    documentSummary: string | null;
+    keyPoints: string[];
+    restrictedClaims: string[];
+    requiredDisclosures: string[];
+    transcriptSummary: string | null;
+    qualityNotes: string[];
+    confidenceScore: number | null;
+    contextStatus: string;
+    humanReviewed: boolean;
+  };
   // Ranking metadata
   _rankScore: number;
   _skipReason?: string;
@@ -151,6 +171,32 @@ const AGENT_RULES: Record<AgentType, AgentRuleSet> = {
   },
 };
 
+// ── Enriched context mapper (shared between normalizers) ─────────────────────
+function mapEnrichedContext(ctx: any): AgentAllowedAsset['enrichedContext'] | undefined {
+  if (!ctx) return undefined;
+  // Don't expose rejected context to agents
+  if (ctx.contextStatus === 'rejected') return undefined;
+  return {
+    agentDescription: ctx.agentDescription || null,
+    humanDescription: ctx.humanDescription || null,
+    suggestedUses: ctx.suggestedUses || [],
+    restrictedUses: ctx.restrictedUses || [],
+    visibleElements: ctx.visibleElements || [],
+    dominantColors: ctx.dominantColors || [],
+    mood: ctx.mood || null,
+    style: ctx.style || null,
+    documentSummary: ctx.documentSummary || null,
+    keyPoints: ctx.keyPoints || [],
+    restrictedClaims: ctx.restrictedClaims || [],
+    requiredDisclosures: ctx.requiredDisclosures || [],
+    transcriptSummary: ctx.transcriptSummary || null,
+    qualityNotes: ctx.qualityNotes || [],
+    confidenceScore: ctx.confidenceScore ?? null,
+    contextStatus: ctx.contextStatus,
+    humanReviewed: ctx.humanReviewedContext || false,
+  };
+}
+
 // ── BusinessAsset → AgentAllowedAsset normalizer ────────────────────────────
 function normalizeBusinessAsset(asset: any): AgentAllowedAsset {
   const restrictions: string[] = [];
@@ -200,6 +246,7 @@ function normalizeBusinessAsset(asset: any): AgentAllowedAsset {
     wordCount: asset.wordCount || undefined,
     hasAudio: asset.hasAudio ?? undefined,
     relatedServiceTopic: asset.relatedServiceTopic || undefined,
+    enrichedContext: mapEnrichedContext(asset.assetContext),
     _rankScore: 0,
   };
 }
@@ -253,6 +300,7 @@ function normalizeSharedAsset(asset: any, source: 'shared' | 'shared_pack'): Age
     rightsHolder: asset.rightsHolder || undefined,
     attributionText: asset.attributionText || undefined,
     maxResolution: asset.maxResolution || undefined,
+    enrichedContext: mapEnrichedContext(asset.assetContext),
     _rankScore: 0,
   };
 }
@@ -280,6 +328,7 @@ async function getApprovedBusinessAssets(
         { expiresAt: { gt: now } },
       ],
     },
+    include: { assetContext: true },
     orderBy: [{ priorityScore: 'desc' }, { createdAt: 'desc' }],
   });
 

@@ -221,6 +221,7 @@ export async function getAllowedAssetsForBusiness(
       approvalStatus: 'approved',
       ...channelFilter,
     },
+    include: { assetContext: true },
     orderBy: { title: 'asc' },
   });
 
