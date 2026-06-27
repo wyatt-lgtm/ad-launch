@@ -305,6 +305,7 @@ export default function Header() {
                     <DropdownItem href="/dashboard/seo" icon={Lightbulb} label="Recommendations" disabled />
                     <DropdownItem href="/dashboard/seo" icon={AlertTriangle} label="Issues" disabled />
                     <DropdownItem href="/dashboard/seo" icon={Link2} label="Internal Links" disabled />
+                    <DropdownItem href="/dashboard/seo/community-engagement" icon={Users} label="Community Engagement" desc="Reddit & specialty forums" />
                   </DropdownSection>
                 </Dropdown>
 
@@ -441,7 +442,8 @@ export default function Header() {
                 <div className="border-t border-gray-100 my-2 pt-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 px-1">Website & SEO</div>
                   <MobileNavLink href="/dashboard/website" icon={Globe} label="Website Overview" pathname={pathname} onClick={() => setMobileOpen(false)} exact />
-                  <MobileNavLink href="/dashboard/seo" icon={Compass} label="SEO Overview" pathname={pathname} onClick={() => setMobileOpen(false)} />
+                  <MobileNavLink href="/dashboard/seo" icon={Compass} label="SEO Overview" pathname={pathname} onClick={() => setMobileOpen(false)} exact />
+                  <MobileNavLink href="/dashboard/seo/community-engagement" icon={Users} label="Community Engagement" pathname={pathname} onClick={() => setMobileOpen(false)} />
                 </div>
 
                 <div className="border-t border-gray-100 my-2 pt-2">

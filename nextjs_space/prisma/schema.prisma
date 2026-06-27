@@ -33,6 +33,7 @@ model User {
   siteFeedback      SiteFeedback[]   @relation("SiteFeedbackUser")
   scheduledPosts    ScheduledPost[]  @relation("ScheduledPostUser")
   approvedPosts     ScheduledPost[]  @relation("ScheduledPostApprover")
+  communityReviews  CommunityEngagementOpportunity[] @relation("CommunityReviewer")
 }
 
 model Business {
@@ -71,6 +72,9 @@ model Business {
   publishSettings     PublishSettings?
   socialConnections   SocialConnection[]
   scheduledPosts      ScheduledPost[]
+  communitySettings   CommunityEngagementSettings?
+  communitySources    CommunitySource[]
+  communityOpps       CommunityEngagementOpportunity[]
 
   // ── Service area & website build mode ──────────────────────────────
   serviceAreaMode       String?          // local | regional | national | multi_location
@@ -1006,4 +1010,128 @@ model ScheduledPost {
   @@index([userId])
   @@index([status])
   @@index([scheduledFor])
+}
+
+// ── Community Engagement ──────────────────────────────────────────────────────
+
+model CommunityEngagementSettings {
+  id                       String   @id @default(cuid())
+  businessId               String   @unique
+  enabled                  Boolean  @default(false)
+  // Scoring thresholds
+  minOpportunityScore      Int      @default(75)
+  minContentMatchScore     Int      @default(20)
+  minRuleCompatibility     Int      @default(10)
+  // Content requirements
+  requireVideo             Boolean  @default(false)
+  requireExplainerStory    Boolean  @default(false)
+  humanApprovalRequired    Boolean  @default(true)
+  disclosureReminder       Boolean  @default(true)
+  // Frequency controls
+  maxOppsPerDay            Int      @default(3)
+  maxOppsPerCommunityWeek  Int      @default(1)
+  urlCooldownDays          Int      @default(14)
+  // Business expertise topics
+  expertiseTopics          String[] @default([])
+  // Website content source URLs
+  contentSourceUrls        String[] @default([])
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  business                 Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+}
+
+model CommunitySource {
+  id             String    @id @default(cuid())
+  businessId     String
+  platform       String    // reddit | forum | specialty
+  communityName  String
+  communityUrl   String?
+  enabled        Boolean   @default(true)
+  excluded       Boolean   @default(false)
+  notes          String?
+  lastCheckedAt  DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, platform])
+  @@unique([businessId, platform, communityName])
+}
+
+model CommunityEngagementOpportunity {
+  id                    String    @id @default(cuid())
+  businessId            String
+  platform              String
+  communityName         String
+  threadTitle           String
+  threadUrl             String
+  threadTextSnippet     String?
+  topic                 String?
+  // Scoring
+  relevanceScore        Int       @default(0)
+  intentScore           Int       @default(0)
+  contentMatchScore     Int       @default(0)
+  ruleCompatibility     Int       @default(0)
+  spamRiskScore         Int       @default(0)
+  opportunityScore      Int       @default(0)
+  spamRisk              String    @default("Low")
+  // Content match
+  matchedContentUrl     String?
+  matchedContentTitle   String?
+  matchedContentType    String?
+  hasVideo              Boolean   @default(false)
+  hasExplainerStory     Boolean   @default(false)
+  linkRecommendation    Boolean   @default(false)
+  // Status
+  status                String    @default("new")
+  // Draft
+  draftText             String?
+  recommendedUrl        String?
+  disclosureText        String?
+  linkJustification     String?
+  riskNotes             String?
+  draftStatus           String?
+  // Review
+  reviewerUserId        String?
+  reviewDecision        String?
+  reviewNotes           String?
+  reviewedAt            DateTime?
+  // Outcome
+  manuallyPostedUrl     String?
+  postedAt              DateTime?
+  referralClicks        Int       @default(0)
+  conversions           Int       @default(0)
+  outcomeNotes          String?
+  // Community rules
+  communityRules        String?
+  selfPromoProhibited   Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  reviewer              User?     @relation("CommunityReviewer", fields: [reviewerUserId], references: [id])
+  contentMatches        CommunityContentMatch[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([opportunityScore])
+}
+
+model CommunityContentMatch {
+  id                String   @id @default(cuid())
+  opportunityId     String
+  businessId        String
+  contentUrl        String
+  contentTitle      String?
+  contentType       String?
+  matchReason       String?
+  hasVideo          Boolean  @default(false)
+  hasExplainerStory Boolean  @default(false)
+  score             Int      @default(0)
+  createdAt         DateTime @default(now())
+  opportunity       CommunityEngagementOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId])
+  @@index([businessId])
 }

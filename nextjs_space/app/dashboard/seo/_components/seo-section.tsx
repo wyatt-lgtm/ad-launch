@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import {
   Compass, TrendingUp, Search, MapPin, AlertTriangle,
-  Link2, FileText, BarChart3
+  Link2, FileText, BarChart3, Users
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
@@ -17,6 +17,7 @@ const seoItems = [
   { icon: FileText, label: 'Recommendations', desc: 'Prioritized SEO improvement actions' },
   { icon: AlertTriangle, label: 'Issues', desc: 'Broken pages, missing metadata, errors' },
   { icon: Link2, label: 'Internal Links', desc: 'Link structure and anchor text analysis' },
+  { icon: Users, label: 'Community Engagement', desc: 'Reddit & specialty forum monitoring', href: '/dashboard/seo/community-engagement', active: true },
 ];
 
 export default function SeoSection() {
@@ -48,15 +49,24 @@ export default function SeoSection() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {seoItems.map((item) => {
+        {seoItems.map((item: any) => {
           const Icon = item.icon;
+          const isActive = item.active;
+          const Wrapper = isActive && item.href ? 'a' : 'div';
           return (
-            <div
+            <Wrapper
               key={item.label}
-              className="bg-white rounded-xl border border-gray-200 p-5 hover:border-blue-300 hover:shadow-sm transition-all cursor-default opacity-70"
+              {...(isActive && item.href ? { href: item.href } : {})}
+              className={`bg-white rounded-xl border p-5 transition-all ${
+                isActive
+                  ? 'border-blue-300 hover:border-blue-400 hover:shadow-md cursor-pointer'
+                  : 'border-gray-200 hover:border-blue-300 hover:shadow-sm cursor-default opacity-70'
+              }`}
             >
               <div className="flex items-start gap-3">
-                <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                  isActive ? 'bg-blue-100' : 'bg-blue-50'
+                }`}>
                   <Icon className="w-5 h-5 text-blue-600" />
                 </div>
                 <div>
@@ -64,10 +74,16 @@ export default function SeoSection() {
                   <p className="text-xs text-gray-400 mt-0.5">{item.desc}</p>
                 </div>
               </div>
-              <div className="mt-3 text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-2 py-1 inline-block">
-                Coming Soon
-              </div>
-            </div>
+              {isActive ? (
+                <div className="mt-3 text-[10px] font-medium text-green-600 bg-green-50 rounded px-2 py-1 inline-block">
+                  Available
+                </div>
+              ) : (
+                <div className="mt-3 text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-2 py-1 inline-block">
+                  Coming Soon
+                </div>
+              )}
+            </Wrapper>
           );
         })}
       </div>
