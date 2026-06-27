@@ -34,6 +34,10 @@ model User {
   scheduledPosts    ScheduledPost[]  @relation("ScheduledPostUser")
   approvedPosts     ScheduledPost[]  @relation("ScheduledPostApprover")
   communityReviews  CommunityEngagementOpportunity[] @relation("CommunityReviewer")
+  uploadedSharedAssets     SharedAsset[]                 @relation("SharedAssetUploader")
+  sharedAssetApprovals     BusinessSharedAssetApproval[]  @relation("SharedAssetApprover")
+  sharedAssetPackGrants    BusinessSharedAssetPackGrant[] @relation("SharedAssetPackGrantor")
+  sharedAssetAuditLogs     SharedAssetAuditLog[]
 }
 
 model Business {
@@ -77,6 +81,8 @@ model Business {
   communityOpps       CommunityEngagementOpportunity[]
   profileInterviews   BusinessProfileInterview[]
   profileDocuments    GeneratedBusinessProfileDocument[]
+  sharedAssetApprovals    BusinessSharedAssetApproval[]
+  sharedAssetPackGrants   BusinessSharedAssetPackGrant[]
 
   // ── Service area & website build mode ──────────────────────────────
   serviceAreaMode       String?          // local | regional | national | multi_location
@@ -1195,4 +1201,182 @@ model GeneratedBusinessProfileDocument {
   @@index([businessId])
   @@index([businessId, documentType])
   @@index([interviewId])
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Shared Asset Library
+// ══════════════════════════════════════════════════════════════════════════════
+
+model SharedAsset {
+  id                    String    @id @default(cuid())
+  uploadedByUserId      String
+  // Scope: global, industry, brand_oem, franchise, licensed_stock, template
+  scope                 String    @default("global")
+  // Category: industry_generic, licensed_stock, brand_oem, franchise, templates, video_clips, audio_clips, icons_graphics, educational_explainers, compliance_templates
+  category              String
+  assetType             String    // logo, photo, video, audio, icon, graphic, template, document, font, color_palette
+  title                 String
+  description           String    @default("")
+  tags                  String[]  @default([])
+  originalFilename      String
+  mimeType              String
+  fileSizeBytes         Int
+  width                 Int?      // pixels for images
+  height                Int?      // pixels for images
+  duration              Float?    // seconds for video/audio
+  sha256Hash            String?   // deduplication
+  cloudStoragePath      String
+  publicUrl             String?
+  thumbnailPath         String?
+  thumbnailUrl          String?
+  isPublic              Boolean   @default(false)
+
+  // License / Rights
+  licenseType           String    @default("owned")        // owned, royalty_free, rights_managed, creative_commons, editorial_only, custom
+  licenseStatus         String    @default("active")       // active, expired, revoked, pending_renewal
+  licenseExpiry         DateTime?
+  licenseNotes          String?
+  rightsHolder          String?                             // e.g. "Getty Images", "Shutterstock", "OEM Brand X"
+  attributionRequired   Boolean   @default(false)
+  attributionText       String?
+  // Permission matrix flags
+  allowWebsite          Boolean   @default(true)
+  allowSocial           Boolean   @default(true)
+  allowAds              Boolean   @default(true)
+  allowEmail            Boolean   @default(true)
+  allowPrint            Boolean   @default(true)
+  allowVideo            Boolean   @default(true)
+  allowInternal         Boolean   @default(true)
+  allowAI               Boolean   @default(true)
+  requiresApproval      Boolean   @default(false)          // brand_oem default true
+  maxResolution         String?                             // e.g. "1920x1080"
+  noDerivatives         Boolean   @default(false)
+  noCommercial          Boolean   @default(false)
+  geographicRestriction String?                             // e.g. "US_only", "north_america"
+  industryRestriction   String[]  @default([])              // restrict to specific industries
+  // Targeting
+  targetIndustries      String[]  @default([])
+  targetBusinessTypes   String[]  @default([])
+  // Status
+  approvalStatus        String    @default("approved")     // approved, pending_review, deprecated, archived
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  archivedAt            DateTime?
+
+  uploadedBy            User      @relation("SharedAssetUploader", fields: [uploadedByUserId], references: [id])
+  packItems             SharedAssetPackItem[]
+  approvals             BusinessSharedAssetApproval[]
+  auditLogs             SharedAssetAuditLog[]
+
+  @@index([scope])
+  @@index([category])
+  @@index([scope, category])
+  @@index([sha256Hash])
+  @@index([licenseStatus])
+  @@index([approvalStatus])
+  @@index([uploadedByUserId])
+}
+
+model SharedAssetPack {
+  id                    String    @id @default(cuid())
+  name                  String
+  description           String    @default("")
+  scope                 String    @default("global")       // global, industry, brand_oem, franchise
+  category              String?                             // optional category grouping
+  targetIndustries      String[]  @default([])
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  items                 SharedAssetPackItem[]
+  grants                BusinessSharedAssetPackGrant[]
+
+  @@index([scope])
+  @@index([isActive])
+}
+
+model SharedAssetPackItem {
+  id                    String    @id @default(cuid())
+  packId                String
+  sharedAssetId         String
+  sortOrder             Int       @default(0)
+  createdAt             DateTime  @default(now())
+
+  pack                  SharedAssetPack  @relation(fields: [packId], references: [id], onDelete: Cascade)
+  sharedAsset           SharedAsset      @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([packId, sharedAssetId])
+  @@index([packId])
+  @@index([sharedAssetId])
+}
+
+model BusinessSharedAssetApproval {
+  id                    String    @id @default(cuid())
+  businessId            String
+  sharedAssetId         String
+  approvedByUserId      String?
+  status                String    @default("pending")      // pending, approved, rejected, expired, revoked
+  rightsConfirmed       Boolean   @default(false)
+  approvalNotes         String?
+  approvedAt            DateTime?
+  expiresAt             DateTime?
+  revokedAt             DateTime?
+  revokeReason          String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  business              Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sharedAsset           SharedAsset @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
+  approvedBy            User?       @relation("SharedAssetApprover", fields: [approvedByUserId], references: [id])
+
+  @@unique([businessId, sharedAssetId])
+  @@index([businessId])
+  @@index([sharedAssetId])
+  @@index([status])
+}
+
+model BusinessSharedAssetPackGrant {
+  id                    String    @id @default(cuid())
+  businessId            String
+  packId                String
+  grantedByUserId       String?
+  status                String    @default("pending")      // pending, granted, rejected, expired, revoked
+  grantNotes            String?
+  grantedAt             DateTime?
+  expiresAt             DateTime?
+  revokedAt             DateTime?
+  revokeReason          String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  business              Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  pack                  SharedAssetPack   @relation(fields: [packId], references: [id], onDelete: Cascade)
+  grantedBy             User?             @relation("SharedAssetPackGrantor", fields: [grantedByUserId], references: [id])
+
+  @@unique([businessId, packId])
+  @@index([businessId])
+  @@index([packId])
+  @@index([status])
+}
+
+model SharedAssetAuditLog {
+  id                    String    @id @default(cuid())
+  sharedAssetId         String?
+  packId                String?
+  businessId            String?
+  userId                String?
+  action                String                              // created, updated, approved, rejected, revoked, pack_granted, pack_revoked, downloaded, viewed
+  details               Json?                               // freeform details
+  ipAddress             String?
+  createdAt             DateTime  @default(now())
+
+  sharedAsset           SharedAsset?  @relation(fields: [sharedAssetId], references: [id], onDelete: SetNull)
+  user                  User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([sharedAssetId])
+  @@index([userId])
+  @@index([businessId])
+  @@index([action])
+  @@index([createdAt])
 }

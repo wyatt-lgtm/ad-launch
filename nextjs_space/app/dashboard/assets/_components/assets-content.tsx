@@ -7,7 +7,7 @@ import {
   Loader2, FolderOpen, Upload, Search, Image as ImageIcon,
   FileText, Shield, MapPin, Users, Palette, Megaphone, Video, Music, Scale,
   X, Check, AlertCircle, Trash2, Edit3, Ban, Archive, Star,
-  Lock, LogIn, ChevronDown,
+  Lock, LogIn, ChevronDown, Package, Globe, BookOpen,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import {
@@ -20,6 +20,9 @@ import AssetEditModal from './asset-edit-modal';
 import BrandReadiness from './brand-readiness';
 import GuidedEmptyState from './guided-empty-state';
 import BusinessProfileInterview from './business-profile-interview';
+import SharedAssetsTab from './shared-assets-tab';
+import ApprovedPacksTab from './approved-packs-tab';
+import UsageRulesTab from './usage-rules-tab';
 
 const CATEGORY_ICONS: Record<AssetCategory, any> = {
   brand: Palette,
@@ -95,6 +98,10 @@ export default function AssetsContent() {
   const [showInterview, setShowInterview] = useState(false);
   const [existingInterview, setExistingInterview] = useState<any>(null);
   const [hasProfileDocs, setHasProfileDocs] = useState(false);
+  const [activeTab, setActiveTab] = useState<'business' | 'shared' | 'packs' | 'rules'>('business');
+
+  const userRole = (session?.user as any)?.role || 'user';
+  const isAdminUser = userRole === 'admin';
 
   const businessId = bizCtx?.activeBusiness?.id;
   const businessName = bizCtx?.activeBusiness?.businessName;
@@ -251,7 +258,48 @@ export default function AssetsContent() {
         </button>
       </div>
 
-      {loading ? (
+      {/* Tab Navigation */}
+      <div className="border-b border-gray-200 mb-6">
+        <nav className="flex gap-0 -mb-px overflow-x-auto">
+          {[
+            { key: 'business' as const, label: 'Business Assets', icon: FolderOpen },
+            { key: 'shared' as const, label: 'Shared Assets', icon: Globe },
+            { key: 'packs' as const, label: 'Approved Asset Packs', icon: Package },
+            { key: 'rules' as const, label: 'Usage Rules', icon: BookOpen },
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                activeTab === tab.key
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Shared Assets Tab */}
+      {activeTab === 'shared' && businessId && (
+        <SharedAssetsTab businessId={businessId} isAdmin={isAdminUser} />
+      )}
+
+      {/* Approved Packs Tab */}
+      {activeTab === 'packs' && businessId && (
+        <ApprovedPacksTab businessId={businessId} />
+      )}
+
+      {/* Usage Rules Tab */}
+      {activeTab === 'rules' && businessId && (
+        <UsageRulesTab businessId={businessId} />
+      )}
+
+      {/* Business Assets Tab (existing content) */}
+      {activeTab === 'business' && (loading ? (
         <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-blue-600 animate-spin" /></div>
       ) : totalAssets === 0 && !filterCategory && !filterStatus && !searchQuery ? (
         /* Empty State - Show Guided Onboarding */
@@ -368,7 +416,7 @@ export default function AssetsContent() {
             )}
           </div>
         </div>
-      )}
+      ))}
 
       {/* Upload Modal */}
       {showUploadModal && (
