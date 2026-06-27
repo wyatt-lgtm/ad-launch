@@ -18,8 +18,8 @@ import { prisma } from '@/lib/db';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const LLM_API_URL = 'https://api.abacus.ai/api/v1/chat/completions';
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const LLM_API_URL = 'https://apps.abacus.ai/v1/chat/completions';
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
 
 const IMAGE_MIME_PREFIXES = ['image/'];
 const VIDEO_MIME_PREFIXES = ['video/'];
@@ -39,6 +39,26 @@ const COMPLIANCE_ASSET_TYPES = [
 ];
 
 const COMPLIANCE_CATEGORIES = ['compliance', 'compliance_templates'];
+
+// ── Parent validation ────────────────────────────────────────────────────────
+
+/**
+ * Validates that exactly one of businessAssetId or sharedAssetId is set.
+ * Throws if both are set or both are null.
+ */
+export function validateAssetContextParent(
+  businessAssetId: string | null | undefined,
+  sharedAssetId: string | null | undefined,
+): void {
+  const hasBusiness = !!businessAssetId;
+  const hasShared = !!sharedAssetId;
+  if (hasBusiness && hasShared) {
+    throw new Error('AssetContext must reference exactly one parent: both businessAssetId and sharedAssetId were provided.');
+  }
+  if (!hasBusiness && !hasShared) {
+    throw new Error('AssetContext must reference exactly one parent: neither businessAssetId nor sharedAssetId was provided.');
+  }
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -116,6 +136,9 @@ export async function generateAssetContextForBusinessAsset(
 
     const result = await generateContextForAsset(info);
     const normalized = normalizeAssetContextResult(result);
+
+    // Validate XOR parent constraint before upsert
+    validateAssetContextParent(assetId, null);
 
     // Upsert context record
     await prisma.assetContext.upsert({
@@ -196,6 +219,9 @@ export async function generateAssetContextForSharedAsset(
 
     const result = await generateContextForAsset(info);
     const normalized = normalizeAssetContextResult(result);
+
+    // Validate XOR parent constraint before upsert
+    validateAssetContextParent(null, assetId);
 
     await prisma.assetContext.upsert({
       where: { sharedAssetId: assetId },
@@ -353,13 +379,30 @@ async function generateContextForAsset(asset: AssetInfo): Promise<any> {
   ];
 
   if (useVision && asset.publicUrl) {
-    messages.push({
-      role: 'user',
-      content: [
-        { type: 'text', text: userPrompt },
-        { type: 'image_url', image_url: { url: asset.publicUrl } },
-      ],
-    });
+    // Abacus LLM API requires base64 data URIs for images, not external URLs
+    let imageDataUri: string | null = null;
+    try {
+      const imgRes = await fetch(asset.publicUrl);
+      if (imgRes.ok) {
+        const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+        const mimeType = asset.mimeType || imgRes.headers.get('content-type') || 'image/jpeg';
+        imageDataUri = `data:${mimeType};base64,${imgBuf.toString('base64')}`;
+      }
+    } catch (e) {
+      console.warn('[asset-context] Failed to fetch image for vision, falling back to text-only:', e);
+    }
+
+    if (imageDataUri) {
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: userPrompt },
+          { type: 'image_url', image_url: { url: imageDataUri } },
+        ],
+      });
+    } else {
+      messages.push({ role: 'user', content: userPrompt });
+    }
   } else {
     messages.push({ role: 'user', content: userPrompt });
   }
@@ -375,6 +418,7 @@ async function generateContextForAsset(asset: AssetInfo): Promise<any> {
       messages,
       temperature: 0.3,
       max_tokens: 2000,
+      response_format: { type: 'json_object' },
     }),
   });
 

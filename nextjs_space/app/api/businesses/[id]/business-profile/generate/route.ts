@@ -68,7 +68,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
         const userPrompt = `${docType.prompt} for "${businessName}" based on this business information:\n\n${context}\n\nWrite a complete, well-structured document. Use paragraphs, not bullet lists unless the content type specifically calls for them (like FAQs or lists of claims to avoid). Aim for 200-800 words depending on the document type.`;
 
-        const llmRes = await fetch('https://api.abacus.ai/api/v1/chat/completions', {
+        const llmRes = await fetch('https://apps.abacus.ai/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
