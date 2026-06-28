@@ -92,6 +92,21 @@ model Business {
   trackingAudiences        TrackingAudience[]
   trackingEventRoutes      TrackingEventRoute[]
   trackingPixelAuditEvents TrackingPixelAuditEvent[]
+  trackingPixelDiscoveries TrackingPixelDiscovery[]
+
+  // ── Three-tier Bridger research + Search Intelligence ──────────────
+  businessResearch             BusinessResearch[]
+  searchIntelSettings          SearchIntelligenceSettings?
+  searchIntelKeywords          SearchIntelligenceKeyword[]
+  searchIntelLocations         SearchIntelligenceLocation[]
+  searchIntelProviderAccounts  SearchIntelligenceProviderAccount[]
+  searchIntelRuns              SearchIntelligenceRun[]
+  searchVisibilityObservations SearchVisibilityObservation[]
+  searchCompetitors            SearchCompetitor[]
+  competitorSearchMovements    CompetitorSearchMovement[]
+  paidAdObservations           PaidAdObservation[]
+  organicPositionHistory       OrganicPositionHistory[]
+  searchIntelRecommendations   SearchIntelligenceRecommendation[]
 
   // ── Industry match (from Jim Bridger / owner-confirmed) ────────────
   matchedIndustryId         String?
@@ -293,6 +308,12 @@ model Analysis {
   tombstoneBusinessUuid String?
   // Token linking anonymous sessions to their Analysis record before registration.
   anonymousToken        String?      @unique
+  // ── Three-tier Bridger research tagging ─────────────────────────
+  // research_depth: light | deep | ongoing | refresh (preview analyses default to light)
+  researchDepth         String?      @default("light")
+  researchStatus        String?
+  lightResearchAt       DateTime?
+  deepResearchAt        DateTime?
   ads                   Ad[]
   business              Business?    @relation(fields: [businessId], references: [id])
   user                  User?        @relation(fields: [userId], references: [id])
@@ -1832,4 +1853,415 @@ model TrackingPixelAuditEvent {
   @@index([businessId, pixelId])
   @@index([action])
   @@index([createdAt])
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Three-tier Jim Bridger research + Ongoing Search Intelligence
+// All models are business-scoped (business_id) to prevent cross-business
+// leakage. Research depth is durable so light research never overwrites
+// deep research. No Tombstone task lifecycle logic lives here.
+// ════════════════════════════════════════════════════════════════════
+
+// Durable, business-scoped research intelligence layer. One current row
+// per (businessId, researchDepth); refresh runs append history.
+model BusinessResearch {
+  id               String    @id @default(cuid())
+  businessId       String
+  // research_depth: light | deep | ongoing | refresh
+  researchDepth    String    @default("light")
+  // output_type: initial_business_research | deep_business_research | ongoing_search_intelligence
+  outputType       String
+  // research_status: pending | queued | running | complete | needs_review | failed
+  researchStatus   String    @default("pending")
+  isCurrent        Boolean   @default(true)
+  sourceUrl        String?
+  previewPackageId String?
+  analysisId       String?
+  workflowId       String?
+  createdByAgent   String? // e.g. jim_bridger
+  createdTaskId    String?
+  // Structured research output (deep_business_profile, brand_voice_profile,
+  // competitor_summary, positioning_profile, audience_segments, service_line_map,
+  // seo_opportunities, tracking_pixel_discoveries, content_strategy, claims, etc.)
+  profileJson      Json?
+  summary          String?   @db.Text
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, researchDepth])
+  @@index([businessId, researchDepth, isCurrent])
+  @@index([analysisId])
+}
+
+// Tracking pixels/tags discovered on the business website during Deep Research.
+// Discovery layer — stored before being treated as approved config.
+model TrackingPixelDiscovery {
+  id                     String   @id @default(cuid())
+  businessId             String
+  sourceUrl              String? // root website url scanned
+  pageUrl                String? // specific page where it was detected
+  // platform mirrors TrackingPixel platform values
+  platform               String
+  // pixel_type: base_pixel | analytics_tag | tag_manager | conversion_pixel | remarketing_pixel | custom_script
+  pixelType              String   @default("base_pixel")
+  detectedId             String?
+  detectedScriptUrl      String?
+  detectedEventNamesJson Json?
+  placementDetected      String? // head | body_start | body_end | gtm | unknown
+  confidenceScore        Float    @default(0)
+  detectionMethod        String? // script_src_match | inline_snippet_match | gtm_container | network_request | meta_tag
+  // status: detected_unmatched | matched_existing_config | duplicate_possible
+  //         | missing_from_config | needs_review | ignored | configured_but_not_found
+  status                 String   @default("detected_unmatched")
+  matchedTrackingPixelId String?
+  createdTaskId          String?
+  createdByAgent         String?
+  firstSeenAt            DateTime @default(now())
+  lastSeenAt             DateTime @default(now())
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, platform])
+  @@index([matchedTrackingPixelId])
+}
+
+model SearchIntelligenceSettings {
+  id                   String   @id @default(cuid())
+  businessId           String   @unique
+  enabled              Boolean  @default(false)
+  defaultProvider      String   @default("manual_import")
+  weeklyRunDay         String   @default("monday")
+  weeklyRunTime        String   @default("09:00")
+  timezone             String   @default("America/Denver")
+  maxKeywordsPerRun    Int      @default(100)
+  maxLocationsPerRun   Int      @default(25)
+  device               String   @default("desktop") // desktop | mobile | both
+  includePaidAds       Boolean  @default(true)
+  includeOrganic       Boolean  @default(true)
+  includeLocalPack     Boolean  @default(true)
+  includeCompetitors   Boolean  @default(true)
+  includeAhrefs        Boolean  @default(false)
+  includeGoogleAds     Boolean  @default(false)
+  includeSearchConsole Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+}
+
+model SearchIntelligenceKeyword {
+  id                      String   @id @default(cuid())
+  businessId              String
+  keyword                 String
+  normalizedKeyword       String
+  serviceLine             String?
+  // market_orientation: b2c | b2b | mixed | unknown
+  marketOrientation       String   @default("unknown")
+  // keyword_intent: emergency | near_me | brand | competitor | price | comparison
+  //   | problem | service | informational | transactional | b2b | b2c | local | national
+  keywordIntent           String?
+  funnelStage             String? // top_of_funnel | mid_funnel | bottom_funnel | converted
+  // priority: low | medium | high | critical
+  priority                String   @default("medium")
+  source                  String? // deep_research | manual | bulk_import | google_ads | search_console | ahrefs
+  matchTypeHint           String? // broad | phrase | exact
+  preferredLandingPageUrl String?
+  status                  String   @default("active") // active | paused | disabled
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  business       Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  observations   SearchVisibilityObservation[]
+  paidAds        PaidAdObservation[]
+  organicHistory OrganicPositionHistory[]
+  movements      CompetitorSearchMovement[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, serviceLine])
+  @@index([businessId, normalizedKeyword])
+}
+
+model SearchIntelligenceLocation {
+  id                  String   @id @default(cuid())
+  businessId          String
+  // location_type: zip | city | county | service_area | custom_radius | state | national
+  locationType        String   @default("city")
+  zip                 String?
+  city                String?
+  county              String?
+  state               String?
+  country             String?  @default("US")
+  latitude            Float?
+  longitude           Float?
+  radiusMiles         Float?
+  // service_area_priority: low | medium | high | critical
+  serviceAreaPriority String   @default("medium")
+  marketLabel         String?
+  status              String   @default("active")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  business       Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  observations   SearchVisibilityObservation[]
+  paidAds        PaidAdObservation[]
+  organicHistory OrganicPositionHistory[]
+  movements      CompetitorSearchMovement[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, locationType])
+}
+
+model SearchIntelligenceProviderAccount {
+  id              String    @id @default(cuid())
+  businessId      String
+  // provider: google_search_console | google_ads | google_business_profile
+  //           | ahrefs | approved_serp_provider | manual_import
+  provider        String
+  accountId       String?
+  accountName     String?
+  // credentials_ref: name of secret/env reference — NEVER store raw secrets here
+  credentialsRef  String?
+  status          String    @default("disconnected") // disconnected | connected | error | pending
+  lastConnectedAt DateTime?
+  lastSyncAt      DateTime?
+  errorMessage    String?   @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  business Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  runs     SearchIntelligenceRun[]
+
+  @@index([businessId])
+  @@index([businessId, provider])
+}
+
+model SearchIntelligenceRun {
+  id                String    @id @default(cuid())
+  businessId        String
+  // run_type: weekly_search_intelligence | organic_serp_check | paid_ad_check | local_pack_check
+  //   | maps_check | competitor_ad_check | competitor_organic_check | auction_insights_import
+  //   | search_console_sync | google_ads_keyword_sync | google_ads_search_term_sync
+  //   | ahrefs_keyword_sync | ahrefs_competitor_sync | manual_import
+  runType           String
+  dataSource        String? // provider id used
+  providerAccountId String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  // status: queued | running | complete | partial | failed | cancelled
+  status            String    @default("queued")
+  keywordCount      Int       @default(0)
+  locationCount     Int       @default(0)
+  observationCount  Int       @default(0)
+  competitorCount   Int       @default(0)
+  // raw_snapshot_ref: R2 object key for large raw provider payloads (never local paths)
+  rawSnapshotRef    String?
+  errorMessage      String?   @db.Text
+  createdByTaskId   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  business        Business                           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  providerAccount SearchIntelligenceProviderAccount? @relation(fields: [providerAccountId], references: [id], onDelete: SetNull)
+  observations    SearchVisibilityObservation[]
+  paidAds         PaidAdObservation[]
+  recommendations SearchIntelligenceRecommendation[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, runType])
+  @@index([createdAt])
+}
+
+model SearchVisibilityObservation {
+  id                String   @id @default(cuid())
+  businessId        String
+  runId             String?
+  observedAt        DateTime @default(now())
+  keywordId         String?
+  locationId        String?
+  searchEngine      String   @default("google")
+  device            String   @default("desktop")
+  // result_type: paid_ad | organic | local_pack | map_result | ai_overview
+  //   | shopping | video | image | people_also_ask | unknown
+  resultType        String   @default("organic")
+  position          Int?
+  pageNumber        Int?
+  domain            String?
+  url               String?
+  title             String?
+  snippet           String?  @db.Text
+  // business_match_type: exact_domain | known_brand | known_location | possible_match | competitor | unknown
+  businessMatchType String   @default("unknown")
+  isSelf            Boolean  @default(false)
+  competitorId      String?
+  confidenceScore   Float    @default(0)
+  dataSource        String? // provider / methodology — required for compliance
+  rawSnapshotRef    String?
+  createdAt         DateTime @default(now())
+
+  business   Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  run        SearchIntelligenceRun?      @relation(fields: [runId], references: [id], onDelete: SetNull)
+  keyword    SearchIntelligenceKeyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  location   SearchIntelligenceLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  competitor SearchCompetitor?           @relation(fields: [competitorId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, keywordId])
+  @@index([businessId, locationId])
+  @@index([businessId, resultType])
+  @@index([runId])
+  @@index([observedAt])
+}
+
+model SearchCompetitor {
+  id               String   @id @default(cuid())
+  businessId       String
+  competitorName   String?
+  domain           String?
+  knownPagesJson   Json?
+  serviceLinesJson Json?
+  marketsJson      Json?
+  source           String? // deep_research | observed | manual
+  firstSeenAt      DateTime @default(now())
+  lastSeenAt       DateTime @default(now())
+  // status: active | inactive | ignored | needs_review
+  status           String   @default("active")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  business     Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  observations SearchVisibilityObservation[]
+  movements    CompetitorSearchMovement[]
+  paidAds      PaidAdObservation[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, domain])
+}
+
+model CompetitorSearchMovement {
+  id               String    @id @default(cuid())
+  businessId       String
+  competitorId     String
+  keywordId        String?
+  locationId       String?
+  periodStart      DateTime?
+  periodEnd        DateTime?
+  previousPosition Int?
+  currentPosition  Int?
+  previousPresence String?
+  currentPresence  String?
+  // movement_type: entered_market | left_market | gained_position | lost_position
+  //   | gained_paid_presence | lost_paid_presence | gained_local_pack | lost_local_pack | no_change
+  movementType     String    @default("no_change")
+  changeSummary    String?   @db.Text
+  confidenceScore  Float     @default(0)
+  createdAt        DateTime  @default(now())
+
+  business   Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  competitor SearchCompetitor            @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  keyword    SearchIntelligenceKeyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  location   SearchIntelligenceLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, competitorId])
+  @@index([businessId, movementType])
+}
+
+model PaidAdObservation {
+  id              String   @id @default(cuid())
+  businessId      String
+  runId           String?
+  observedAt      DateTime @default(now())
+  keywordId       String?
+  locationId      String?
+  advertiserName  String?
+  displayUrl      String?
+  finalUrl        String?
+  headlineText    String?  @db.Text
+  descriptionText String?  @db.Text
+  position        Int?
+  adFormat        String?
+  extensionsJson  Json?
+  isSelf          Boolean  @default(false)
+  competitorId    String?
+  dataSource      String?
+  rawSnapshotRef  String?
+  createdAt       DateTime @default(now())
+
+  business   Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  run        SearchIntelligenceRun?      @relation(fields: [runId], references: [id], onDelete: SetNull)
+  keyword    SearchIntelligenceKeyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  location   SearchIntelligenceLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  competitor SearchCompetitor?           @relation(fields: [competitorId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, keywordId])
+  @@index([runId])
+}
+
+model OrganicPositionHistory {
+  id                     String   @id @default(cuid())
+  businessId             String
+  keywordId              String?
+  locationId             String?
+  observedAt             DateTime @default(now())
+  selfPosition           Int?
+  selfUrl                String?
+  bestCompetitorPosition Int?
+  topCompetitorId        String?
+  localPackPosition      Int?
+  paidAdPosition         Int?
+  // organic_rank_bucket: top_1 | top_3 | top_10 | page_2 | not_found
+  organicRankBucket      String?
+  visibilityScore        Float?
+  dataSource             String?
+  createdAt              DateTime @default(now())
+
+  business Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  keyword  SearchIntelligenceKeyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  location SearchIntelligenceLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, keywordId])
+  @@index([observedAt])
+}
+
+model SearchIntelligenceRecommendation {
+  id                 String   @id @default(cuid())
+  businessId         String
+  runId              String?
+  // recommendation_type: create_service_page | improve_page | add_internal_links
+  //   | launch_paid_keyword | add_negative_keyword | monitor_competitor | improve_local_pack
+  //   | create_city_page | create_county_page | update_title_meta | add_tracking | review_campaign_gap
+  recommendationType String
+  title              String
+  evidenceJson       Json?
+  suggestedAction    String?  @db.Text
+  // priority: low | medium | high | critical
+  priority           String   @default("medium")
+  confidenceScore    Float    @default(0)
+  // status: open | in_review | accepted | dismissed | done
+  status             String   @default("open")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  business Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  run      SearchIntelligenceRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, recommendationType])
 }

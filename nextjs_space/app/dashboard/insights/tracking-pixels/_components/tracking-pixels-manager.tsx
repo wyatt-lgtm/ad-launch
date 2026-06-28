@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import {
   Loader2, Lock, LogIn, Crosshair, Plus, Target, Users, Map, Activity,
   Edit3, Archive, CheckCircle2, Ban, Copy, ShieldCheck, AlertTriangle, Trash2,
-  X, Sparkles, ChevronDown, Search,
+  X, Sparkles, ChevronDown, Search, Download, Link2, RefreshCw, Radar,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import PixelModal, { PixelDraft, EMPTY_PIXEL } from './pixel-modal';
@@ -49,6 +49,7 @@ export default function TrackingPixelsManager() {
   const [routes, setRoutes] = useState<any[]>([]);
   const [routeTemplates, setRouteTemplates] = useState<any[]>([]);
   const [audit, setAudit] = useState<any[]>([]);
+  const [discoveries, setDiscoveries] = useState<any[]>([]);
 
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
   const showToast = (ok: boolean, msg: string) => { setToast({ ok, msg }); setTimeout(() => setToast(null), 3000); };
@@ -64,18 +65,20 @@ export default function TrackingPixelsManager() {
     if (!businessId) return;
     setLoading(true);
     try {
-      const [px, ev, au, rt, ad] = await Promise.all([
+      const [px, ev, au, rt, ad, dc] = await Promise.all([
         fetch(api('tracking-pixels')).then((r) => r.json()),
         fetch(api('tracking-events')).then((r) => r.json()),
         fetch(api('tracking-audiences')).then((r) => r.json()),
         fetch(api('tracking-routes')).then((r) => r.json()),
         fetch(api('tracking-audit')).then((r) => r.json()),
+        fetch(api('tracking-discoveries')).then((r) => r.json()),
       ]);
       setPixels(px?.pixels || []);
       setEvents(ev?.events || []); setEventTemplates(ev?.templates || []);
       setAudiences(au?.audiences || []); setAudienceTemplates(au?.templates || []);
       setRoutes(rt?.routes || []); setRouteTemplates(rt?.templates || []);
       setAudit(ad?.events || []);
+      setDiscoveries(dc?.discoveries || []);
     } catch (e) {
       console.error('[tracking] load error', e);
     }
@@ -143,6 +146,20 @@ export default function TrackingPixelsManager() {
       showToast(true, 'Deleted');
       await loadAll();
     } catch (e: any) { showToast(false, e.message); }
+  };
+
+  // ── Discovery actions ──────────────────────────────────────────
+  const discoveryAction = async (d: any, action: string, extra?: any) => {
+    try {
+      const res = await fetch(api(`tracking-discoveries/${d.id}`), {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...(extra || {}) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed');
+      showToast(true, 'Discovery updated');
+      await loadAll();
+    } catch (e: any) { showToast(false, e.message || 'Failed'); }
   };
 
   // ── Auth gates ─────────────────────────────────────────────────
@@ -220,7 +237,10 @@ export default function TrackingPixelsManager() {
       ) : (
         <>
           {tab === 'pixels' && (
-            <PixelsTab pixels={pixels} onAdd={openAddPixel} onWizard={() => setWizardOpen(true)} onEdit={openEditPixel} onAction={pixelAction} onArchive={archivePixel} onCopy={copySnippet} />
+            <>
+              <PixelsTab pixels={pixels} onAdd={openAddPixel} onWizard={() => setWizardOpen(true)} onEdit={openEditPixel} onAction={pixelAction} onArchive={archivePixel} onCopy={copySnippet} />
+              <DiscoveriesSection discoveries={discoveries} pixels={pixels} onAction={discoveryAction} />
+            </>
           )}
           {tab === 'events' && (
             <EventsTab events={events} templates={eventTemplates} onAddTemplate={(k: string) => addTemplate('tracking-events', k)} onDelete={(id: string, n: string) => deleteResource('tracking-events', id, n)} businessId={businessId} onRefresh={loadAll} showToast={showToast} />
@@ -319,6 +339,96 @@ function PixelsTab({ pixels, onAdd, onWizard, onEdit, onAction, onArchive, onCop
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Detected on Website (discoveries) ────────────────────────────
+const DISCOVERY_BADGE: Record<string, string> = {
+  needs_review: 'bg-orange-100 text-orange-800',
+  matched_existing_config: 'bg-green-100 text-green-800',
+  duplicate_possible: 'bg-yellow-100 text-yellow-800',
+  configured_but_not_found: 'bg-red-100 text-red-800',
+  ignored: 'bg-gray-100 text-gray-400',
+};
+
+function DiscoveriesSection({ discoveries, pixels, onAction }: any) {
+  const [matchFor, setMatchFor] = useState<string | null>(null);
+  const [matchPixelId, setMatchPixelId] = useState('');
+  if (!discoveries || discoveries.length === 0) return null;
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center gap-2 mb-1">
+        <Radar className="w-5 h-5 text-purple-600" />
+        <h3 className="text-lg font-bold text-gray-900">Detected on Website</h3>
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{discoveries.length}</span>
+      </div>
+      <p className="text-sm text-gray-500 mb-4 max-w-3xl">
+        Pixels and tags found on your live website during deep research. Import them to manage centrally,
+        match them to an existing pixel, or ignore. Imported pixels are created as drafts that need
+        verification — your website scripts are never changed automatically.
+      </p>
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-500 text-xs uppercase"><tr>
+            <th className="text-left px-4 py-3">Platform</th>
+            <th className="text-left px-4 py-3">Detected ID</th>
+            <th className="text-left px-4 py-3">Found On</th>
+            <th className="text-left px-4 py-3">Confidence</th>
+            <th className="text-left px-4 py-3">Status</th>
+            <th className="text-left px-4 py-3">Last Seen</th>
+            <th className="text-right px-4 py-3">Actions</th>
+          </tr></thead>
+          <tbody className="divide-y divide-gray-100">
+            {discoveries.map((d: any) => {
+              const linked = d.matchedTrackingPixelId
+                ? pixels.find((p: any) => p.id === d.matchedTrackingPixelId)
+                : null;
+              const isIgnored = d.status === 'ignored';
+              const isLinked = !!d.matchedTrackingPixelId;
+              return (
+                <tr key={d.id} className="hover:bg-gray-50 align-top">
+                  <td className="px-4 py-3 font-medium text-gray-900">{LABEL(d.platform)}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-600">{d.detectedId || '—'}</td>
+                  <td className="px-4 py-3 text-xs text-blue-600 max-w-[220px] truncate">{d.pageUrl || d.sourceUrl || '—'}</td>
+                  <td className="px-4 py-3">{d.confidenceScore != null ? `${Math.round(d.confidenceScore * 100)}%` : '—'}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${DISCOVERY_BADGE[d.status] || 'bg-gray-100 text-gray-600'}`}>{LABEL(d.status)}</span>
+                    {linked && <div className="text-[11px] text-gray-400 mt-1">→ {linked.name}</div>}
+                  </td>
+                  <td className="px-4 py-3 text-xs">{d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '—'}</td>
+                  <td className="px-4 py-3">
+                    {matchFor === d.id ? (
+                      <div className="flex items-center justify-end gap-2">
+                        <select value={matchPixelId} onChange={(e) => setMatchPixelId(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1 text-xs">
+                          <option value="">Select pixel…</option>
+                          {pixels.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                        <button disabled={!matchPixelId} onClick={() => { onAction(d, 'match_existing', { trackingPixelId: matchPixelId }); setMatchFor(null); setMatchPixelId(''); }} className="px-2 py-1 text-xs bg-blue-600 text-white rounded-lg disabled:opacity-50">Save</button>
+                        <button onClick={() => { setMatchFor(null); setMatchPixelId(''); }} className="px-2 py-1 text-xs text-gray-500">Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-end gap-1">
+                        {!isLinked && !isIgnored && (
+                          <IconBtn title="Import / Confirm" onClick={() => onAction(d, 'import_confirm')}><Download className="w-4 h-4" /></IconBtn>
+                        )}
+                        {!isLinked && !isIgnored && pixels.length > 0 && (
+                          <IconBtn title="Match to existing" onClick={() => { setMatchFor(d.id); setMatchPixelId(''); }}><Link2 className="w-4 h-4" /></IconBtn>
+                        )}
+                        {!isIgnored && (
+                          <IconBtn title="Ignore" onClick={() => onAction(d, 'ignore')}><Ban className="w-4 h-4" /></IconBtn>
+                        )}
+                        <IconBtn title="Verify again" onClick={() => onAction(d, 'verify_again')}><RefreshCw className="w-4 h-4" /></IconBtn>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

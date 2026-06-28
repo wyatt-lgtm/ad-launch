@@ -337,6 +337,7 @@ export default function Header() {
                     <DropdownItem href="/dashboard/marketing" icon={DollarSign} label="Customer Value" disabled />
                     <DropdownItem href="/dashboard/marketing" icon={Gauge} label="Lead Scoring" disabled />
                     <DropdownItem href="/dashboard/marketing" icon={Lightbulb} label="Recommendations" disabled />
+                    <DropdownItem href="/dashboard/insights/search-intelligence" icon={Search} label="Search Intelligence" desc="Rank, paid & competitor tracking" />
                     <DropdownItem href="/dashboard/insights/tracking-pixels" icon={Crosshair} label="Tracking Pixels" desc="Pixels, events & audiences" />
                   </DropdownSection>
                 </Dropdown>
