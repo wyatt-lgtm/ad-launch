@@ -12,7 +12,8 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const statusFilter = url.searchParams.get('status') || ''; // comma-separated
   const search = url.searchParams.get('search')?.trim() || '';
-  const hoursBack = parseInt(url.searchParams.get('hours') || '24');
+  // hours may be fractional to support sub-hour windows (e.g. 0.25 = 15 minutes)
+  const hoursBack = parseFloat(url.searchParams.get('hours') || '24');
 
   try {
     const controller = new AbortController();
@@ -30,13 +31,15 @@ export async function GET(req: NextRequest) {
     let tasks: any[] = await res.json();
     if (!Array.isArray(tasks)) tasks = [];
 
-    // Filter by recency
-    const cutoff = new Date();
-    cutoff.setHours(cutoff.getHours() - hoursBack);
+    // Filter by recency. Use the most relevant task timestamp:
+    // updated_at (lifecycle change) → heartbeat_at (active workers) → created_at.
+    const cutoffMs = Date.now() - (Number.isFinite(hoursBack) ? hoursBack : 24) * 60 * 60 * 1000;
     tasks = tasks.filter((t: any) => {
-      const updated = t?.updated_at || t?.created_at || t?.heartbeat_at;
+      const updated = t?.updated_at || t?.heartbeat_at || t?.created_at;
       if (!updated) return true; // keep tasks with no timestamp
-      return new Date(updated) >= cutoff;
+      const ts = new Date(updated).getTime();
+      if (Number.isNaN(ts)) return true;
+      return ts >= cutoffMs;
     });
 
     // Filter by status

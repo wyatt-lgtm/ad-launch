@@ -1455,10 +1455,11 @@ function TasksTab() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('in progress,ready for pickup,failed,blocked');
-  const [hours, setHours] = useState(24);
+  const [statusFilter, setStatusFilter] = useState('in progress,ready for pickup,blocked,claimed');
+  const [hours, setHours] = useState(1); // default: Last 1h for admin task monitoring
   const [pageSize, setPageSize] = useState(10);
   const [lastFetch, setLastFetch] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Drawer state
@@ -1470,6 +1471,7 @@ function TasksTab() {
     if (statusFilter) params.set('status', statusFilter);
     if (search) params.set('search', search);
     params.set('hours', String(hours));
+    params.set('limit', String(pageSize));
     try {
       const res = await fetch(`/api/admin/tasks?${params}`);
       const data = await res.json();
@@ -1477,17 +1479,33 @@ function TasksTab() {
       setLastFetch(data.fetchedAt || new Date().toISOString());
     } catch { /* silent */ }
     setLoading(false);
-  }, [statusFilter, search, hours]);
+  }, [statusFilter, search, hours, pageSize]);
 
+  // Auto-refresh + immediate refetch whenever any filter/selection changes
+  // (statusFilter, search, hours, pageSize are baked into fetchTasks).
   useEffect(() => {
     fetchTasks();
     intervalRef.current = setInterval(fetchTasks, 15000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [fetchTasks]);
 
+  // Manual "Get Events" — fetch immediately using current filters and reset
+  // the auto-refresh timer so the next poll is a full 15s away.
+  const handleGetEvents = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await fetchTasks();
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = setInterval(fetchTasks, 15000);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchTasks]);
+
   const FILTER_PRESETS = [
     { label: 'Active', value: 'in progress,ready for pickup,blocked,claimed' },
     { label: 'Failed', value: 'failed,error' },
+    { label: 'Complete', value: 'complete,completed' },
     { label: 'All', value: '' },
   ];
 
@@ -1521,9 +1539,12 @@ function TasksTab() {
         </div>
         <select
           value={hours}
-          onChange={e => setHours(parseInt(e.target.value))}
+          onChange={e => setHours(parseFloat(e.target.value))}
           className="text-sm border border-gray-300 rounded-lg px-3 py-1.5"
         >
+          <option value={0.25}>Last 15m</option>
+          <option value={1}>Last 1h</option>
+          <option value={2}>Last 2h</option>
           <option value={6}>Last 6h</option>
           <option value={24}>Last 24h</option>
           <option value={72}>Last 3d</option>
@@ -1538,6 +1559,16 @@ function TasksTab() {
           <option value={25}>Show 25</option>
           <option value={50}>Show 50</option>
         </select>
+        <button
+          onClick={handleGetEvents}
+          disabled={refreshing}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg transition-colors"
+        >
+          {refreshing
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <RefreshCw className="w-3.5 h-3.5" />}
+          {refreshing ? 'Getting events…' : 'Get Events'}
+        </button>
         {lastFetch && (
           <span className="text-gray-400 text-xs ml-auto">Updated: {new Date(lastFetch).toLocaleTimeString()}</span>
         )}
