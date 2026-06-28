@@ -1694,6 +1694,20 @@ model TrackingPixel {
   hashedPhoneEnabled         Boolean @default(false)
   enhancedConversionsEnabled Boolean @default(false)
 
+  // ── Guided setup wizard ─────────────────────────────────────────
+  // setupStatus: needs_setup | needs_customer_action | waiting_for_pixel_id
+  //              | waiting_for_script | ready_to_install | installed | verified
+  //              | failed_verification | inactive
+  manualSetupRequired   Boolean @default(false)
+  setupStatus           String?
+  setupInstructionsJson Json?
+  platformSetupUrl      String?
+  // installation_target: tombstone_generated_site | ghl_funnel | ghl_website
+  //                      | wordpress | gtm | manual | unknown
+  installationTarget    String? @default("unknown")
+  installStatus         String?
+  installNotes          String? @db.Text
+
   createdByUserId String?
   updatedByUserId String?
   version         Int       @default(1)

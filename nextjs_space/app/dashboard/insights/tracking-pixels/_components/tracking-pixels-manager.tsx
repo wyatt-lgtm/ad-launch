@@ -6,10 +6,11 @@ import { useRouter } from 'next/navigation';
 import {
   Loader2, Lock, LogIn, Crosshair, Plus, Target, Users, Map, Activity,
   Edit3, Archive, CheckCircle2, Ban, Copy, ShieldCheck, AlertTriangle, Trash2,
-  X,
+  X, Sparkles, ChevronDown, Search,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import PixelModal, { PixelDraft, EMPTY_PIXEL } from './pixel-modal';
+import PixelWizard from './pixel-wizard';
 
 const LABEL = (s?: string | null) => (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -53,6 +54,7 @@ export default function TrackingPixelsManager() {
   const showToast = (ok: boolean, msg: string) => { setToast({ ok, msg }); setTimeout(() => setToast(null), 3000); };
 
   const [pixelModalOpen, setPixelModalOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [pixelDraft, setPixelDraft] = useState<PixelDraft>(EMPTY_PIXEL);
   const [saving, setSaving] = useState(false);
 
@@ -184,9 +186,15 @@ export default function TrackingPixelsManager() {
 
       {/* Header */}
       <div className="mb-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Crosshair className="w-6 h-6 text-blue-600" />
-          <h1 className="text-2xl font-bold text-gray-900">Tracking Pixels</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
+          <div className="flex items-center gap-2">
+            <Crosshair className="w-6 h-6 text-blue-600" />
+            <h1 className="text-2xl font-bold text-gray-900">Tracking Pixels</h1>
+          </div>
+          <button onClick={() => setWizardOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 shadow-sm">
+            <Sparkles className="w-4 h-4" /> Help Me Create a Pixel
+          </button>
         </div>
         <p className="text-gray-500 text-sm">{businessName || 'Your Business'}</p>
         <p className="text-gray-600 text-sm mt-3 max-w-3xl">
@@ -212,7 +220,7 @@ export default function TrackingPixelsManager() {
       ) : (
         <>
           {tab === 'pixels' && (
-            <PixelsTab pixels={pixels} onAdd={openAddPixel} onEdit={openEditPixel} onAction={pixelAction} onArchive={archivePixel} onCopy={copySnippet} />
+            <PixelsTab pixels={pixels} onAdd={openAddPixel} onWizard={() => setWizardOpen(true)} onEdit={openEditPixel} onAction={pixelAction} onArchive={archivePixel} onCopy={copySnippet} />
           )}
           {tab === 'events' && (
             <EventsTab events={events} templates={eventTemplates} onAddTemplate={(k: string) => addTemplate('tracking-events', k)} onDelete={(id: string, n: string) => deleteResource('tracking-events', id, n)} businessId={businessId} onRefresh={loadAll} showToast={showToast} />
@@ -230,20 +238,40 @@ export default function TrackingPixelsManager() {
       {pixelModalOpen && (
         <PixelModal initial={pixelDraft} saving={saving} onClose={() => setPixelModalOpen(false)} onSave={savePixel} />
       )}
+
+      {wizardOpen && (
+        <PixelWizard businessId={businessId!} businessName={businessName ?? undefined} api={api} onClose={() => setWizardOpen(false)} onCreated={loadAll} showToast={showToast} />
+      )}
     </div>
   );
 }
 
 // ── Pixels tab ───────────────────────────────────────────────────
-function PixelsTab({ pixels, onAdd, onEdit, onAction, onArchive, onCopy }: any) {
+function PixelsTab({ pixels, onAdd, onWizard, onEdit, onAction, onArchive, onCopy }: any) {
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-500">{pixels.length} pixel{pixels.length === 1 ? '' : 's'} configured</p>
-        <button onClick={onAdd} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700"><Plus className="w-4 h-4" /> Add Pixel</button>
+        <div className="relative">
+          <div className="inline-flex rounded-lg shadow-sm">
+            <button onClick={onAdd} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-l-lg text-sm font-semibold hover:bg-blue-700"><Plus className="w-4 h-4" /> Add Pixel</button>
+            <button onClick={() => setMenuOpen((v) => !v)} aria-label="More add options" className="px-2 py-2 bg-blue-600 text-white rounded-r-lg border-l border-blue-500 hover:bg-blue-700"><ChevronDown className="w-4 h-4" /></button>
+          </div>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+              <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden">
+                <button onClick={() => { setMenuOpen(false); onAdd(); }} className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2"><Plus className="w-4 h-4 text-gray-500" /> Add manually</button>
+                <button onClick={() => { setMenuOpen(false); onWizard(); }} className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center gap-2"><Sparkles className="w-4 h-4 text-blue-600" /> Help me create one</button>
+                <button disabled title="Coming soon" className="w-full text-left px-4 py-2.5 text-sm text-gray-400 flex items-center gap-2 cursor-not-allowed"><Search className="w-4 h-4" /> Detect existing <span className="ml-auto text-[10px] px-1.5 py-0.5 bg-gray-100 rounded-full">Soon</span></button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
       {pixels.length === 0 ? (
-        <EmptyState icon={Crosshair} title="No pixels yet" desc="Add your first tracking pixel — Meta, GA4, Google Tag Manager, Choozle or custom." />
+        <EmptyState icon={Crosshair} title="No pixels yet" desc="Add your first tracking pixel — Meta, GA4, Google Tag Manager, Choozle or custom." actionLabel="Help Me Create a Pixel" onAction={onWizard} />
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
@@ -506,12 +534,17 @@ function IconBtn({ title, onClick, children }: { title: string; onClick: () => v
   return <button title={title} onClick={onClick} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors">{children}</button>;
 }
 
-function EmptyState({ icon: Icon, title, desc }: { icon: any; title: string; desc: string }) {
+function EmptyState({ icon: Icon, title, desc, actionLabel, onAction }: { icon: any; title: string; desc: string; actionLabel?: string; onAction?: () => void }) {
   return (
     <div className="bg-white border border-dashed border-gray-300 rounded-xl py-16 text-center">
       <Icon className="w-12 h-12 text-gray-300 mx-auto mb-3" />
       <h3 className="text-base font-semibold text-gray-700">{title}</h3>
       <p className="text-sm text-gray-400 mt-1 max-w-md mx-auto">{desc}</p>
+      {actionLabel && onAction && (
+        <button onClick={onAction} className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">
+          <Sparkles className="w-4 h-4" /> {actionLabel}
+        </button>
+      )}
     </div>
   );
 }
