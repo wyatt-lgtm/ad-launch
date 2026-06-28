@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSocialWorkflowResults } from '@/lib/tombstone';
 import { saveBusinessProfile } from '@/lib/business-profile';
+import { runIndustryMatchAndPrepopulate } from '@/lib/industry-services';
 import { sendNotificationEmailHelper, buildCompletionEmailHtml } from '@/lib/scout-email';
 import { chargeForPostPackage, refundPostPackage } from '@/lib/credits';
 import { reviewMediaConceptBeforeGeneration } from '@/lib/media-war-room';
@@ -116,6 +117,10 @@ export async function POST(req: NextRequest) {
         if (wfResult.businessContext && pkg.businessId) {
           saveBusinessProfile(pkg.businessId, wfResult.businessContext).catch((e: any) =>
             console.warn(`[completion-check][${runId}] Failed to save business profile for ${pkg.businessId}: ${e?.message}`)
+          );
+          // Match business to an industry and prepopulate service offerings (non-blocking)
+          runIndustryMatchAndPrepopulate(pkg.businessId, wfResult.businessContext).catch((e: any) =>
+            console.warn(`[completion-check][${runId}] Industry match/prepopulate failed for ${pkg.businessId}: ${e?.message}`)
           );
         }
 

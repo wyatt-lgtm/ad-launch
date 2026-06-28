@@ -10,152 +10,162 @@ datasource db {
 }
 
 model User {
-  id                String               @id @default(cuid())
-  email             String               @unique
-  password          String
-  confirmed         Boolean              @default(false)
-  confirmationToken String?              @unique
-  freeAdsUsed       Int                  @default(0)
-  paidAdsCount      Int                  @default(0)
-  role              String               @default("user")
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  analyses          Analysis[]
-  businesses        Business[]
-  passwordResets    PasswordResetToken[]
-  socialAccounts    SocialAccount[]
-  socialPosts       SocialPost[]
-  feedPreferences   UserFeedPreference[]
-  scoutReports      ScoutReport[]
-  postPackages      PostPackage[]
-  generationRuns    GenerationRun[]
-  uploadedAssets    BusinessAsset[]
-  siteFeedback      SiteFeedback[]   @relation("SiteFeedbackUser")
-  scheduledPosts    ScheduledPost[]  @relation("ScheduledPostUser")
-  approvedPosts     ScheduledPost[]  @relation("ScheduledPostApprover")
-  communityReviews  CommunityEngagementOpportunity[] @relation("CommunityReviewer")
-  uploadedSharedAssets     SharedAsset[]                 @relation("SharedAssetUploader")
-  sharedAssetApprovals     BusinessSharedAssetApproval[]  @relation("SharedAssetApprover")
-  sharedAssetPackGrants    BusinessSharedAssetPackGrant[] @relation("SharedAssetPackGrantor")
-  sharedAssetAuditLogs     SharedAssetAuditLog[]
-  assetContextReviews      AssetContext[]                @relation("AssetContextReviewer")
+  id                        String                           @id @default(cuid())
+  email                     String                           @unique
+  password                  String
+  confirmed                 Boolean                          @default(false)
+  confirmationToken         String?                          @unique
+  freeAdsUsed               Int                              @default(0)
+  paidAdsCount              Int                              @default(0)
+  role                      String                           @default("user")
+  createdAt                 DateTime                         @default(now())
+  updatedAt                 DateTime                         @updatedAt
+  analyses                  Analysis[]
+  businesses                Business[]
+  passwordResets            PasswordResetToken[]
+  socialAccounts            SocialAccount[]
+  socialPosts               SocialPost[]
+  feedPreferences           UserFeedPreference[]
+  scoutReports              ScoutReport[]
+  postPackages              PostPackage[]
+  generationRuns            GenerationRun[]
+  uploadedAssets            BusinessAsset[]
+  siteFeedback              SiteFeedback[]                   @relation("SiteFeedbackUser")
+  scheduledPosts            ScheduledPost[]                  @relation("ScheduledPostUser")
+  approvedPosts             ScheduledPost[]                  @relation("ScheduledPostApprover")
+  communityReviews          CommunityEngagementOpportunity[] @relation("CommunityReviewer")
+  uploadedSharedAssets      SharedAsset[]                    @relation("SharedAssetUploader")
+  sharedAssetApprovals      BusinessSharedAssetApproval[]    @relation("SharedAssetApprover")
+  sharedAssetPackGrants     BusinessSharedAssetPackGrant[]   @relation("SharedAssetPackGrantor")
+  sharedAssetAuditLogs      SharedAssetAuditLog[]
+  assetContextReviews       AssetContext[]                   @relation("AssetContextReviewer")
+  confirmedServiceOfferings BusinessServiceOffering[]        @relation("ServiceConfirmer")
 }
 
 model Business {
-  id                String                   @id @default(cuid())
-  userId            String?
-  websiteUrl        String
-  businessName      String?
-  businessAddr      String?
-  businessCity      String?
-  businessState     String?
-  businessZip       String?
-  businessPhone     String?
-  createdAt         DateTime                 @default(now())
-  updatedAt         DateTime                 @updatedAt
-  contentSourceMode String                   @default("local_plus_interests")
+  id                    String                             @id @default(cuid())
+  userId                String?
+  websiteUrl            String
+  businessName          String?
+  businessAddr          String?
+  businessCity          String?
+  businessState         String?
+  businessZip           String?
+  businessPhone         String?
+  createdAt             DateTime                           @default(now())
+  updatedAt             DateTime                           @updatedAt
+  contentSourceMode     String                             @default("local_plus_interests")
   // Canonical Tombstone OS business identity, persisted for reuse across analyses.
   tombstoneBusinessId   Int?
   tombstoneBusinessUuid String?
   // Token linking anonymous sessions to their Business record before registration.
-  anonymousToken    String?                  @unique
-  analyses          Analysis[]
-  user              User?                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  feedPreferences   BusinessFeedPreference[]
-  socialPosts       SocialPost[]
-  scoutEmailSettings ScoutEmailSettings?
-  scoutEmailHistory  ScoutEmailHistory[]
-  scoutReports       ScoutReport[]
-  postPackages       PostPackage[]
-  creditAccount      CreditAccount?
-  contentProfile     BusinessContentProfile?
-  savedAnalysis       Json?
-  analysisRefreshedAt DateTime?
-  hasMultipleLocations Boolean                @default(false)
-  assets              BusinessAsset[]
-  locations           BusinessLocation[]
-  publishSettings     PublishSettings?
-  socialConnections   SocialConnection[]
-  scheduledPosts      ScheduledPost[]
-  communitySettings   CommunityEngagementSettings?
-  communitySources    CommunitySource[]
-  communityOpps       CommunityEngagementOpportunity[]
-  profileInterviews   BusinessProfileInterview[]
-  profileDocuments    GeneratedBusinessProfileDocument[]
-  sharedAssetApprovals    BusinessSharedAssetApproval[]
-  sharedAssetPackGrants   BusinessSharedAssetPackGrant[]
-  agentAssetUsageLogs    AgentAssetUsageLog[]
+  anonymousToken        String?                            @unique
+  analyses              Analysis[]
+  user                  User?                              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedPreferences       BusinessFeedPreference[]
+  socialPosts           SocialPost[]
+  scoutEmailSettings    ScoutEmailSettings?
+  scoutEmailHistory     ScoutEmailHistory[]
+  scoutReports          ScoutReport[]
+  postPackages          PostPackage[]
+  creditAccount         CreditAccount?
+  contentProfile        BusinessContentProfile?
+  savedAnalysis         Json?
+  analysisRefreshedAt   DateTime?
+  hasMultipleLocations  Boolean                            @default(false)
+  assets                BusinessAsset[]
+  locations             BusinessLocation[]
+  publishSettings       PublishSettings?
+  socialConnections     SocialConnection[]
+  scheduledPosts        ScheduledPost[]
+  communitySettings     CommunityEngagementSettings?
+  communitySources      CommunitySource[]
+  communityOpps         CommunityEngagementOpportunity[]
+  profileInterviews     BusinessProfileInterview[]
+  profileDocuments      GeneratedBusinessProfileDocument[]
+  sharedAssetApprovals  BusinessSharedAssetApproval[]
+  sharedAssetPackGrants BusinessSharedAssetPackGrant[]
+  agentAssetUsageLogs   AgentAssetUsageLog[]
+  serviceOfferings      BusinessServiceOffering[]
+
+  // ── Industry match (from Jim Bridger / owner-confirmed) ────────────
+  matchedIndustryId         String?
+  matchedIndustryConfidence String? // high | medium | low
+  industryMatchSource       String? // jim_bridger | owner_confirmed | manual
+  industryMatchEvidence     Json? // string[] of evidence snippets
+  ownerConfirmedIndustry    Boolean   @default(false)
+  industryMatchedAt         DateTime?
 
   // ── Service area & website build mode ──────────────────────────────
-  serviceAreaMode       String?          // local | regional | national | multi_location
-  isNationwide          Boolean          @default(false)
-  hqCity                String?
-  hqState               String?
-  primaryMarketCity     String?
-  primaryMarketState    String?
-  targetMarkets         String[]         @default([])
-  websiteBuildMode      String           @default("multi_page_seo") // single_page | multi_page_seo
-  forbiddenBrandTerms   String[]         @default([])
+  serviceAreaMode     String? // local | regional | national | multi_location
+  isNationwide        Boolean  @default(false)
+  hqCity              String?
+  hqState             String?
+  primaryMarketCity   String?
+  primaryMarketState  String?
+  targetMarkets       String[] @default([])
+  websiteBuildMode    String   @default("multi_page_seo") // single_page | multi_page_seo
+  forbiddenBrandTerms String[] @default([])
 
   // ── Default social landing page ─────────────────────────────────
   defaultSocialLandingPageUrl     String?
-  defaultSocialLandingPageEnabled Boolean  @default(false)
-  defaultSocialCtaText            String   @default("Learn more here:")
+  defaultSocialLandingPageEnabled Boolean @default(false)
+  defaultSocialCtaText            String  @default("Learn more here:")
 
   // ── GoHighLevel tenant provisioning ─────────────────────────────
-  ghlLocationId         String?          // GHL location ID returned by provisioning API
-  ghlSubtenantId        String?          // GHL sub-account / subtenant ID
-  ghlProvisioningStatus String?          // pending | provisioned | failed
+  ghlLocationId         String? // GHL location ID returned by provisioning API
+  ghlSubtenantId        String? // GHL sub-account / subtenant ID
+  ghlProvisioningStatus String? // pending | provisioned | failed
   ghlProvisionedAt      DateTime?
   ghlProvisioningError  String?
-  ghlApiToken           String?          // Per-business GHL API token (for linked_existing accounts)
-  ghlConnectionType     String?          // created_new | linked_existing
+  ghlApiToken           String? // Per-business GHL API token (for linked_existing accounts)
+  ghlConnectionType     String? // created_new | linked_existing
   ghlLinkedAt           DateTime?
   ghlLinkNotes          String?
 
   // ── Linked GHL Social Planner channels for this business ──────
-  ghlLinkedAccountIds         String[]   @default([])
+  ghlLinkedAccountIds String[] @default([])
 
   // ── Default GHL Social Planner account ──────────────────────────
-  defaultGhlSocialAccountId   String?    // Full GHL Social Planner account ID
-  defaultGhlSocialAccountName String?    // Display name (e.g. "Blazing Hog Wireless Internet")
-  defaultGhlSocialPlatform    String?    // facebook | tiktok | instagram | etc.
-  defaultGhlSocialOriginId    String?    // GHL platform-specific origin ID
+  defaultGhlSocialAccountId   String? // Full GHL Social Planner account ID
+  defaultGhlSocialAccountName String? // Display name (e.g. "Blazing Hog Wireless Internet")
+  defaultGhlSocialPlatform    String? // facebook | tiktok | instagram | etc.
+  defaultGhlSocialOriginId    String? // GHL platform-specific origin ID
 
   // ── Default GHL Publishing User ────────────────────────────────
-  defaultGhlUserId            String?    // GHL user ID for Social Planner post payloads
-  defaultGhlUserName          String?    // Display name (e.g. "Russell Fuller")
-  defaultGhlUserEmail         String?    // Email (e.g. "rjsautomotivecenter@gmail.com")
-  lastGhlUserVerifiedAt       DateTime?  // When userId was last confirmed valid
+  defaultGhlUserId      String? // GHL user ID for Social Planner post payloads
+  defaultGhlUserName    String? // Display name (e.g. "Russell Fuller")
+  defaultGhlUserEmail   String? // Email (e.g. "rjsautomotivecenter@gmail.com")
+  lastGhlUserVerifiedAt DateTime? // When userId was last confirmed valid
 
   @@unique([userId, websiteUrl])
   @@index([userId])
 }
 
 model BusinessLocation {
-  id              String   @id @default(cuid())
-  businessId      String
-  locationNumber  Int
-  locationName    String?
-  address1        String?
-  address2        String?
-  city            String?
-  state           String?
-  postalCode      String?
-  county          String?
-  country         String   @default("US")
-  latitude        Float?
-  longitude       Float?
-  placeId         String?
-  source          String?  // google_places, user_added, existing_business, imported
-  isPrimary       Boolean  @default(false)
-  isConfirmed     Boolean  @default(true)
-  pageSlug        String?
-  phone           String?
-  googleMapsUrl   String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  businessId     String
+  locationNumber Int
+  locationName   String?
+  address1       String?
+  address2       String?
+  city           String?
+  state          String?
+  postalCode     String?
+  county         String?
+  country        String   @default("US")
+  latitude       Float?
+  longitude      Float?
+  placeId        String?
+  source         String? // google_places, user_added, existing_business, imported
+  isPrimary      Boolean  @default(false)
+  isConfirmed    Boolean  @default(true)
+  pageSlug       String?
+  phone          String?
+  googleMapsUrl  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@unique([businessId, locationNumber])
   @@unique([businessId, placeId])
@@ -163,21 +173,21 @@ model BusinessLocation {
 }
 
 model BusinessContentProfile {
-  id                  String   @id @default(cuid())
-  businessId          String   @unique
-  contentPillars      Json     @default("[]")
-  allowedAdjacentTopics Json   @default("[]")
-  seasonalTopicMap    Json     @default("{}")
-  faqTopics           Json     @default("[]")
-  audienceSegments    Json     @default("[]")
-  brandVoiceSummary   String   @default("")
-  restrictedTopics    Json     @default("[]")
-  evergreenTopics     Json     @default("[]")
-  industry            String   @default("")
-  lastEnrichedAt      DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  business            Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id                    String    @id @default(cuid())
+  businessId            String    @unique
+  contentPillars        Json      @default("[]")
+  allowedAdjacentTopics Json      @default("[]")
+  seasonalTopicMap      Json      @default("{}")
+  faqTopics             Json      @default("[]")
+  audienceSegments      Json      @default("[]")
+  brandVoiceSummary     String    @default("")
+  restrictedTopics      Json      @default("[]")
+  evergreenTopics       Json      @default("[]")
+  industry              String    @default("")
+  lastEnrichedAt        DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
 }
 
 model ScoutEmailSettings {
@@ -251,37 +261,37 @@ model UserFeedPreference {
 }
 
 model Analysis {
-  id              String       @id @default(cuid())
-  userId          String?
-  websiteUrl      String
-  missionId       String?
-  status          String       @default("pending")
-  results         Json?
-  seoData         Json?
-  postingPlan     Json?
-  businessName    String?
-  businessAddr    String?
-  businessCity    String?
-  businessState   String?
-  businessZip     String?
-  businessPhone   String?
-  geoConfirmed    Boolean      @default(false)
-  geoSource       String?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-  socialMissionId String?
-  businessId      String?
+  id                    String       @id @default(cuid())
+  userId                String?
+  websiteUrl            String
+  missionId             String?
+  status                String       @default("pending")
+  results               Json?
+  seoData               Json?
+  postingPlan           Json?
+  businessName          String?
+  businessAddr          String?
+  businessCity          String?
+  businessState         String?
+  businessZip           String?
+  businessPhone         String?
+  geoConfirmed          Boolean      @default(false)
+  geoSource             String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  socialMissionId       String?
+  businessId            String?
   // Canonical Tombstone OS business identity (created via POST /businesses/provisional).
   // tombstoneBusinessId is the integer key the Tombstone /commands gate requires for
   // customer-facing content; tombstoneBusinessUuid is the public token held until signup.
   tombstoneBusinessId   Int?
   tombstoneBusinessUuid String?
   // Token linking anonymous sessions to their Analysis record before registration.
-  anonymousToken    String?                  @unique
-  ads             Ad[]
-  business        Business?    @relation(fields: [businessId], references: [id])
-  user            User?        @relation(fields: [userId], references: [id])
-  socialPosts     SocialPost[]
+  anonymousToken        String?      @unique
+  ads                   Ad[]
+  business              Business?    @relation(fields: [businessId], references: [id])
+  user                  User?        @relation(fields: [userId], references: [id])
+  socialPosts           SocialPost[]
 
   @@index([userId])
   @@index([businessId])
@@ -532,36 +542,36 @@ model ScoutReport {
 }
 
 model ScoutStory {
-  id              String      @id @default(cuid())
-  scoutReportId   String
-  title           String
-  source          String
-  sourceUrl       String      @default("")
-  sourceType      String      @default("local") // local, industry, national
-  pubDate         String      @default("")
-  summary         String      @default("")
-  relevance       String      @default("")
-  suggestedAngle  String      @default("")
-  createdAt       DateTime    @default(now())
-  scoutReport     ScoutReport @relation(fields: [scoutReportId], references: [id], onDelete: Cascade)
-  postPackages    PostPackage[]
+  id             String        @id @default(cuid())
+  scoutReportId  String
+  title          String
+  source         String
+  sourceUrl      String        @default("")
+  sourceType     String        @default("local") // local, industry, national
+  pubDate        String        @default("")
+  summary        String        @default("")
+  relevance      String        @default("")
+  suggestedAngle String        @default("")
+  createdAt      DateTime      @default(now())
+  scoutReport    ScoutReport   @relation(fields: [scoutReportId], references: [id], onDelete: Cascade)
+  postPackages   PostPackage[]
 
   @@index([scoutReportId])
 }
 
 model MagicToken {
-  id            String   @id @default(cuid())
-  token         String   @unique
+  id            String    @id @default(cuid())
+  token         String    @unique
   userId        String
   businessId    String
   scoutReportId String?
   storyId       String?
-  action        String   // create_post, review_stories, review_package
-  nonce         String   @unique
-  used          Boolean  @default(false)
+  action        String // create_post, review_stories, review_package
+  nonce         String    @unique
+  used          Boolean   @default(false)
   usedAt        DateTime?
   expiresAt     DateTime
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
 
   @@index([token])
   @@index([userId])
@@ -569,45 +579,45 @@ model MagicToken {
 }
 
 model PostPackage {
-  id              String      @id @default(cuid())
-  userId          String
-  businessId      String
-  storyId         String?
-  scoutReportId   String?
-  source          String      @default("daily_scout_email") // daily_scout_email, app_review
-  workflowId      String?
-  status          String      @default("generating") // generating, ready, downloaded, draft, rejected, posted
-  postCopy        String?     @default("")
-  headline        String?     @default("")
-  cta             String?     @default("")
-  hashtags        String[]    @default([])
-  imageUrl        String?     @default("")
-  storyTitle      String      @default("")
-  storySource     String      @default("")
-  storyUrl        String      @default("")
-  storySummary    String      @default("")
-  suggestedAngle  String      @default("")
-  completedAt     DateTime?
-  completionEmailSent Boolean  @default(false)
-  warRoomStatus       String?   // approved, revise, reject
+  id                  String      @id @default(cuid())
+  userId              String
+  businessId          String
+  storyId             String?
+  scoutReportId       String?
+  source              String      @default("daily_scout_email") // daily_scout_email, app_review
+  workflowId          String?
+  status              String      @default("generating") // generating, ready, downloaded, draft, rejected, posted
+  postCopy            String?     @default("")
+  headline            String?     @default("")
+  cta                 String?     @default("")
+  hashtags            String[]    @default([])
+  imageUrl            String?     @default("")
+  storyTitle          String      @default("")
+  storySource         String      @default("")
+  storyUrl            String      @default("")
+  storySummary        String      @default("")
+  suggestedAngle      String      @default("")
+  completedAt         DateTime?
+  completionEmailSent Boolean     @default(false)
+  warRoomStatus       String? // approved, revise, reject
   warRoomScore        Int?
   warRoomRejectReason String?
   qaScore             Int?
   qaRejectReason      String?
   // Carousel fields
-  carouselData          Json?    // Full CarouselPackage JSON
-  carouselSlides        Json?    // Array of rendered slide metadata
-  carouselImageUrls     String[] @default([]) // S3 URLs for slide images
-  sourceAttribution     String?  // "Source: Publisher Name"
+  carouselData        Json? // Full CarouselPackage JSON
+  carouselSlides      Json? // Array of rendered slide metadata
+  carouselImageUrls   String[]    @default([]) // S3 URLs for slide images
+  sourceAttribution   String? // "Source: Publisher Name"
   // Credit tracking
   creditChargedAt     DateTime?
-  creditCost          Int?         @default(0)
+  creditCost          Int?        @default(0)
   creditTransactionId String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  business        Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  story           ScoutStory? @relation(fields: [storyId], references: [id])
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business            Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  story               ScoutStory? @relation(fields: [storyId], references: [id])
 
   @@index([userId])
   @@index([businessId])
@@ -619,32 +629,32 @@ model PostPackage {
 // ─── Credit System ───────────────────────────────────────────────
 
 model CreditAccount {
-  id                      String   @id @default(cuid())
-  businessId              String   @unique
-  creditBalance           Int      @default(0)
-  monthlyCreditAllowance  Int      @default(6)
-  creditsRenewAt          DateTime?
-  creditPlanName          String?  @default("starter")
-  creditStatus            String   @default("active") // active, suspended, cancelled, billing_issue, past_due, canceled
+  id                       String              @id @default(cuid())
+  businessId               String              @unique
+  creditBalance            Int                 @default(0)
+  monthlyCreditAllowance   Int                 @default(6)
+  creditsRenewAt           DateTime?
+  creditPlanName           String?             @default("starter")
+  creditStatus             String              @default("active") // active, suspended, cancelled, billing_issue, past_due, canceled
   // Stripe Billing
-  stripeCustomerId        String?
-  stripeSubscriptionId    String?
+  stripeCustomerId         String?
+  stripeSubscriptionId     String?
   stripeSubscriptionStatus String? // active, trialing, past_due, canceled, unpaid, incomplete, etc.
-  stripePriceId           String?
-  trialStartedAt          DateTime?
-  trialEndsAt             DateTime?
-  currentPeriodStart      DateTime?
-  currentPeriodEnd        DateTime?
-  cancelAtPeriodEnd       Boolean  @default(false)
-  lastInvoiceId           String?
-  lastPaymentStatus       String?  // paid, failed, open, etc.
+  stripePriceId            String?
+  trialStartedAt           DateTime?
+  trialEndsAt              DateTime?
+  currentPeriodStart       DateTime?
+  currentPeriodEnd         DateTime?
+  cancelAtPeriodEnd        Boolean             @default(false)
+  lastInvoiceId            String?
+  lastPaymentStatus        String? // paid, failed, open, etc.
   accountClosedAt          DateTime?
   creditClosureExpiresAt   DateTime?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  business                Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  transactions            CreditTransaction[]
-  creditLots              CreditLot[]
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+  business                 Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  transactions             CreditTransaction[]
+  creditLots               CreditLot[]
 
   @@index([creditStatus])
   @@index([stripeCustomerId])
@@ -652,26 +662,26 @@ model CreditAccount {
 }
 
 model CreditTransaction {
-  id              String   @id @default(cuid())
-  creditAccountId String
-  businessId      String
-  userId          String?
-  postPackageId   String?
-  transactionType String   // monthly_grant, admin_grant, starter_grant, image_post_charge, video_upgrade_charge, recharge_grant, refund, adjustment, failed_generation_refund, recharge_pending, credit_expired
-  amount          Int      // positive = credit added, negative = credit spent
-  balanceAfter    Int
-  reason          String   @default("")
-  idempotencyKey  String?  @unique
-  expiresAt       DateTime?
-  creditLotId     String?
-  relatedCreditLotId String?
+  id                      String        @id @default(cuid())
+  creditAccountId         String
+  businessId              String
+  userId                  String?
+  postPackageId           String?
+  transactionType         String // monthly_grant, admin_grant, starter_grant, image_post_charge, video_upgrade_charge, recharge_grant, refund, adjustment, failed_generation_refund, recharge_pending, credit_expired
+  amount                  Int // positive = credit added, negative = credit spent
+  balanceAfter            Int
+  reason                  String        @default("")
+  idempotencyKey          String?       @unique
+  expiresAt               DateTime?
+  creditLotId             String?
+  relatedCreditLotId      String?
   // Stripe-ready placeholders
   stripeCheckoutSessionId String?
   stripePaymentIntentId   String?
   rechargePackId          String?
-  metadata        Json?
-  createdAt       DateTime @default(now())
-  creditAccount   CreditAccount @relation(fields: [creditAccountId], references: [id], onDelete: Cascade)
+  metadata                Json?
+  createdAt               DateTime      @default(now())
+  creditAccount           CreditAccount @relation(fields: [creditAccountId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([userId])
@@ -682,18 +692,18 @@ model CreditTransaction {
 }
 
 model CreditLot {
-  id                  String   @id @default(cuid())
+  id                  String        @id @default(cuid())
   businessId          String
   creditAccountId     String
   sourceTransactionId String?
-  creditType          String   // starter, monthly, recharge, admin, refund
+  creditType          String // starter, monthly, recharge, admin, refund
   originalAmount      Int
   remainingAmount     Int
-  grantedAt           DateTime @default(now())
+  grantedAt           DateTime      @default(now())
   expiresAt           DateTime?
   closureExpiresAt    DateTime?
   metadata            Json?
-  createdAt           DateTime @default(now())
+  createdAt           DateTime      @default(now())
   creditAccount       CreditAccount @relation(fields: [creditAccountId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
@@ -705,65 +715,65 @@ model CreditLot {
 }
 
 model BusinessAsset {
-  id                    String    @id @default(cuid())
+  id                    String        @id @default(cuid())
   businessId            String
   tombstoneBusinessId   Int?
   tombstoneBusinessUuid String?
   uploadedByUserId      String
-  assetType             String    // logo, brand_guidelines, product_photo, service_photo, menu_list, price_sheet, offer_sheet, owner_photo, staff_photo, certification, license, award, press_mention, storefront_photo, facility_photo, fleet_photo, service_area_map, landmark_photo, before_after_photo, testimonial_screenshot, review_screenshot, case_study, existing_ad, social_post, flyer_brochure, website_screenshot, negative_example, approved_claim, forbidden_claim, disclaimer, usage_rights_doc, font_notes, color_palette
-  category              String    // brand, products_services, people_trust, location_service_area, proof_social_proof, compliance, creative_examples
+  assetType             String // logo, brand_guidelines, product_photo, service_photo, menu_list, price_sheet, offer_sheet, owner_photo, staff_photo, certification, license, award, press_mention, storefront_photo, facility_photo, fleet_photo, service_area_map, landmark_photo, before_after_photo, testimonial_screenshot, review_screenshot, case_study, existing_ad, social_post, flyer_brochure, website_screenshot, negative_example, approved_claim, forbidden_claim, disclaimer, usage_rights_doc, font_notes, color_palette
+  category              String // brand, products_services, people_trust, location_service_area, proof_social_proof, compliance, creative_examples
   title                 String
-  description           String    @default("")
-  tags                  String[]  @default([])
+  description           String        @default("")
+  tags                  String[]      @default([])
   originalFilename      String
   mimeType              String
   fileSizeBytes         Int
   width                 Int?
   height                Int?
-  cloudStoragePath      String    // S3/Cloudflare storage key
-  publicUrl             String?   // direct URL for approved public assets
-  thumbnailPath         String?   // storage key for generated thumbnail
-  thumbnailUrl          String?   // direct URL for thumbnail
-  isPublic              Boolean   @default(false)
-  approvalStatus        String    @default("uploaded") // uploaded, pending_review, approved, rejected, expired, do_not_use, archived
-  usageRights           String?   // owned, licensed, public_domain, customer_permission, unknown
-  allowedChannels       String[]  @default([])
-  disallowedChannels    String[]  @default([])
-  priorityScore         Int       @default(0)
+  cloudStoragePath      String // S3/Cloudflare storage key
+  publicUrl             String? // direct URL for approved public assets
+  thumbnailPath         String? // storage key for generated thumbnail
+  thumbnailUrl          String? // direct URL for thumbnail
+  isPublic              Boolean       @default(false)
+  approvalStatus        String        @default("uploaded") // uploaded, pending_review, approved, rejected, expired, do_not_use, archived
+  usageRights           String? // owned, licensed, public_domain, customer_permission, unknown
+  allowedChannels       String[]      @default([])
+  disallowedChannels    String[]      @default([])
+  priorityScore         Int           @default(0)
   expiresAt             DateTime?
   archivedAt            DateTime?
   // Text-entry assets (approved claims, forbidden claims, disclaimers)
-  textContent           String?   // for text-based assets that are not file uploads
-  sourcePlatform        String?   // for testimonials/reviews: google, yelp, facebook, etc.
-  customerPermission    String?   // for testimonials: granted, pending, not_requested
-  approvedForAds        Boolean   @default(false)
-  exampleType           String?   // for creative examples: approved_example, past_ad, negative_example, competitor_reference
-  pairTag               String?   // for before/after photos: links related assets
-  pairRole              String?   // before, after
+  textContent           String? // for text-based assets that are not file uploads
+  sourcePlatform        String? // for testimonials/reviews: google, yelp, facebook, etc.
+  customerPermission    String? // for testimonials: granted, pending, not_requested
+  approvedForAds        Boolean       @default(false)
+  exampleType           String? // for creative examples: approved_example, past_ad, negative_example, competitor_reference
+  pairTag               String? // for before/after photos: links related assets
+  pairRole              String? // before, after
   expirationDate        DateTime? // for certifications/licenses
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  uploadedBy            User      @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  business              Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  uploadedBy            User          @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
   assetContext          AssetContext?
 
   // Extended metadata for enhanced asset library
-  duration              Float?    // seconds for video/audio
-  orientation           String?   // horizontal, vertical, square
-  hasAudio              Boolean?  // for video files
-  hasTransparency       Boolean?  // for images
-  wordCount             Int?      // for documents
-  extractedTextPreview  String?   // first ~200 chars of document text
-  intendedUses          String[]  @default([]) // website, social, video, ads, seo, email, print, internal
-  qualityStatus         String?   // good, warning, needs_review, low_quality
-  qualityWarnings       String[]  @default([]) // list of warning messages
-  rightsConfirmed       Boolean   @default(false)
-  peopleOrCustomerContent Boolean @default(false)
-  customerPermissionConfirmed Boolean @default(false)
-  approvedForAI         Boolean   @default(false)
-  publicUseAllowed      Boolean   @default(false)
-  notesForAI            String?   // freeform notes for AI workflows
-  relatedServiceTopic   String?   // service type or topic this asset relates to
+  duration                    Float? // seconds for video/audio
+  orientation                 String? // horizontal, vertical, square
+  hasAudio                    Boolean? // for video files
+  hasTransparency             Boolean? // for images
+  wordCount                   Int? // for documents
+  extractedTextPreview        String? // first ~200 chars of document text
+  intendedUses                String[] @default([]) // website, social, video, ads, seo, email, print, internal
+  qualityStatus               String? // good, warning, needs_review, low_quality
+  qualityWarnings             String[] @default([]) // list of warning messages
+  rightsConfirmed             Boolean  @default(false)
+  peopleOrCustomerContent     Boolean  @default(false)
+  customerPermissionConfirmed Boolean  @default(false)
+  approvedForAI               Boolean  @default(false)
+  publicUseAllowed            Boolean  @default(false)
+  notesForAI                  String? // freeform notes for AI workflows
+  relatedServiceTopic         String? // service type or topic this asset relates to
 
   @@index([businessId])
   @@index([businessId, category])
@@ -773,23 +783,23 @@ model BusinessAsset {
 }
 
 model InternalCostLedger {
-  id                    String   @id @default(cuid())
-  businessId            String?
-  userId                String?
-  postPackageId         String?
-  workflowId            String?
-  taskId                String?
-  provider              String?  // openai, fal, render, cloudflare_r2, abacus
-  costType              String   // llm, image_generation, video_generation, render_runtime, r2_storage, r2_bandwidth, email, other
-  estimatedCostUsd      Decimal  @default(0) @db.Decimal(10, 6)
-  inputTokens           Int?
-  outputTokens          Int?
-  imageCount            Int?
-  videoSeconds          Int?
-  renderRuntimeSeconds  Int?
-  retryCount            Int?
-  metadata              Json?
-  createdAt             DateTime @default(now())
+  id                   String   @id @default(cuid())
+  businessId           String?
+  userId               String?
+  postPackageId        String?
+  workflowId           String?
+  taskId               String?
+  provider             String? // openai, fal, render, cloudflare_r2, abacus
+  costType             String // llm, image_generation, video_generation, render_runtime, r2_storage, r2_bandwidth, email, other
+  estimatedCostUsd     Decimal  @default(0) @db.Decimal(10, 6)
+  inputTokens          Int?
+  outputTokens         Int?
+  imageCount           Int?
+  videoSeconds         Int?
+  renderRuntimeSeconds Int?
+  retryCount           Int?
+  metadata             Json?
+  createdAt            DateTime @default(now())
 
   @@index([businessId])
   @@index([postPackageId])
@@ -816,62 +826,62 @@ model SocialAccount {
 }
 
 model SocialPost {
-  id              String    @id @default(cuid())
-  userId          String
-  analysisId      String?
-  caption         String
-  hashtags        String[]  @default([])
-  imageUrl        String?
-  imagePrompt     String?
-  rssItemId       String?
-  rssItemTitle    String?
-  rssItemLink     String?
-  sourceType      String?
-  newsAngle       String?
-  platforms       String[]  @default([])
-  postType        String    @default("general")
-  status          String    @default("draft")
-  scheduledFor    DateTime?
-  publishedAt     DateTime?
-  rejectedAt      DateTime?
-  rejectReason    String?
-  tradeAreaZip    String?
-  briefScore      Float?
-  patternType     String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  tombstoneTaskId       String?
-  workflowId            String?
-  businessId            String?
-  sourceName            String?
-  sourceArticleTitle    String?
-  sourceArticleUrl      String?
-  cta                   String?
-  generationRunId       String?
-  generationStartedAt   DateTime?
-  generationCompletedAt DateTime?
-  totalGenerationTimeMs Int?
+  id                     String    @id @default(cuid())
+  userId                 String
+  analysisId             String?
+  caption                String
+  hashtags               String[]  @default([])
+  imageUrl               String?
+  imagePrompt            String?
+  rssItemId              String?
+  rssItemTitle           String?
+  rssItemLink            String?
+  sourceType             String?
+  newsAngle              String?
+  platforms              String[]  @default([])
+  postType               String    @default("general")
+  status                 String    @default("draft")
+  scheduledFor           DateTime?
+  publishedAt            DateTime?
+  rejectedAt             DateTime?
+  rejectReason           String?
+  tradeAreaZip           String?
+  briefScore             Float?
+  patternType            String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  tombstoneTaskId        String?
+  workflowId             String?
+  businessId             String?
+  sourceName             String?
+  sourceArticleTitle     String?
+  sourceArticleUrl       String?
+  cta                    String?
+  generationRunId        String?
+  generationStartedAt    DateTime?
+  generationCompletedAt  DateTime?
+  totalGenerationTimeMs  Int?
   // Carousel fields
-  carouselData          Json?    // Full CarouselPackage JSON (key_points, slides metadata, platform_notes)
-  carouselSlides        Json?    // Array of {slide_number, headline, bullets, imageUrl} for rendered slides
-  carouselImageUrls     String[] @default([]) // S3 URLs for slide images (ordered)
-  sourceAttribution     String?  // "Source: Publisher Name"
+  carouselData           Json? // Full CarouselPackage JSON (key_points, slides metadata, platform_notes)
+  carouselSlides         Json? // Array of {slide_number, headline, bullets, imageUrl} for rendered slides
+  carouselImageUrls      String[]  @default([]) // S3 URLs for slide images (ordered)
+  sourceAttribution      String? // "Source: Publisher Name"
   // ── GHL Social Planner publish tracking ─────────────────────────
-  ghlPostId               String?    // Post ID returned by GHL Create Post API
-  ghlLocationId           String?    // GHL location ID used for publishing
-  ghlSocialAccountId      String?    // GHL Social Planner account ID used
-  ghlSocialAccountName    String?    // Display name of the account published to
-  ghlSocialOriginId       String?    // Platform-specific origin ID (e.g. FB page ID)
-  ghlStatus               String?    // GHL's reported status: success | error | pending
-  publishTraceId          String?    // Unique trace ID for diagnostics
-  lastPublishAttemptAt    DateTime?  // Timestamp of last publish attempt
-  publishResponseSummary  String?    // Safe summary of GHL response (no secrets)
+  ghlPostId              String? // Post ID returned by GHL Create Post API
+  ghlLocationId          String? // GHL location ID used for publishing
+  ghlSocialAccountId     String? // GHL Social Planner account ID used
+  ghlSocialAccountName   String? // Display name of the account published to
+  ghlSocialOriginId      String? // Platform-specific origin ID (e.g. FB page ID)
+  ghlStatus              String? // GHL's reported status: success | error | pending
+  publishTraceId         String? // Unique trace ID for diagnostics
+  lastPublishAttemptAt   DateTime? // Timestamp of last publish attempt
+  publishResponseSummary String? // Safe summary of GHL response (no secrets)
 
-  analysis        Analysis?      @relation(fields: [analysisId], references: [id])
-  business        Business?      @relation(fields: [businessId], references: [id])
-  generationRun   GenerationRun? @relation(fields: [generationRunId], references: [id])
-  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  scheduledPosts  ScheduledPost[]
+  analysis       Analysis?       @relation(fields: [analysisId], references: [id])
+  business       Business?       @relation(fields: [businessId], references: [id])
+  generationRun  GenerationRun?  @relation(fields: [generationRunId], references: [id])
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scheduledPosts ScheduledPost[]
 
   @@index([userId])
   @@index([status])
@@ -884,36 +894,36 @@ model SocialPost {
 }
 
 model GenerationRun {
-  id                    String    @id @default(cuid())
-  userId                String
-  businessId            String?
-  status                String    @default("creating_workflow")
-  selectedStoryTitles   String[]  @default([])
-  selectedStorySources  String[]  @default([])
-  selectedStoryLinks    String[]  @default([])
-  storyCount            Int       @default(0)
-  workflowIds           String[]  @default([])
-  tombstoneTaskIds      String[]  @default([])
-  firstTaskId           String?
-  clickedAt             DateTime
-  runCreatedAt          DateTime  @default(now())
-  apiReceivedAt         DateTime?
+  id                      String       @id @default(cuid())
+  userId                  String
+  businessId              String?
+  status                  String       @default("creating_workflow")
+  selectedStoryTitles     String[]     @default([])
+  selectedStorySources    String[]     @default([])
+  selectedStoryLinks      String[]     @default([])
+  storyCount              Int          @default(0)
+  workflowIds             String[]     @default([])
+  tombstoneTaskIds        String[]     @default([])
+  firstTaskId             String?
+  clickedAt               DateTime
+  runCreatedAt            DateTime     @default(now())
+  apiReceivedAt           DateTime?
   workflowCreateStartedAt DateTime?
-  workflowCreatedAt     DateTime?
-  firstTaskCreatedAt    DateTime?
-  firstTaskClaimedAt    DateTime?
-  lastTaskCompletedAt   DateTime?
-  socialPostCreatedAt   DateTime?
-  socialPostReadyAt     DateTime?
-  completedAt           DateTime?
-  failedAt              DateTime?
-  failStep              String?
-  failError             String?
-  totalTimeMs           Int?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  socialPosts           SocialPost[]
+  workflowCreatedAt       DateTime?
+  firstTaskCreatedAt      DateTime?
+  firstTaskClaimedAt      DateTime?
+  lastTaskCompletedAt     DateTime?
+  socialPostCreatedAt     DateTime?
+  socialPostReadyAt       DateTime?
+  completedAt             DateTime?
+  failedAt                DateTime?
+  failStep                String?
+  failError               String?
+  totalTimeMs             Int?
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  user                    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  socialPosts             SocialPost[]
 
   @@index([userId])
   @@index([status])
@@ -922,22 +932,22 @@ model GenerationRun {
 
 // ── Website Generation: Section-Level Feedback ──────────────────────────────
 model SiteFeedback {
-  id              String   @id @default(cuid())
-  businessId      String?
-  analysisId      String?
-  workflowId      String?  // Tombstone workflow ID
-  pageId          String   @default("home") // home, service_slug, etc.
-  sectionId       String?  // hero, about, services, how_it_works, etc.
-  target          String   // image | copy | layout | nav | service_page | whole_site | tone | mobile
-  feedback        String   // Owner's feedback text
-  requestedAction String?  // regenerate_image | revise_copy | revise_section | add_service_page | adjust_layout | revise_tone
-  status          String   @default("pending") // pending | applied | rejected | needs_review
-  appliedAt       DateTime?
+  id                  String    @id @default(cuid())
+  businessId          String?
+  analysisId          String?
+  workflowId          String? // Tombstone workflow ID
+  pageId              String    @default("home") // home, service_slug, etc.
+  sectionId           String? // hero, about, services, how_it_works, etc.
+  target              String // image | copy | layout | nav | service_page | whole_site | tone | mobile
+  feedback            String // Owner's feedback text
+  requestedAction     String? // regenerate_image | revise_copy | revise_section | add_service_page | adjust_layout | revise_tone
+  status              String    @default("pending") // pending | applied | rejected | needs_review
+  appliedAt           DateTime?
   appliedInWorkflowId String?
-  userId          String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  user            User?    @relation("SiteFeedbackUser", fields: [userId], references: [id])
+  userId              String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  user                User?     @relation("SiteFeedbackUser", fields: [userId], references: [id])
 
   @@index([analysisId])
   @@index([workflowId])
@@ -946,48 +956,48 @@ model SiteFeedback {
 }
 
 model PublishSettings {
-  id              String   @id @default(cuid())
-  businessId      String   @unique
-  autoPublish     Boolean  @default(false)
-  frequency       String   @default("3x_week")  // 1x_week, 2x_week, 3x_week, 5x_week, 1x_day, 2x_day, 3x_day
-  preferredTime   String   @default("10:00")     // HH:mm in user's local time
-  timezone        String   @default("America/Denver")
-  platforms       String[] @default([])
+  id                 String   @id @default(cuid())
+  businessId         String   @unique
+  autoPublish        Boolean  @default(false)
+  frequency          String   @default("3x_week") // 1x_week, 2x_week, 3x_week, 5x_week, 1x_day, 2x_day, 3x_day
+  preferredTime      String   @default("10:00") // HH:mm in user's local time
+  timezone           String   @default("America/Denver")
+  platforms          String[] @default([])
   // Scheduler onboarding fields
-  postingGoal     String?  // more_calls, website_visits, reviews, repeat_customers, brand_awareness, recruiting
-  approvalMode    String   @default("review_first") // review_first, auto_after_approval, full_autopilot
-  cadence         String   @default("standard")  // light, standard, growth, custom
-  preferredDays   String[] @default([])  // mon, tue, wed, thu, fri, sat, sun
-  preferredTimes  String[] @default([])  // HH:mm values
-  defaultChannels String[] @default([])  // facebook, google_business, instagram, linkedin
-  autopilotEnabled Boolean @default(false)
-  onboardingComplete Boolean @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  postingGoal        String? // more_calls, website_visits, reviews, repeat_customers, brand_awareness, recruiting
+  approvalMode       String   @default("review_first") // review_first, auto_after_approval, full_autopilot
+  cadence            String   @default("standard") // light, standard, growth, custom
+  preferredDays      String[] @default([]) // mon, tue, wed, thu, fri, sat, sun
+  preferredTimes     String[] @default([]) // HH:mm values
+  defaultChannels    String[] @default([]) // facebook, google_business, instagram, linkedin
+  autopilotEnabled   Boolean  @default(false)
+  onboardingComplete Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([autoPublish])
 }
 
 model SocialConnection {
-  id                  String    @id @default(cuid())
-  businessId          String
-  platform            String    // facebook, google_business, instagram, linkedin, tiktok
-  externalAccountId   String?   // e.g. FB page ID, GMB location ID
-  displayName         String?   // e.g. "My Restaurant - Facebook Page"
-  profileUrl          String?   // Link to the social profile
-  accessToken         String?   // Encrypted token for publishing
-  refreshToken        String?   // For OAuth refresh flows
-  tokenExpiresAt      DateTime? // When the access token expires
-  permissionsStatus   String    @default("pending") // pending, connected, expired, revoked, error
-  lastCheckedAt       DateTime? // Last time we verified the connection
-  lastPublishedAt     DateTime? // Last time we published through this connection
-  errorMessage        String?   // Last error if connection failed
-  isActive            Boolean   @default(true)
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  business            Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id                String    @id @default(cuid())
+  businessId        String
+  platform          String // facebook, google_business, instagram, linkedin, tiktok
+  externalAccountId String? // e.g. FB page ID, GMB location ID
+  displayName       String? // e.g. "My Restaurant - Facebook Page"
+  profileUrl        String? // Link to the social profile
+  accessToken       String? // Encrypted token for publishing
+  refreshToken      String? // For OAuth refresh flows
+  tokenExpiresAt    DateTime? // When the access token expires
+  permissionsStatus String    @default("pending") // pending, connected, expired, revoked, error
+  lastCheckedAt     DateTime? // Last time we verified the connection
+  lastPublishedAt   DateTime? // Last time we published through this connection
+  errorMessage      String? // Last error if connection failed
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  business          Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@unique([businessId, platform])
   @@index([businessId])
@@ -996,41 +1006,41 @@ model SocialConnection {
 }
 
 model ScheduledPost {
-  id                  String    @id @default(cuid())
+  id                  String      @id @default(cuid())
   businessId          String
   userId              String
-  socialPostId        String?   // Links to existing SocialPost if sourced from generation
+  socialPostId        String? // Links to existing SocialPost if sourced from generation
   // Content (copied from or independent of SocialPost)
   caption             String
   imageUrl            String?
-  hashtags            String[]  @default([])
+  hashtags            String[]    @default([])
   cta                 String?
-  platforms           String[]  @default([]) // which platforms to post on
+  platforms           String[]    @default([]) // which platforms to post on
   // Scheduling
-  scheduledFor        DateTime  // When the post should go out
-  timezone            String    @default("America/Denver")
+  scheduledFor        DateTime // When the post should go out
+  timezone            String      @default("America/Denver")
   // Approval workflow
-  status              String    @default("needs_approval") // draft, needs_approval, approved, scheduled, publishing, published, failed, paused, revision_requested
-  approvalRequired    Boolean   @default(true)
-  approvedById        String?   // User who approved
+  status              String      @default("needs_approval") // draft, needs_approval, approved, scheduled, publishing, published, failed, paused, revision_requested
+  approvalRequired    Boolean     @default(true)
+  approvedById        String? // User who approved
   approvedAt          DateTime?
   // Revision tracking
   revisionRequestText String?
   revisionRequestedAt DateTime?
-  revisionCount       Int       @default(0)
+  revisionCount       Int         @default(0)
   // Publishing
   publishedAt         DateTime?
   failureReason       String?
-  publishAttempts     Int       @default(0)
+  publishAttempts     Int         @default(0)
   // Content lane/source info
-  lane                String?   // website, news, holiday
-  sourceType          String?   // generation, user_draft, carousel
+  lane                String? // website, news, holiday
+  sourceType          String? // generation, user_draft, carousel
   // Metadata
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  business            Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  user                User      @relation("ScheduledPostUser", fields: [userId], references: [id], onDelete: Cascade)
-  approvedBy          User?     @relation("ScheduledPostApprover", fields: [approvedById], references: [id])
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  business            Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user                User        @relation("ScheduledPostUser", fields: [userId], references: [id], onDelete: Cascade)
+  approvedBy          User?       @relation("ScheduledPostApprover", fields: [approvedById], references: [id])
   socialPost          SocialPost? @relation(fields: [socialPostId], references: [id])
 
   @@index([businessId])
@@ -1044,102 +1054,102 @@ model ScheduledPost {
 // ── Community Engagement ──────────────────────────────────────────────────────
 
 model CommunityEngagementSettings {
-  id                       String   @id @default(cuid())
-  businessId               String   @unique
-  enabled                  Boolean  @default(false)
+  id                      String   @id @default(cuid())
+  businessId              String   @unique
+  enabled                 Boolean  @default(false)
   // Scoring thresholds
-  minOpportunityScore      Int      @default(75)
-  minContentMatchScore     Int      @default(20)
-  minRuleCompatibility     Int      @default(10)
+  minOpportunityScore     Int      @default(75)
+  minContentMatchScore    Int      @default(20)
+  minRuleCompatibility    Int      @default(10)
   // Content requirements
-  requireVideo             Boolean  @default(false)
-  requireExplainerStory    Boolean  @default(false)
-  humanApprovalRequired    Boolean  @default(true)
-  disclosureReminder       Boolean  @default(true)
+  requireVideo            Boolean  @default(false)
+  requireExplainerStory   Boolean  @default(false)
+  humanApprovalRequired   Boolean  @default(true)
+  disclosureReminder      Boolean  @default(true)
   // Frequency controls
-  maxOppsPerDay            Int      @default(3)
-  maxOppsPerCommunityWeek  Int      @default(1)
-  urlCooldownDays          Int      @default(14)
+  maxOppsPerDay           Int      @default(3)
+  maxOppsPerCommunityWeek Int      @default(1)
+  urlCooldownDays         Int      @default(14)
   // Business expertise topics
-  expertiseTopics          String[] @default([])
+  expertiseTopics         String[] @default([])
   // Website content source URLs
-  contentSourceUrls        String[] @default([])
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
-  business                 Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contentSourceUrls       String[] @default([])
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  business                Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 }
 
 model CommunitySource {
-  id             String    @id @default(cuid())
-  businessId     String
-  platform       String    // reddit | forum | specialty
-  communityName  String
-  communityUrl   String?
-  enabled        Boolean   @default(true)
-  excluded       Boolean   @default(false)
-  notes          String?
-  lastCheckedAt  DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  id            String    @id @default(cuid())
+  businessId    String
+  platform      String // reddit | forum | specialty
+  communityName String
+  communityUrl  String?
+  enabled       Boolean   @default(true)
+  excluded      Boolean   @default(false)
+  notes         String?
+  lastCheckedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  business      Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
+  @@unique([businessId, platform, communityName])
   @@index([businessId])
   @@index([businessId, platform])
-  @@unique([businessId, platform, communityName])
 }
 
 model CommunityEngagementOpportunity {
-  id                    String    @id @default(cuid())
-  businessId            String
-  platform              String
-  communityName         String
-  threadTitle           String
-  threadUrl             String
-  threadTextSnippet     String?
-  topic                 String?
+  id                  String                  @id @default(cuid())
+  businessId          String
+  platform            String
+  communityName       String
+  threadTitle         String
+  threadUrl           String
+  threadTextSnippet   String?
+  topic               String?
   // Scoring
-  relevanceScore        Int       @default(0)
-  intentScore           Int       @default(0)
-  contentMatchScore     Int       @default(0)
-  ruleCompatibility     Int       @default(0)
-  spamRiskScore         Int       @default(0)
-  opportunityScore      Int       @default(0)
-  spamRisk              String    @default("Low")
+  relevanceScore      Int                     @default(0)
+  intentScore         Int                     @default(0)
+  contentMatchScore   Int                     @default(0)
+  ruleCompatibility   Int                     @default(0)
+  spamRiskScore       Int                     @default(0)
+  opportunityScore    Int                     @default(0)
+  spamRisk            String                  @default("Low")
   // Content match
-  matchedContentUrl     String?
-  matchedContentTitle   String?
-  matchedContentType    String?
-  hasVideo              Boolean   @default(false)
-  hasExplainerStory     Boolean   @default(false)
-  linkRecommendation    Boolean   @default(false)
+  matchedContentUrl   String?
+  matchedContentTitle String?
+  matchedContentType  String?
+  hasVideo            Boolean                 @default(false)
+  hasExplainerStory   Boolean                 @default(false)
+  linkRecommendation  Boolean                 @default(false)
   // Status
-  status                String    @default("new")
+  status              String                  @default("new")
   // Draft
-  draftText             String?
-  recommendedUrl        String?
-  disclosureText        String?
-  linkJustification     String?
-  riskNotes             String?
-  draftStatus           String?
+  draftText           String?
+  recommendedUrl      String?
+  disclosureText      String?
+  linkJustification   String?
+  riskNotes           String?
+  draftStatus         String?
   // Review
-  reviewerUserId        String?
-  reviewDecision        String?
-  reviewNotes           String?
-  reviewedAt            DateTime?
+  reviewerUserId      String?
+  reviewDecision      String?
+  reviewNotes         String?
+  reviewedAt          DateTime?
   // Outcome
-  manuallyPostedUrl     String?
-  postedAt              DateTime?
-  referralClicks        Int       @default(0)
-  conversions           Int       @default(0)
-  outcomeNotes          String?
+  manuallyPostedUrl   String?
+  postedAt            DateTime?
+  referralClicks      Int                     @default(0)
+  conversions         Int                     @default(0)
+  outcomeNotes        String?
   // Community rules
-  communityRules        String?
-  selfPromoProhibited   Boolean   @default(false)
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  reviewer              User?     @relation("CommunityReviewer", fields: [reviewerUserId], references: [id])
-  contentMatches        CommunityContentMatch[]
+  communityRules      String?
+  selfPromoProhibited Boolean                 @default(false)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  business            Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  reviewer            User?                   @relation("CommunityReviewer", fields: [reviewerUserId], references: [id])
+  contentMatches      CommunityContentMatch[]
 
   @@index([businessId])
   @@index([businessId, status])
@@ -1148,17 +1158,17 @@ model CommunityEngagementOpportunity {
 }
 
 model CommunityContentMatch {
-  id                String   @id @default(cuid())
+  id                String                         @id @default(cuid())
   opportunityId     String
   businessId        String
   contentUrl        String
   contentTitle      String?
   contentType       String?
   matchReason       String?
-  hasVideo          Boolean  @default(false)
-  hasExplainerStory Boolean  @default(false)
-  score             Int      @default(0)
-  createdAt         DateTime @default(now())
+  hasVideo          Boolean                        @default(false)
+  hasExplainerStory Boolean                        @default(false)
+  score             Int                            @default(0)
+  createdAt         DateTime                       @default(now())
   opportunity       CommunityEngagementOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 
   @@index([opportunityId])
@@ -1168,38 +1178,38 @@ model CommunityContentMatch {
 // ── Business Profile Interview & Generated Documents ──────────────────────
 
 model BusinessProfileInterview {
-  id                    String    @id @default(cuid())
-  businessId            String
-  status                String    @default("draft") // draft, completed, approved
-  currentStep           Int       @default(0)
-  answersJson           Json?     // structured answers per step
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  completedAt           DateTime?
-  approvedAt            DateTime?
-  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  generatedDocuments    GeneratedBusinessProfileDocument[]
+  id                 String                             @id @default(cuid())
+  businessId         String
+  status             String                             @default("draft") // draft, completed, approved
+  currentStep        Int                                @default(0)
+  answersJson        Json? // structured answers per step
+  createdAt          DateTime                           @default(now())
+  updatedAt          DateTime                           @updatedAt
+  completedAt        DateTime?
+  approvedAt         DateTime?
+  business           Business                           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  generatedDocuments GeneratedBusinessProfileDocument[]
 
   @@index([businessId])
   @@index([businessId, status])
 }
 
 model GeneratedBusinessProfileDocument {
-  id                    String    @id @default(cuid())
-  businessId            String
-  interviewId           String?
-  documentType          String    // owner_bio, founder_story, company_profile, mission_statement, service_area, customer_profile, differentiators, credentials, faq_source, objections_guide, brand_voice, claims_avoid, master_profile
-  title                 String
-  content               String    @db.Text
-  status                String    @default("draft") // draft, approved, private, needs_review
-  approvedForAI         Boolean   @default(false)
-  publicUseAllowed      Boolean   @default(false)
-  requiresReview        Boolean   @default(true)
-  source                String    @default("guided_interview") // guided_interview, manual_upload
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  interview             BusinessProfileInterview? @relation(fields: [interviewId], references: [id], onDelete: SetNull)
+  id               String                    @id @default(cuid())
+  businessId       String
+  interviewId      String?
+  documentType     String // owner_bio, founder_story, company_profile, mission_statement, service_area, customer_profile, differentiators, credentials, faq_source, objections_guide, brand_voice, claims_avoid, master_profile
+  title            String
+  content          String                    @db.Text
+  status           String                    @default("draft") // draft, approved, private, needs_review
+  approvedForAI    Boolean                   @default(false)
+  publicUseAllowed Boolean                   @default(false)
+  requiresReview   Boolean                   @default(true)
+  source           String                    @default("guided_interview") // guided_interview, manual_upload
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  business         Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  interview        BusinessProfileInterview? @relation(fields: [interviewId], references: [id], onDelete: SetNull)
 
   @@index([businessId])
   @@index([businessId, documentType])
@@ -1211,35 +1221,35 @@ model GeneratedBusinessProfileDocument {
 // ══════════════════════════════════════════════════════════════════════════════
 
 model SharedAsset {
-  id                    String    @id @default(cuid())
-  uploadedByUserId      String
+  id               String   @id @default(cuid())
+  uploadedByUserId String
   // Scope: global, industry, brand_oem, franchise, licensed_stock, template
-  scope                 String    @default("global")
+  scope            String   @default("global")
   // Category: industry_generic, licensed_stock, brand_oem, franchise, templates, video_clips, audio_clips, icons_graphics, educational_explainers, compliance_templates
-  category              String
-  assetType             String    // logo, photo, video, audio, icon, graphic, template, document, font, color_palette
-  title                 String
-  description           String    @default("")
-  tags                  String[]  @default([])
-  originalFilename      String
-  mimeType              String
-  fileSizeBytes         Int
-  width                 Int?      // pixels for images
-  height                Int?      // pixels for images
-  duration              Float?    // seconds for video/audio
-  sha256Hash            String?   // deduplication
-  cloudStoragePath      String
-  publicUrl             String?
-  thumbnailPath         String?
-  thumbnailUrl          String?
-  isPublic              Boolean   @default(false)
+  category         String
+  assetType        String // logo, photo, video, audio, icon, graphic, template, document, font, color_palette
+  title            String
+  description      String   @default("")
+  tags             String[] @default([])
+  originalFilename String
+  mimeType         String
+  fileSizeBytes    Int
+  width            Int? // pixels for images
+  height           Int? // pixels for images
+  duration         Float? // seconds for video/audio
+  sha256Hash       String? // deduplication
+  cloudStoragePath String
+  publicUrl        String?
+  thumbnailPath    String?
+  thumbnailUrl     String?
+  isPublic         Boolean  @default(false)
 
   // License / Rights
-  licenseType           String    @default("owned")        // owned, royalty_free, rights_managed, creative_commons, editorial_only, custom
-  licenseStatus         String    @default("active")       // active, expired, revoked, pending_renewal
+  licenseType           String    @default("owned") // owned, royalty_free, rights_managed, creative_commons, editorial_only, custom
+  licenseStatus         String    @default("active") // active, expired, revoked, pending_renewal
   licenseExpiry         DateTime?
   licenseNotes          String?
-  rightsHolder          String?                             // e.g. "Getty Images", "Shutterstock", "OEM Brand X"
+  rightsHolder          String? // e.g. "Getty Images", "Shutterstock", "OEM Brand X"
   attributionRequired   Boolean   @default(false)
   attributionText       String?
   // Permission matrix flags
@@ -1251,27 +1261,27 @@ model SharedAsset {
   allowVideo            Boolean   @default(true)
   allowInternal         Boolean   @default(true)
   allowAI               Boolean   @default(true)
-  requiresApproval      Boolean   @default(false)          // brand_oem default true
-  maxResolution         String?                             // e.g. "1920x1080"
+  requiresApproval      Boolean   @default(false) // brand_oem default true
+  maxResolution         String? // e.g. "1920x1080"
   noDerivatives         Boolean   @default(false)
   noCommercial          Boolean   @default(false)
-  geographicRestriction String?                             // e.g. "US_only", "north_america"
-  industryRestriction   String[]  @default([])              // restrict to specific industries
+  geographicRestriction String? // e.g. "US_only", "north_america"
+  industryRestriction   String[]  @default([]) // restrict to specific industries
   // Targeting
   targetIndustries      String[]  @default([])
   targetBusinessTypes   String[]  @default([])
   // Status
-  approvalStatus        String    @default("approved")     // approved, pending_review, deprecated, archived
+  approvalStatus        String    @default("approved") // approved, pending_review, deprecated, archived
   isActive              Boolean   @default(true)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
   archivedAt            DateTime?
 
-  uploadedBy            User      @relation("SharedAssetUploader", fields: [uploadedByUserId], references: [id])
-  assetContext          AssetContext?
-  packItems             SharedAssetPackItem[]
-  approvals             BusinessSharedAssetApproval[]
-  auditLogs             SharedAssetAuditLog[]
+  uploadedBy   User                          @relation("SharedAssetUploader", fields: [uploadedByUserId], references: [id])
+  assetContext AssetContext?
+  packItems    SharedAssetPackItem[]
+  approvals    BusinessSharedAssetApproval[]
+  auditLogs    SharedAssetAuditLog[]
 
   @@index([scope])
   @@index([category])
@@ -1283,32 +1293,32 @@ model SharedAsset {
 }
 
 model SharedAssetPack {
-  id                    String    @id @default(cuid())
-  name                  String
-  description           String    @default("")
-  scope                 String    @default("global")       // global, industry, brand_oem, franchise
-  category              String?                             // optional category grouping
-  targetIndustries      String[]  @default([])
-  isActive              Boolean   @default(true)
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id               String   @id @default(cuid())
+  name             String
+  description      String   @default("")
+  scope            String   @default("global") // global, industry, brand_oem, franchise
+  category         String? // optional category grouping
+  targetIndustries String[] @default([])
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  items                 SharedAssetPackItem[]
-  grants                BusinessSharedAssetPackGrant[]
+  items  SharedAssetPackItem[]
+  grants BusinessSharedAssetPackGrant[]
 
   @@index([scope])
   @@index([isActive])
 }
 
 model SharedAssetPackItem {
-  id                    String    @id @default(cuid())
-  packId                String
-  sharedAssetId         String
-  sortOrder             Int       @default(0)
-  createdAt             DateTime  @default(now())
+  id            String   @id @default(cuid())
+  packId        String
+  sharedAssetId String
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
 
-  pack                  SharedAssetPack  @relation(fields: [packId], references: [id], onDelete: Cascade)
-  sharedAsset           SharedAsset      @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
+  pack        SharedAssetPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  sharedAsset SharedAsset     @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
 
   @@unique([packId, sharedAssetId])
   @@index([packId])
@@ -1316,23 +1326,23 @@ model SharedAssetPackItem {
 }
 
 model BusinessSharedAssetApproval {
-  id                    String    @id @default(cuid())
-  businessId            String
-  sharedAssetId         String
-  approvedByUserId      String?
-  status                String    @default("pending")      // pending, approved, rejected, expired, revoked
-  rightsConfirmed       Boolean   @default(false)
-  approvalNotes         String?
-  approvedAt            DateTime?
-  expiresAt             DateTime?
-  revokedAt             DateTime?
-  revokeReason          String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id               String    @id @default(cuid())
+  businessId       String
+  sharedAssetId    String
+  approvedByUserId String?
+  status           String    @default("pending") // pending, approved, rejected, expired, revoked
+  rightsConfirmed  Boolean   @default(false)
+  approvalNotes    String?
+  approvedAt       DateTime?
+  expiresAt        DateTime?
+  revokedAt        DateTime?
+  revokeReason     String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  business              Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  sharedAsset           SharedAsset @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
-  approvedBy            User?       @relation("SharedAssetApprover", fields: [approvedByUserId], references: [id])
+  business    Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sharedAsset SharedAsset @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
+  approvedBy  User?       @relation("SharedAssetApprover", fields: [approvedByUserId], references: [id])
 
   @@unique([businessId, sharedAssetId])
   @@index([businessId])
@@ -1341,22 +1351,22 @@ model BusinessSharedAssetApproval {
 }
 
 model BusinessSharedAssetPackGrant {
-  id                    String    @id @default(cuid())
-  businessId            String
-  packId                String
-  grantedByUserId       String?
-  status                String    @default("pending")      // pending, granted, rejected, expired, revoked
-  grantNotes            String?
-  grantedAt             DateTime?
-  expiresAt             DateTime?
-  revokedAt             DateTime?
-  revokeReason          String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id              String    @id @default(cuid())
+  businessId      String
+  packId          String
+  grantedByUserId String?
+  status          String    @default("pending") // pending, granted, rejected, expired, revoked
+  grantNotes      String?
+  grantedAt       DateTime?
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  revokeReason    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  business              Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  pack                  SharedAssetPack   @relation(fields: [packId], references: [id], onDelete: Cascade)
-  grantedBy             User?             @relation("SharedAssetPackGrantor", fields: [grantedByUserId], references: [id])
+  business  Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  pack      SharedAssetPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+  grantedBy User?           @relation("SharedAssetPackGrantor", fields: [grantedByUserId], references: [id])
 
   @@unique([businessId, packId])
   @@index([businessId])
@@ -1365,18 +1375,18 @@ model BusinessSharedAssetPackGrant {
 }
 
 model SharedAssetAuditLog {
-  id                    String    @id @default(cuid())
-  sharedAssetId         String?
-  packId                String?
-  businessId            String?
-  userId                String?
-  action                String                              // created, updated, approved, rejected, revoked, pack_granted, pack_revoked, downloaded, viewed
-  details               Json?                               // freeform details
-  ipAddress             String?
-  createdAt             DateTime  @default(now())
+  id            String   @id @default(cuid())
+  sharedAssetId String?
+  packId        String?
+  businessId    String?
+  userId        String?
+  action        String // created, updated, approved, rejected, revoked, pack_granted, pack_revoked, downloaded, viewed
+  details       Json? // freeform details
+  ipAddress     String?
+  createdAt     DateTime @default(now())
 
-  sharedAsset           SharedAsset?  @relation(fields: [sharedAssetId], references: [id], onDelete: SetNull)
-  user                  User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sharedAsset SharedAsset? @relation(fields: [sharedAssetId], references: [id], onDelete: SetNull)
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([sharedAssetId])
   @@index([userId])
@@ -1386,21 +1396,21 @@ model SharedAssetAuditLog {
 }
 
 model AgentAssetUsageLog {
-  id                    String    @id @default(cuid())
-  businessId            String
-  agentType             String    // website, seo, social, video, community_engagement
-  intendedUse           String    // website, social, seo, video, community_engagement, ads, email
-  workflowId            String?
-  runId                 String?
-  retrievedAssetIds     String[]  @default([])
-  usedAssetIds          String[]  @default([])
-  skippedAssetsJson     Json?     // [{assetId, reason}]
-  totalRetrieved        Int       @default(0)
-  totalUsed             Int       @default(0)
-  totalSkipped          Int       @default(0)
-  createdAt             DateTime  @default(now())
+  id                String   @id @default(cuid())
+  businessId        String
+  agentType         String // website, seo, social, video, community_engagement
+  intendedUse       String // website, social, seo, video, community_engagement, ads, email
+  workflowId        String?
+  runId             String?
+  retrievedAssetIds String[] @default([])
+  usedAssetIds      String[] @default([])
+  skippedAssetsJson Json? // [{assetId, reason}]
+  totalRetrieved    Int      @default(0)
+  totalUsed         Int      @default(0)
+  totalSkipped      Int      @default(0)
+  createdAt         DateTime @default(now())
 
-  business              Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([agentType])
@@ -1410,53 +1420,158 @@ model AgentAssetUsageLog {
 }
 
 model AssetContext {
-  id                    String    @id @default(cuid())
-  businessAssetId       String?   @unique
-  sharedAssetId         String?   @unique
+  id              String  @id @default(cuid())
+  businessAssetId String? @unique
+  sharedAssetId   String? @unique
 
   // AI-generated descriptions
-  agentDescription      String?   // concise description for AI agents
-  humanDescription      String?   // optional human-edited description
-  suggestedUses         String[]  @default([]) // e.g. ["hero_image", "social_post", "ad_background"]
-  restrictedUses        String[]  @default([]) // e.g. ["not_for_ads", "internal_only"]
+  agentDescription String? // concise description for AI agents
+  humanDescription String? // optional human-edited description
+  suggestedUses    String[] @default([]) // e.g. ["hero_image", "social_post", "ad_background"]
+  restrictedUses   String[] @default([]) // e.g. ["not_for_ads", "internal_only"]
 
   // Visual / media analysis
-  visibleElements       String[]  @default([]) // e.g. ["outdoor_patio", "smiling_staff", "logo_on_wall"]
-  dominantColors        String[]  @default([]) // hex codes or named colors
-  mood                  String?   // e.g. "warm", "professional", "casual"
-  style                 String?   // e.g. "lifestyle", "product_shot", "aerial"
+  visibleElements String[] @default([]) // e.g. ["outdoor_patio", "smiling_staff", "logo_on_wall"]
+  dominantColors  String[] @default([]) // hex codes or named colors
+  mood            String? // e.g. "warm", "professional", "casual"
+  style           String? // e.g. "lifestyle", "product_shot", "aerial"
 
   // Document / text analysis
-  documentSummary       String?   // summary for docs, PDFs, text assets
-  keyPoints             String[]  @default([]) // extracted key points
-  restrictedClaims      String[]  @default([]) // claims that must NOT be made (compliance)
-  requiredDisclosures   String[]  @default([]) // must-include disclaimers
+  documentSummary     String? // summary for docs, PDFs, text assets
+  keyPoints           String[] @default([]) // extracted key points
+  restrictedClaims    String[] @default([]) // claims that must NOT be made (compliance)
+  requiredDisclosures String[] @default([]) // must-include disclaimers
 
   // Audio / video analysis
-  transcript            String?   // for video/audio assets
-  transcriptSummary     String?   // short summary of transcript
+  transcript        String? // for video/audio assets
+  transcriptSummary String? // short summary of transcript
 
   // Quality / confidence
-  confidenceScore       Float?    // 0.0 – 1.0, AI confidence in analysis
-  qualityNotes          String[]  @default([]) // e.g. ["low_resolution", "watermark_detected"]
+  confidenceScore Float? // 0.0 – 1.0, AI confidence in analysis
+  qualityNotes    String[] @default([]) // e.g. ["low_resolution", "watermark_detected"]
 
   // Review status
-  contextStatus         String    @default("needs_review") // needs_review, approved, rejected, stale
-  aiGeneratedContext    Boolean   @default(true)
-  humanReviewedContext  Boolean   @default(false)
-  reviewedByUserId      String?
-  reviewedAt            DateTime?
-  generationModel       String?   // which LLM model was used
-  generationError       String?   // error message if generation failed
+  contextStatus        String    @default("needs_review") // needs_review, approved, rejected, stale
+  aiGeneratedContext   Boolean   @default(true)
+  humanReviewedContext Boolean   @default(false)
+  reviewedByUserId     String?
+  reviewedAt           DateTime?
+  generationModel      String? // which LLM model was used
+  generationError      String? // error message if generation failed
 
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  businessAsset         BusinessAsset? @relation(fields: [businessAssetId], references: [id], onDelete: Cascade)
-  sharedAsset           SharedAsset?   @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
-  reviewedBy            User?          @relation("AssetContextReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  businessAsset BusinessAsset? @relation(fields: [businessAssetId], references: [id], onDelete: Cascade)
+  sharedAsset   SharedAsset?   @relation(fields: [sharedAssetId], references: [id], onDelete: Cascade)
+  reviewedBy    User?          @relation("AssetContextReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@index([contextStatus])
   @@index([businessAssetId])
   @@index([sharedAssetId])
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Industry Service Taxonomy & Business Service Offerings
+// ══════════════════════════════════════════════════════════════════════════════
+
+model Industry {
+  id               String   @id @default(cuid())
+  name             String
+  slug             String   @unique
+  description      String   @default("")
+  enabled          Boolean  @default(true)
+  parentIndustryId String?
+  sortOrder        Int      @default(0)
+  // Matching aids: keywords / GBP categories that map to this industry
+  matchKeywords    String[] @default([])
+  gbpCategories    String[] @default([])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  parentIndustry    Industry?                 @relation("IndustryHierarchy", fields: [parentIndustryId], references: [id], onDelete: SetNull)
+  childIndustries   Industry[]                @relation("IndustryHierarchy")
+  services          IndustryService[]
+  businessOfferings BusinessServiceOffering[]
+
+  @@index([enabled])
+  @@index([parentIndustryId])
+}
+
+model IndustryService {
+  id                           String   @id @default(cuid())
+  industryId                   String
+  name                         String
+  slug                         String
+  shortDescription             String   @default("")
+  fullDescriptionTemplate      String   @default("") @db.Text
+  customerProblem              String   @default("") @db.Text
+  commonQuestions              Json     @default("[]") // string[] of FAQ questions
+  commonObjections             Json     @default("[]") // string[]
+  relatedServices              Json     @default("[]") // string[] of service slugs/names
+  recommendedPageTitle         String   @default("")
+  recommendedMetaDescription   String   @default("")
+  recommendedH1                String   @default("")
+  recommendedSchemaType        String   @default("Service")
+  explainerVideoTitle          String   @default("")
+  explainerVideoBrief          String   @default("") @db.Text
+  explainerVideoScriptTemplate String   @default("") @db.Text
+  // Matching aids for Jim Bridger evidence detection
+  matchKeywords                String[] @default([])
+  conditional                  Boolean  @default(false) // "if applicable" services
+  enabled                      Boolean  @default(true)
+  sortOrder                    Int      @default(0)
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
+
+  industry          Industry                  @relation(fields: [industryId], references: [id], onDelete: Cascade)
+  businessOfferings BusinessServiceOffering[]
+
+  @@unique([industryId, slug])
+  @@index([industryId])
+  @@index([enabled])
+}
+
+model BusinessServiceOffering {
+  id                       String    @id @default(cuid())
+  businessId               String
+  industryServiceId        String? // null for fully custom services
+  industryId               String? // denormalized for filtering
+  customServiceName        String? // for custom services
+  slug                     String
+  // status: suggested | confirmed | rejected | hidden | needs_review
+  status                   String    @default("suggested")
+  // source: jim_bridger | website | owner_confirmed | ai_inferred | manual | imported
+  source                   String    @default("jim_bridger")
+  confidence               String    @default("low") // high | medium | low
+  bridgerEvidenceJson      Json? // { evidenceSources: [{ type, url, snippet }] }
+  ownerConfirmed           Boolean   @default(false)
+  confirmedAt              DateTime?
+  confirmedByUserId        String?
+  // priority: primary | secondary | optional | do_not_promote
+  priority                 String    @default("secondary")
+  seoEnabled               Boolean   @default(true)
+  // pageStatus: not_started | draft | needs_review | approved | published | archived
+  pageStatus               String    @default("not_started")
+  // videoStatus: not_started | brief_ready | script_ready | generated | approved | published
+  videoStatus              String    @default("not_started")
+  // Owner-editable overrides (fall back to industry service templates)
+  overrideName             String?
+  overrideShortDescription String?   @db.Text
+  overrideFullDescription  String?   @db.Text
+  // Generated artifacts
+  generatedPageJson        Json? // generated service page content
+  videoBriefJson           Json? // generated explainer video brief/script
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  business        Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  industryService IndustryService? @relation(fields: [industryServiceId], references: [id], onDelete: SetNull)
+  industry        Industry?        @relation(fields: [industryId], references: [id], onDelete: SetNull)
+  confirmedBy     User?            @relation("ServiceConfirmer", fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, slug])
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([industryServiceId])
 }

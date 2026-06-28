@@ -291,6 +291,7 @@ export default function Header() {
                     <DropdownItem href="/dashboard/website" icon={FileText} label="Pages" desc="Manage site pages" />
                     <DropdownItem href="/dashboard/website" icon={Eye} label="Edit Site" desc="Visual editor" disabled />
                     <DropdownItem href="/dashboard/website" icon={Wrench} label="Website Generator" desc="AI site builder" />
+                    <DropdownItem href="/dashboard/website/services" icon={Wrench} label="Services Offered" desc="Confirm services & build pages" />
                     <DropdownItem href="/dashboard/website" icon={Layout} label="Forms & CTAs" disabled />
                     <DropdownItem href="/dashboard/website" icon={ImageIcon} label="Site Assets" disabled />
                     <DropdownItem href="/dashboard/website" icon={ArrowUpRight} label="Revisions" disabled />
@@ -443,6 +444,7 @@ export default function Header() {
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 px-1">Website & SEO</div>
                   <MobileNavLink href="/dashboard/website" icon={Globe} label="Website Overview" pathname={pathname} onClick={() => setMobileOpen(false)} exact />
                   <MobileNavLink href="/dashboard/seo" icon={Compass} label="SEO Overview" pathname={pathname} onClick={() => setMobileOpen(false)} exact />
+                  <MobileNavLink href="/dashboard/website/services" icon={Wrench} label="Services Offered" pathname={pathname} onClick={() => setMobileOpen(false)} />
                   <MobileNavLink href="/dashboard/seo/community-engagement" icon={Users} label="Community Engagement" pathname={pathname} onClick={() => setMobileOpen(false)} />
                 </div>
 

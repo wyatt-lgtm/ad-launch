@@ -82,6 +82,7 @@ export default function BusinessProfileInterview({ businessId, onClose, onComple
 
   // Filtering
   const [questionFilter, setQuestionFilter] = useState<QuestionFilter>('all');
+  const [servicesPanelCount, setServicesPanelCount] = useState(0);
 
   // UI state
   const [saving, setSaving] = useState(false);
@@ -1200,9 +1201,18 @@ export default function BusinessProfileInterview({ businessId, onClose, onComple
                   </div>
                 </div>
 
+                {/* Prefilled service checklist (Services & Customers step) */}
+                {currentSection.id === 'services' && (
+                  <ServicesChecklistPanel businessId={businessId} onCount={setServicesPanelCount} />
+                )}
+
                 {/* Filtered questions */}
                 {(() => {
-                  const filtered = getFilteredQuestions(currentSection);
+                  let filtered = getFilteredQuestions(currentSection);
+                  // When the prefilled service checklist has services, it replaces the blank "core services" question
+                  if (currentSection.id === 'services' && servicesPanelCount > 0) {
+                    filtered = filtered.filter(q => q.key !== 'coreServices');
+                  }
                   if (filtered.length === 0) {
                     return (
                       <div className="text-center py-8 text-gray-400">
@@ -1353,6 +1363,132 @@ export default function BusinessProfileInterview({ businessId, onClose, onComple
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Services & Customers — prefilled service checklist
+// Replaces the blank "core services" question with a confirm/reject
+// checklist sourced from the matched industry + Jim Bridger research.
+// ═══════════════════════════════════════════════════════════════
+interface ServicesChecklistPanelProps {
+  businessId: string;
+  onCount: (n: number) => void;
+}
+
+function ServicesChecklistPanel({ businessId, onCount }: ServicesChecklistPanelProps) {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<any>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/businesses/${businessId}/services`);
+      if (res.ok) {
+        const d = await res.json();
+        setData(d);
+        onCount((d.offerings || []).length);
+      } else {
+        onCount(0);
+      }
+    } catch {
+      onCount(0);
+    }
+    setLoading(false);
+  }, [businessId, onCount]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const patch = async (offeringId: string, status: string) => {
+    setBusyId(offeringId);
+    try {
+      await fetch(`/api/businesses/${businessId}/services/${offeringId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      await load();
+    } catch {}
+    setBusyId(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading your service checklist…
+      </div>
+    );
+  }
+
+  const offerings: any[] = data?.offerings || [];
+  const active = offerings.filter(o => o.status !== 'rejected' && o.status !== 'hidden');
+
+  // No taxonomy services yet — fall back to the standard free-text question
+  if (active.length === 0) {
+    return (
+      <div className="mb-4 p-4 rounded-xl border border-dashed border-gray-300 bg-gray-50">
+        <p className="text-sm text-gray-600">
+          We don&apos;t have an industry service checklist for this business yet. List your core services below,
+          or open <a href="/dashboard/website/services" className="text-blue-600 hover:underline font-medium">Services Offered</a> to
+          match an industry and load suggestions automatically.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-5 p-4 rounded-xl border border-blue-100 bg-blue-50/40">
+      <div className="flex items-start gap-2 mb-3">
+        <Sparkles className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+        <div>
+          <h4 className="text-sm font-semibold text-gray-800">Your services</h4>
+          <p className="text-xs text-gray-600">
+            We found these likely services from your industry{data?.matchedIndustry ? <> (<span className="font-medium">{data.matchedIndustry.name}</span>)</> : ''} and Jim Bridger&apos;s research.
+            Confirm which ones you offer — these power your SEO pages, ads, and social content.
+          </p>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        {active.map(o => {
+          const confirmed = o.status === 'confirmed';
+          const busy = busyId === o.id;
+          return (
+            <div key={o.id} className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2">
+              <button
+                onClick={() => patch(o.id, confirmed ? 'suggested' : 'confirmed')}
+                disabled={busy}
+                className="shrink-0"
+                title={confirmed ? 'Confirmed — click to unconfirm' : 'Confirm you offer this'}
+              >
+                {confirmed
+                  ? <CheckCircle className="w-5 h-5 text-green-600" />
+                  : <div className="w-5 h-5 rounded-full border-2 border-gray-300 hover:border-blue-500" />}
+              </button>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-gray-900">{o.name}</span>
+                  {o.status === 'needs_review' && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-100 text-yellow-800">needs review</span>}
+                  {o.confidence && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500">{o.confidence}</span>}
+                </div>
+                {o.shortDescription && <p className="text-xs text-gray-400 truncate">{o.shortDescription}</p>}
+              </div>
+              {busy && <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />}
+              <button
+                onClick={() => patch(o.id, 'rejected')}
+                disabled={busy}
+                className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 shrink-0"
+                title="We don't offer this"
+              >
+                <Ban className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-3 text-xs text-gray-500">
+        Need to add a service or generate pages? Open the full <a href="/dashboard/website/services" className="text-blue-600 hover:underline font-medium">Services Offered</a> manager.
       </div>
     </div>
   );
