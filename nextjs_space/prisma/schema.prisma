@@ -43,50 +43,55 @@ model User {
 }
 
 model Business {
-  id                    String                             @id @default(cuid())
-  userId                String?
-  websiteUrl            String
-  businessName          String?
-  businessAddr          String?
-  businessCity          String?
-  businessState         String?
-  businessZip           String?
-  businessPhone         String?
-  createdAt             DateTime                           @default(now())
-  updatedAt             DateTime                           @updatedAt
-  contentSourceMode     String                             @default("local_plus_interests")
+  id                       String                             @id @default(cuid())
+  userId                   String?
+  websiteUrl               String
+  businessName             String?
+  businessAddr             String?
+  businessCity             String?
+  businessState            String?
+  businessZip              String?
+  businessPhone            String?
+  createdAt                DateTime                           @default(now())
+  updatedAt                DateTime                           @updatedAt
+  contentSourceMode        String                             @default("local_plus_interests")
   // Canonical Tombstone OS business identity, persisted for reuse across analyses.
-  tombstoneBusinessId   Int?
-  tombstoneBusinessUuid String?
+  tombstoneBusinessId      Int?
+  tombstoneBusinessUuid    String?
   // Token linking anonymous sessions to their Business record before registration.
-  anonymousToken        String?                            @unique
-  analyses              Analysis[]
-  user                  User?                              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  feedPreferences       BusinessFeedPreference[]
-  socialPosts           SocialPost[]
-  scoutEmailSettings    ScoutEmailSettings?
-  scoutEmailHistory     ScoutEmailHistory[]
-  scoutReports          ScoutReport[]
-  postPackages          PostPackage[]
-  creditAccount         CreditAccount?
-  contentProfile        BusinessContentProfile?
-  savedAnalysis         Json?
-  analysisRefreshedAt   DateTime?
-  hasMultipleLocations  Boolean                            @default(false)
-  assets                BusinessAsset[]
-  locations             BusinessLocation[]
-  publishSettings       PublishSettings?
-  socialConnections     SocialConnection[]
-  scheduledPosts        ScheduledPost[]
-  communitySettings     CommunityEngagementSettings?
-  communitySources      CommunitySource[]
-  communityOpps         CommunityEngagementOpportunity[]
-  profileInterviews     BusinessProfileInterview[]
-  profileDocuments      GeneratedBusinessProfileDocument[]
-  sharedAssetApprovals  BusinessSharedAssetApproval[]
-  sharedAssetPackGrants BusinessSharedAssetPackGrant[]
-  agentAssetUsageLogs   AgentAssetUsageLog[]
-  serviceOfferings      BusinessServiceOffering[]
+  anonymousToken           String?                            @unique
+  analyses                 Analysis[]
+  user                     User?                              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedPreferences          BusinessFeedPreference[]
+  socialPosts              SocialPost[]
+  scoutEmailSettings       ScoutEmailSettings?
+  scoutEmailHistory        ScoutEmailHistory[]
+  scoutReports             ScoutReport[]
+  postPackages             PostPackage[]
+  creditAccount            CreditAccount?
+  contentProfile           BusinessContentProfile?
+  savedAnalysis            Json?
+  analysisRefreshedAt      DateTime?
+  hasMultipleLocations     Boolean                            @default(false)
+  assets                   BusinessAsset[]
+  locations                BusinessLocation[]
+  publishSettings          PublishSettings?
+  socialConnections        SocialConnection[]
+  scheduledPosts           ScheduledPost[]
+  communitySettings        CommunityEngagementSettings?
+  communitySources         CommunitySource[]
+  communityOpps            CommunityEngagementOpportunity[]
+  profileInterviews        BusinessProfileInterview[]
+  profileDocuments         GeneratedBusinessProfileDocument[]
+  sharedAssetApprovals     BusinessSharedAssetApproval[]
+  sharedAssetPackGrants    BusinessSharedAssetPackGrant[]
+  agentAssetUsageLogs      AgentAssetUsageLog[]
+  serviceOfferings         BusinessServiceOffering[]
+  trackingPixels           TrackingPixel[]
+  trackingEvents           TrackingEvent[]
+  trackingAudiences        TrackingAudience[]
+  trackingEventRoutes      TrackingEventRoute[]
+  trackingPixelAuditEvents TrackingPixelAuditEvent[]
 
   // ── Industry match (from Jim Bridger / owner-confirmed) ────────────
   matchedIndustryId         String?
@@ -898,21 +903,21 @@ model SocialPost {
 // store an independent result for every selected channel so a Google success
 // never hides a Facebook failure.
 model SocialPublishAttempt {
-  id                 String   @id @default(cuid())
-  businessId         String?
-  socialPostId       String
-  selectedChannelId  String // GHL Social Planner account ID selected by the user
-  platform           String? // google | facebook | instagram | tiktok | linkedin
-  accountName        String?
-  externalAccountId  String? // platform-specific origin ID (e.g. FB page ID)
-  externalPostId     String? // post ID returned by the channel/GHL
-  traceId            String?
-  status             String   @default("pending") // pending | publishing | published | failed | skipped
-  errorMessage       String?
-  requestSummary     String?
-  responseSummary    String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                String   @id @default(cuid())
+  businessId        String?
+  socialPostId      String
+  selectedChannelId String // GHL Social Planner account ID selected by the user
+  platform          String? // google | facebook | instagram | tiktok | linkedin
+  accountName       String?
+  externalAccountId String? // platform-specific origin ID (e.g. FB page ID)
+  externalPostId    String? // post ID returned by the channel/GHL
+  traceId           String?
+  status            String   @default("pending") // pending | publishing | published | failed | skipped
+  errorMessage      String?
+  requestSummary    String?
+  responseSummary   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([socialPostId])
   @@index([businessId])
@@ -1602,4 +1607,215 @@ model BusinessServiceOffering {
   @@index([businessId])
   @@index([businessId, status])
   @@index([industryServiceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Tracking Pixels & Funnel Event Tracking (Insights → Tracking Pixels)
+// Business-scoped tracking config for websites, landing pages, thank-you
+// pages, ads, social and retargeting pixels. Postgres only. Never leak
+// pixels across businesses; custom scripts are stored, never executed in UI.
+// ─────────────────────────────────────────────────────────────────────
+
+model TrackingPixel {
+  id             String  @id @default(cuid())
+  businessId     String
+  name           String
+  // platform: meta | facebook | google_ads | ga4 | google_tag | google_tag_manager
+  //           | tiktok | linkedin | bing | microsoft_ads | pinterest | x | twitter | choozle | custom
+  platform       String
+  // pixel_type: base_pixel | remarketing_pixel | conversion_pixel | analytics_tag
+  //             | tag_manager | custom_script | custom_html | event_snippet
+  pixelType      String  @default("base_pixel")
+  // tracking_method: browser | server | hybrid
+  trackingMethod String  @default("browser")
+  // Generic external pixel/tag id
+  pixelId        String?
+  // Stored, NEVER executed in the admin UI
+  scriptSnippet  String? @db.Text
+  // placement: head | body_start | body_end | event_only
+  placement      String  @default("head")
+  // scope: all_pages | selected_pages | landing_pages | social_landing_pages | blog_pages
+  //        | service_pages | thank_you_pages | checkout_or_conversion_pages | custom_rules
+  scope          String  @default("all_pages")
+  // status: active | inactive | draft | error | needs_verification | archived
+  status         String  @default("draft")
+
+  // ── Consent / privacy ───────────────────────────────────────────
+  consentRequired      Boolean @default(false)
+  // consent_category: essential | analytics | advertising | remarketing | conversion_tracking
+  consentCategory      String  @default("analytics")
+  firesBeforeConsent   Boolean @default(false)
+  regionRulesJson      Json?
+  cookieBannerRequired Boolean @default(false)
+
+  // ── Verification ────────────────────────────────────────────────
+  // verification_status: unverified | pending | verified | failed
+  verificationStatus String    @default("unverified")
+  verifiedAt         DateTime?
+  lastVerifiedUrl    String?
+  lastSeenAt         DateTime?
+  lastEventSeenAt    DateTime?
+  lastError          String?   @db.Text
+  testModeEnabled    Boolean   @default(false)
+
+  // ── Platform-specific ids ───────────────────────────────────────
+  // GA4 / Analytics
+  ga4MeasurementId           String?
+  analyticsStreamId          String?
+  analyticsPropertyId        String?
+  defaultPageViewEnabled     Boolean @default(true)
+  enhancedMeasurementEnabled Boolean @default(true)
+  // Google Tag / Google Ads / GTM
+  googleTagId                String?
+  googleAdsConversionId      String?
+  googleAdsConversionLabel   String?
+  gtmContainerId             String?
+  // Meta / Facebook
+  metaPixelId                String?
+  metaDatasetId              String?
+  metaConversionsApiEnabled  Boolean @default(false)
+  // TikTok
+  tiktokPixelId              String?
+  tiktokEventsApiEnabled     Boolean @default(false)
+  // LinkedIn
+  linkedinPartnerId          String?
+  linkedinConversionId       String?
+  // Bing / Microsoft Ads
+  bingUetTagId               String?
+  // Choozle
+  choozleAdvertiserId        String?
+  choozlePixelId             String?
+  choozleConversionId        String?
+  // Server-side tracking
+  serverEventEnabled         Boolean @default(false)
+  deduplicationKeyStrategy   String?
+  externalEventIdField       String?
+  hashedEmailEnabled         Boolean @default(false)
+  hashedPhoneEnabled         Boolean @default(false)
+  enhancedConversionsEnabled Boolean @default(false)
+
+  createdByUserId String?
+  updatedByUserId String?
+  version         Int       @default(1)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  archivedAt      DateTime?
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  events   TrackingEvent[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, platform])
+  @@index([businessId, scope])
+}
+
+model TrackingEvent {
+  id                       String   @id @default(cuid())
+  businessId               String
+  pixelId                  String?
+  eventName                String // page_view | landing_page_view | thank_you_page_view | form_submit | generate_lead | lead | ...
+  platformEventName        String? // e.g. PageView, Lead, generate_lead
+  // event_type: page_view | lead | conversion | click | form | phone | email | purchase | custom
+  eventType                String   @default("custom")
+  // trigger_type: page_load | url_match | form_submit | button_click | phone_link_click
+  //               | email_link_click | thank_you_page_load | custom_js | server_event | webhook_event
+  triggerType              String   @default("page_load")
+  // page_scope mirrors pixel scope values
+  pageScope                String   @default("all_pages")
+  pageMatchRulesJson       Json?
+  selectorRule             String?
+  urlRule                  String?
+  valueSource              String?
+  conversionValue          Float?
+  currency                 String?  @default("USD")
+  leadStatusMapping        String?
+  deduplicationEnabled     Boolean  @default(false)
+  deduplicationKeyStrategy String?
+  requiresConsent          Boolean  @default(false)
+  consentCategory          String   @default("analytics")
+  // status: active | inactive | draft | archived
+  status                   String   @default("active")
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  pixel    TrackingPixel? @relation(fields: [pixelId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([pixelId])
+  @@index([businessId, eventName])
+}
+
+model TrackingAudience {
+  id                 String    @id @default(cuid())
+  businessId         String
+  audienceName       String
+  platform           String    @default("custom")
+  // audience_type: website_visitors | landing_page_visitors | thank_you_page_visitors
+  //                | converted_leads | non_converting_visitors | high_intent_visitors
+  //                | bottom_funnel | exclusion | lookalike_seed | custom
+  audienceType       String    @default("custom")
+  sourceEvent        String?
+  includeRulesJson   Json?
+  excludeRulesJson   Json?
+  retentionDays      Int       @default(30)
+  // funnel_stage: top_of_funnel | mid_funnel | bottom_funnel | converted | customer | reactivation
+  funnelStage        String?
+  // status: active | inactive | draft | archived
+  status             String    @default("active")
+  externalAudienceId String?
+  lastSyncedAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, audienceType])
+}
+
+model TrackingEventRoute {
+  id              String   @id @default(cuid())
+  businessId      String
+  // page_type: website_page | landing_page | social_landing_page | thank_you_page
+  //            | service_page | blog_page | city_page | county_page | checkout_page | custom
+  pageType        String
+  pageUrlPattern  String?
+  eventName       String
+  platformsJson   Json?
+  // fires_on: page_load | url_match | form_submit | button_click | phone_link_click | ...
+  firesOn         String   @default("page_load")
+  requiresConsent Boolean  @default(false)
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, pageType])
+}
+
+model TrackingPixelAuditEvent {
+  id              String   @id @default(cuid())
+  businessId      String
+  pixelId         String?
+  eventId         String?
+  // action: created | updated | disabled | enabled | archived | verified | failed_verification
+  //         | injected_on_page | event_fired | test_event_sent | error_detected
+  action          String
+  detailsJson     Json?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, pixelId])
+  @@index([action])
+  @@index([createdAt])
 }

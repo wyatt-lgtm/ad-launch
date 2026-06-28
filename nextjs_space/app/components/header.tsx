@@ -9,7 +9,8 @@ import {
   Video, Mail, Upload, BarChart3, TrendingUp, Users, Target, LineChart,
   Settings, CreditCard, Bell, Shield, Link2, Compass, AlertTriangle,
   CheckCircle, Menu, X, Layout, Wrench, Eye, BookOpen, MapPin, Bug,
-  ArrowUpRight, Megaphone, LayoutDashboard
+  ArrowUpRight, Megaphone, LayoutDashboard, Crosshair, Award, DollarSign,
+  Gauge, Activity
 } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
@@ -311,11 +312,34 @@ export default function Header() {
                 </Dropdown>
 
                 {/* Insights */}
-                <Link href="/dashboard/insights" className={navCls('/dashboard/insights')}>
-                  <BarChart3 className="w-4 h-4" />
-                  Insights
-                  <AlertBadge count={alerts.insights.count} severity={alerts.insights.severity} />
-                </Link>
+                <Dropdown
+                  trigger={
+                    <div className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      pathname?.startsWith('/dashboard/insights') || pathname?.startsWith('/dashboard/marketing')
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    }`}>
+                      <BarChart3 className="w-4 h-4" />
+                      Insights
+                      <ChevronDown className="w-3 h-3" />
+                      <AlertBadge count={alerts.insights.count} severity={alerts.insights.severity} />
+                    </div>
+                  }
+                  width="w-64"
+                >
+                  <DropdownSection title="Insights">
+                    <DropdownItem href="/dashboard/marketing" icon={LayoutDashboard} label="Unified Dashboard" desc="Cross-channel performance" />
+                    <DropdownItem href="/dashboard/marketing" icon={Megaphone} label="Google Ads" disabled />
+                    <DropdownItem href="/dashboard/marketing" icon={TrendingUp} label="Organic Traffic" disabled />
+                    <DropdownItem href="/dashboard/marketing" icon={Users} label="Social Performance" disabled />
+                    <DropdownItem href="/dashboard/marketing" icon={Compass} label="Competitors" disabled />
+                    <DropdownItem href="/dashboard/marketing" icon={Award} label="Benchmarks" disabled />
+                    <DropdownItem href="/dashboard/marketing" icon={DollarSign} label="Customer Value" disabled />
+                    <DropdownItem href="/dashboard/marketing" icon={Gauge} label="Lead Scoring" disabled />
+                    <DropdownItem href="/dashboard/marketing" icon={Lightbulb} label="Recommendations" disabled />
+                    <DropdownItem href="/dashboard/insights/tracking-pixels" icon={Crosshair} label="Tracking Pixels" desc="Pixels, events & audiences" />
+                  </DropdownSection>
+                </Dropdown>
 
                 {/* Create Dropdown (between Insights and Account) */}
                 <Dropdown
@@ -438,7 +462,13 @@ export default function Header() {
                 <MobileNavLink href="/dashboard" icon={LayoutDashboard} label="Dashboard" pathname={pathname} onClick={() => setMobileOpen(false)} />
                 <MobileNavLink href="/dashboard/social" icon={Newspaper} label="Social" pathname={pathname} badge={alerts.social} onClick={() => setMobileOpen(false)} />
                 <MobileNavLink href="/dashboard/website" icon={Globe} label="Website" pathname={pathname} badge={{ count: alerts.website.count + alerts.seo.count, severity: alerts.website.severity !== 'none' ? alerts.website.severity : alerts.seo.severity }} onClick={() => setMobileOpen(false)} />
-                <MobileNavLink href="/dashboard/insights" icon={BarChart3} label="Insights" pathname={pathname} badge={alerts.insights} onClick={() => setMobileOpen(false)} />
+                <MobileNavLink href="/dashboard/marketing" icon={BarChart3} label="Insights" pathname={pathname} badge={alerts.insights} onClick={() => setMobileOpen(false)} />
+
+                <div className="border-t border-gray-100 my-2 pt-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 px-1">Insights</div>
+                  <MobileNavLink href="/dashboard/marketing" icon={LayoutDashboard} label="Unified Dashboard" pathname={pathname} onClick={() => setMobileOpen(false)} exact />
+                  <MobileNavLink href="/dashboard/insights/tracking-pixels" icon={Crosshair} label="Tracking Pixels" pathname={pathname} onClick={() => setMobileOpen(false)} />
+                </div>
 
                 <div className="border-t border-gray-100 my-2 pt-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1 px-1">Website & SEO</div>
