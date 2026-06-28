@@ -893,6 +893,34 @@ model SocialPost {
   @@index([ghlPostId])
 }
 
+// ── Per-channel publish audit ───────────────────────────────────────────────
+// One record per (post, channel) publish attempt. Lets Post Now report and
+// store an independent result for every selected channel so a Google success
+// never hides a Facebook failure.
+model SocialPublishAttempt {
+  id                 String   @id @default(cuid())
+  businessId         String?
+  socialPostId       String
+  selectedChannelId  String // GHL Social Planner account ID selected by the user
+  platform           String? // google | facebook | instagram | tiktok | linkedin
+  accountName        String?
+  externalAccountId  String? // platform-specific origin ID (e.g. FB page ID)
+  externalPostId     String? // post ID returned by the channel/GHL
+  traceId            String?
+  status             String   @default("pending") // pending | publishing | published | failed | skipped
+  errorMessage       String?
+  requestSummary     String?
+  responseSummary    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([socialPostId])
+  @@index([businessId])
+  @@index([selectedChannelId])
+  @@index([traceId])
+  @@index([status])
+}
+
 model GenerationRun {
   id                      String       @id @default(cuid())
   userId                  String

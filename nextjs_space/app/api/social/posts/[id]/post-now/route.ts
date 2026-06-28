@@ -16,6 +16,7 @@ import {
   type GhlTraceStep,
   type GhlMediaItem,
 } from '@/lib/ghl-social-planner';
+import { validateRequestedChannels } from '@/lib/ghl-channel-filter';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -195,24 +196,21 @@ export async function POST(req: NextRequest, context: RouteContext) {
     let targetAccounts: GhlAccount[] = [];
 
     if (requestedAccountIds.length > 0) {
-      // Validate that requested account IDs belong to this business
-      const linkedIds = business.ghlLinkedAccountIds || [];
-      const linkedSet = new Set(linkedIds);
-      const allGhlIds = new Set(accountsResult.accounts.map(a => a.id));
+      // Validate that requested account IDs belong to this business and resolve
+      // a de-duplicated list (one independent publish attempt per channel).
+      const validation = validateRequestedChannels(
+        requestedAccountIds,
+        accountsResult.accounts.map(a => a.id),
+        business.ghlLinkedAccountIds || [],
+      );
 
-      for (const reqId of requestedAccountIds) {
-        if (!allGhlIds.has(reqId)) {
-          console.warn(`[post-now] [${publishTraceId}] REJECTED: accountId=${reqId} not found in GHL accounts for business=${business.id}`);
-          return fail(publishTraceId, trace, `Channel ${reqId} is not connected to this business's Launch CRM location.`, 403, post.id);
-        }
-        if (linkedSet.size > 0 && !linkedSet.has(reqId)) {
-          console.warn(`[post-now] [${publishTraceId}] REJECTED cross-business channel: accountId=${reqId} not in ghlLinkedAccountIds for business=${business.id}`);
-          return fail(publishTraceId, trace, `Channel ${reqId} is not linked to this business. Cross-business publishing is not allowed.`, 403, post.id);
-        }
+      if (!validation.ok) {
+        console.warn(`[post-now] [${publishTraceId}] REJECTED channel=${validation.channelId}: ${validation.error}`);
+        return fail(publishTraceId, trace, validation.error, validation.code, post.id);
       }
 
-      // Map each requested ID to the full account object
-      for (const reqId of requestedAccountIds) {
+      // Map each resolved ID to the full account object
+      for (const reqId of validation.resolvedIds) {
         const found = accountsResult.accounts.find(a => a.id === reqId);
         if (found) targetAccounts.push(found);
       }
@@ -467,6 +465,45 @@ export async function POST(req: NextRequest, context: RouteContext) {
           traceId: channelTraceId,
         });
       }
+    }
+
+    // ── Persist per-channel audit records ─────────────────────────────
+    // One row per (post, channel) so a Google success never hides a
+    // Facebook failure. Wrapped so audit failures never break publishing.
+    try {
+      await prisma.socialPublishAttempt.createMany({
+        data: channelResults.map(r => {
+          const acct = targetAccounts.find(a => a.id === r.accountId);
+          return {
+            businessId: business.id,
+            socialPostId: post.id,
+            selectedChannelId: r.accountId,
+            platform: r.platform,
+            accountName: r.accountName,
+            externalAccountId: acct?.originId || null,
+            externalPostId: r.ghlPostId,
+            traceId: r.traceId,
+            status: r.success ? 'published' : 'failed',
+            errorMessage: r.error ? r.error.slice(0, 1000) : null,
+            requestSummary: JSON.stringify({
+              accountIds: [r.accountId],
+              platform: r.platform,
+              accountName: r.accountName,
+              captionLength: finalCaption.length,
+              mediaCount: media.length,
+            }).slice(0, 1000),
+            responseSummary: JSON.stringify({
+              success: r.success,
+              ghlPostId: r.ghlPostId,
+              ghlStatus: r.ghlStatus,
+              error: r.error,
+            }).slice(0, 1000),
+          };
+        }),
+      });
+      trace.push(traceStep('PUBLISH_AUDIT_WRITTEN', `records=${channelResults.length}`));
+    } catch (auditErr: any) {
+      console.warn(`[post-now] [${publishTraceId}] Failed to write publish audit:`, auditErr.message);
     }
 
     // ── Aggregate results ─────────────────────────────────────────────

@@ -5,6 +5,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/db';
 import { listGhlSocialAccounts } from '@/lib/ghl-social-planner';
+import { resolveBusinessChannels } from '@/lib/ghl-channel-filter';
 
 type RouteContext = { params: { id: string } };
 
@@ -76,22 +77,22 @@ export async function GET(
     const activeAccounts = result.accounts.filter(a => !a.deleted);
 
     // ── Business-scope filtering ──────────────────────────────────
-    // If ghlLinkedAccountIds is populated, only show accounts in that list.
-    // If empty but defaultGhlSocialAccountId is set, show only the default.
-    // If both empty, show ALL accounts (initial setup / unfiltered mode).
+    // Business isolation is enforced by ghlLocationId: every account returned
+    // here belongs to THIS business's Launch CRM location.
+    //
+    // If ghlLinkedAccountIds is populated, the owner has explicitly scoped the
+    // publishing channels for this business → show only those.
+    // Otherwise show ALL connected channels for the location so the owner can
+    // publish to any combination (e.g. Google + Facebook).
+    //
+    // IMPORTANT: We intentionally do NOT collapse the list to the single cached
+    // defaultGhlSocialAccountId. Doing so previously hid every channel except
+    // the default once a business had published once, making multi-channel
+    // publishing (e.g. adding Facebook alongside Google) impossible — the
+    // picker only ever showed the one default channel.
     const linked = business.ghlLinkedAccountIds || [];
     const defaultId = business.defaultGhlSocialAccountId;
-    let filtered = activeAccounts;
-    let filterMode: 'linked' | 'default_only' | 'unfiltered' = 'unfiltered';
-
-    if (linked.length > 0) {
-      const linkedSet = new Set(linked);
-      filtered = activeAccounts.filter(a => linkedSet.has(a.id));
-      filterMode = 'linked';
-    } else if (defaultId) {
-      filtered = activeAccounts.filter(a => a.id === defaultId);
-      filterMode = 'default_only';
-    }
+    const { channels: filtered, filterMode } = resolveBusinessChannels(activeAccounts, linked);
 
     // Map to a safe response shape
     const accounts = filtered.map(a => ({
