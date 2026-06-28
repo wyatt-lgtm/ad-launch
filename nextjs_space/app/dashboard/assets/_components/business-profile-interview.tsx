@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   X, ArrowLeft, ArrowRight, Loader2, CheckCircle, Sparkles,
   Save, FileText, AlertCircle, ChevronDown, ChevronUp,
@@ -20,6 +20,7 @@ import {
   type PrefillItem, type PrefillResult, type PrefillSource, type PrefillConfidence,
   type EnhancedSectionStatus, ENHANCED_STATUS_CONFIG, getEnhancedSectionStatus,
 } from '@/lib/interview-prefill';
+import { computeVisibleQuestionKeys, matchesQuestionFilter } from '@/lib/interview-filter';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -103,6 +104,10 @@ export default function BusinessProfileInterview({ businessId, onClose, onComple
   // Autosave
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedRef = useRef<string>('');
+  // Always-current snapshot of answers, read inside frozen memos so that typing
+  // does NOT trigger re-filtering / re-bucketing (which would unmount the field).
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
 
   // ── Load prefill data on mount ───────────────────────────────────────
 
@@ -189,24 +194,77 @@ export default function BusinessProfileInterview({ businessId, onClose, onComple
     return prefill?.items.find(i => i.sectionId === sectionId && i.questionKey === questionKey);
   };
 
-  // Question filter logic
+  // Question filter logic (LIVE — used for sidebar "X shown" counts only).
   const getFilteredQuestions = (section: InterviewSection): InterviewQuestion[] => {
     if (questionFilter === 'all') return section.questions;
-    return section.questions.filter(q => {
-      const compositeKey = `${section.id}::${q.key}`;
-      const pf = getPrefillForQuestion(section.id, q.key);
-      const hasAnswer = ((answers[section.id] || {})[q.key] || '').trim().length > 0;
-      const isConfirmed = confirmedKeys.has(compositeKey);
-
-      switch (questionFilter) {
-        case 'missing': return !hasAnswer;
-        case 'needs_review': return pf && !isConfirmed && pf.needsOwnerConfirmation;
-        case 'confirmed': return isConfirmed;
-        case 'compliance': return q.sensitive || section.id === 'compliance';
-        default: return true;
-      }
-    });
+    return section.questions.filter(q => matchesQuestionFilter(q, questionFilter, {
+      sectionId: section.id,
+      sectionAnswers: answers[section.id] || {},
+      prefillItems: prefill?.items || [],
+      confirmedKeys,
+    }));
   };
+
+  // Frozen set of visible question keys for the ACTIVE section.
+  // Recomputes only when the user navigates, changes the filter, or confirms/
+  // rejects an item — NOT when they type. This prevents a question from being
+  // filtered out (and its textarea unmounted) the instant the first character
+  // is typed under a filter like "Missing". Answers are read via answersRef so
+  // that text changes do not invalidate the memo.
+  const visibleQuestionKeys = useMemo<Set<string>>(() => {
+    const section = INTERVIEW_SECTIONS[activeSectionIdx];
+    if (!section) return new Set();
+    // Snapshot answers via the ref so typing does NOT invalidate this memo.
+    return computeVisibleQuestionKeys(section.questions, questionFilter, {
+      sectionId: section.id,
+      sectionAnswers: answersRef.current[section.id] || {},
+      prefillItems: prefill?.items || [],
+      confirmedKeys,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSectionIdx, questionFilter, prefill, confirmedKeys, rejectedKeys]);
+
+  // Review Known Info: show high-confidence confirmed answers in compact view, then
+  // missing. Frozen via useMemo (answers read through answersRef) so that typing into
+  // a prefilled-but-empty question does not re-bucket it mid-keystroke and unmount the
+  // textarea. Recomputes only on prefill load or confirm/reject actions. MUST live
+  // above all early returns to satisfy the rules of hooks.
+  const reviewKnownQuestions = useMemo(() => {
+    if (mode !== 'review_known') return null;
+    const ans = answersRef.current;
+    const confirmed: { q: InterviewQuestion; sectionId: string; sectionTitle: string; pf: PrefillItem }[] = [];
+    const needsReview: { q: InterviewQuestion; sectionId: string; sectionTitle: string; pf: PrefillItem }[] = [];
+    const missing: { q: InterviewQuestion; sectionId: string; sectionTitle: string }[] = [];
+
+    // Start with Quick Start questions but add any other missing essential ones
+    const essentialKeys = new Set(QUICK_START_QUESTIONS.map(q => `${q.sectionId}::${q.key}`));
+    // Add critical missing questions
+    const criticalMissing = [
+      'differentiators::whyChoose', 'compliance::cannotPromise', 'compliance::regulatedClaims',
+      'questions::preBuyQuestions', 'objections::hesitateWhy', 'founder::excludeDetails',
+    ];
+    criticalMissing.forEach(k => essentialKeys.add(k));
+
+    for (const section of INTERVIEW_SECTIONS) {
+      for (const q of section.questions) {
+        const compositeKey = `${section.id}::${q.key}`;
+        if (!essentialKeys.has(compositeKey) && !q.quickStart) continue;
+        const pf = prefill?.items.find(i => i.sectionId === section.id && i.questionKey === q.key);
+        const val = (ans[section.id] || {})[q.key] || '';
+        const isConf = confirmedKeys.has(compositeKey);
+
+        if (pf && val.trim() && isConf) {
+          confirmed.push({ q, sectionId: section.id, sectionTitle: section.title, pf });
+        } else if (pf && val.trim() && !isConf) {
+          needsReview.push({ q, sectionId: section.id, sectionTitle: section.title, pf });
+        } else {
+          missing.push({ q, sectionId: section.id, sectionTitle: section.title });
+        }
+      }
+    }
+    return { confirmed, needsReview, missing };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, prefill, confirmedKeys, rejectedKeys]);
 
   // Count questions per filter
   const getFilterCounts = () => {
@@ -964,40 +1022,6 @@ export default function BusinessProfileInterview({ businessId, onClose, onComple
   const progress = (answeredQuestions / totalQuestions) * 100;
   const filterCounts = getFilterCounts();
 
-  // Review Known Info: show high-confidence confirmed answers in compact view, then missing
-  const reviewKnownQuestions = isReviewKnown ? (() => {
-    const confirmed: { q: InterviewQuestion; sectionId: string; sectionTitle: string; pf: PrefillItem }[] = [];
-    const needsReview: { q: InterviewQuestion; sectionId: string; sectionTitle: string; pf: PrefillItem }[] = [];
-    const missing: { q: InterviewQuestion; sectionId: string; sectionTitle: string }[] = [];
-
-    // Start with Quick Start questions but add any other missing essential ones
-    const essentialKeys = new Set(QUICK_START_QUESTIONS.map(q => `${q.sectionId}::${q.key}`));
-    // Add critical missing questions
-    const criticalMissing = [
-      'differentiators::whyChoose', 'compliance::cannotPromise', 'compliance::regulatedClaims',
-      'questions::preBuyQuestions', 'objections::hesitateWhy', 'founder::excludeDetails',
-    ];
-    criticalMissing.forEach(k => essentialKeys.add(k));
-
-    for (const section of INTERVIEW_SECTIONS) {
-      for (const q of section.questions) {
-        const compositeKey = `${section.id}::${q.key}`;
-        if (!essentialKeys.has(compositeKey) && !q.quickStart) continue;
-        const pf = getPrefillForQuestion(section.id, q.key);
-        const val = (answers[section.id] || {})[q.key] || '';
-        const isConf = confirmedKeys.has(compositeKey);
-
-        if (pf && val.trim() && isConf) {
-          confirmed.push({ q, sectionId: section.id, sectionTitle: section.title, pf });
-        } else if (pf && val.trim() && !isConf) {
-          needsReview.push({ q, sectionId: section.id, sectionTitle: section.title, pf });
-        } else {
-          missing.push({ q, sectionId: section.id, sectionTitle: section.title });
-        }
-      }
-    }
-    return { confirmed, needsReview, missing };
-  })() : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -1208,7 +1232,10 @@ export default function BusinessProfileInterview({ businessId, onClose, onComple
 
                 {/* Filtered questions */}
                 {(() => {
-                  let filtered = getFilteredQuestions(currentSection);
+                  // Use the FROZEN visible-key set so typing never unmounts a field.
+                  let filtered = questionFilter === 'all'
+                    ? currentSection.questions
+                    : currentSection.questions.filter(q => visibleQuestionKeys.has(q.key));
                   // When the prefilled service checklist has services, it replaces the blank "core services" question
                   if (currentSection.id === 'services' && servicesPanelCount > 0) {
                     filtered = filtered.filter(q => q.key !== 'coreServices');
