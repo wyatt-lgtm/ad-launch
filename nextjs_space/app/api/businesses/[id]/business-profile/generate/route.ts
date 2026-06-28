@@ -32,7 +32,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (!business) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
     const body = await req.json();
-    const { interviewId, answersJson, docTypes, isQuickStart } = body;
+    const { interviewId, answersJson, docTypes, isQuickStart, prefillMetadata } = body;
     if (!answersJson || Object.keys(answersJson).length === 0) {
       return NextResponse.json({ error: 'No interview answers provided' }, { status: 400 });
     }
@@ -54,11 +54,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       ? '\n\nNote: This profile was generated from a Quick Start interview with limited information. Mark areas where more detail would improve accuracy. Be practical with what you have — don\'t pad with generic content.'
       : '';
 
+    // Build confidence guidance for the LLM
+    let confidenceGuidance = '';
+    if (prefillMetadata) {
+      const lowConfKeys = prefillMetadata.lowConfidenceKeys || [];
+      const complianceKeys = prefillMetadata.complianceKeys || [];
+      if (lowConfKeys.length > 0 || complianceKeys.length > 0) {
+        confidenceGuidance = '\n\nIMPORTANT CONFIDENCE GUIDANCE:';
+        if (lowConfKeys.length > 0) {
+          confidenceGuidance += '\n- Some answers were auto-filled from public research and may be incomplete. Use them cautiously and add a note like "[Needs owner review]" near claims that seem uncertain.';
+        }
+        if (complianceKeys.length > 0) {
+          confidenceGuidance += '\n- Compliance-sensitive information (guarantees, legal claims, certifications) must NOT be stated as fact unless explicitly confirmed by the owner. Flag these with "[Requires verification]".';
+        }
+        confidenceGuidance += '\n- Prefer confirmed answers over research-suggested answers. Never state low-confidence claims as established facts.';
+      }
+    }
+
     const documents: any[] = [];
 
     for (const docType of targetDocTypes) {
       try {
-        const systemPrompt = `You are a professional business copywriter creating marketing documents for "${businessName}". Write in a professional but approachable tone. Use the information provided to create accurate, compelling content. Do not invent facts not supported by the provided information. If information is missing for a section, note that it should be added later. Output ONLY the document content, no headers like "Here is..." or meta-commentary.${quickStartNote}`;
+        const systemPrompt = `You are a professional business copywriter creating marketing documents for "${businessName}". Write in a professional but approachable tone. Use the information provided to create accurate, compelling content. Do not invent facts not supported by the provided information. If information is missing for a section, note that it should be added later. Output ONLY the document content, no headers like "Here is..." or meta-commentary.${quickStartNote}${confidenceGuidance}`;
 
         const userPrompt = `${docType.prompt} for "${businessName}" based on this business information:\n\n${context}\n\nWrite a complete, well-structured document. Use paragraphs, not bullet lists unless the content type specifically calls for them (like FAQs or lists of claims to avoid). Aim for 200-800 words depending on the document type.`;
 
