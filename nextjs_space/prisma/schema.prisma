@@ -112,6 +112,14 @@ model Business {
   searchSerpVarianceSummaries  SearchSerpVarianceSummary[]
   searchIntelKeywordImports    SearchIntelligenceKeywordImport[]
 
+  // ── SEO research consumption layer ─────────────────────────────────
+  seoCompetitorPageAnalyses SeoCompetitorPageAnalysis[]
+  seoContentMetaAnalyses    SeoContentMetaAnalysis[]
+  seoExtractedQuestions     SeoExtractedQuestion[]
+  seoPageBriefs             SeoPageBrief[]
+  seoContentBriefs          SeoContentBrief[]
+  seoVideoBriefs            SeoVideoBrief[]
+
   // ── Two-stage Website workflow (Concept + Production) ──────────────
   websiteProjects    WebsiteProject[]
   websiteConcepts    WebsiteConcept[]
@@ -2395,6 +2403,309 @@ model SearchSerpVarianceSummary {
   @@index([businessId, locationId])
   @@index([createdAt])
 }
+// ════════════════════════════════════════════════════════════════════
+//  SEO Research Consumption Layer
+//  Turns DataForSEO SERP observations (provider-returned top URLs ONLY)
+//  into structured competitor page analyses → meta-analysis → page /
+//  content / video briefs that production website + content + video
+//  generation can CONSUME. NO Google scraping, NO browser automation as a
+//  data source, NO competitor copying (structure / intent / gaps only).
+//  All records are business-scoped; raw provider payloads live in R2 and
+//  are referenced here by object key. Evidence (provider task_id +
+//  check_url) is preserved on every analysis.
+// ════════════════════════════════════════════════════════════════════
+
+/// Per-competitor SERP result page analysis. Built ONLY from URLs the
+/// provider (DataForSEO) returned for a keyword/location SERP. Stores what
+/// the page covers (structure / intent / gaps) — never copied content.
+model SeoCompetitorPageAnalysis {
+  id             String  @id @default(cuid())
+  businessId     String
+  metaAnalysisId String?
+  // external evidence links (scalar, indexed — not hard relations)
+  runId          String?
+  keywordId      String?
+  locationId     String?
+  // provider evidence
+  providerTaskId String?
+  checkUrl       String? @db.Text
+  rawSnapshotRef String? // R2 object key for the raw fetched page payload
+
+  domain         String?
+  url            String  @db.Text
+  rankGroup      Int?
+  rankAbsolute   Int?
+  // result_type: organic | local_pack | maps | paid | featured_snippet
+  //   | people_also_ask | reddit | forum | youtube | video | other
+  resultType     String  @default("organic")
+  // classified_input: service_page | question_input | video_input
+  classifiedInput String @default("service_page")
+
+  pageTitle         String? @db.Text
+  metaDescription   String? @db.Text
+  h1                String? @db.Text
+  headingsJson      Json?
+  topicsJson        Json?
+  faqsJson          Json?
+  schemaTypesJson   Json?
+  ctaSummary        String? @db.Text
+  trustElementsJson Json?
+  localTermsJson    Json?
+  mediaElementsJson Json?
+  videoElementsJson Json?
+  contentGapsJson   Json?
+  conversionElementsJson Json?
+  analysisSummary   String? @db.Text
+
+  // status: pending | complete | failed | skipped
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business     Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  metaAnalysis SeoContentMetaAnalysis? @relation(fields: [metaAnalysisId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([metaAnalysisId])
+  @@index([businessId, resultType])
+  @@index([businessId, classifiedInput])
+  @@index([businessId, domain])
+}
+
+/// Aggregated meta-analysis across competitor page analyses for a target
+/// keyword + location + service line. Captures common structure, question
+/// patterns, content gaps, and recommended angle/sections/FAQs/schema/CTAs
+/// + recommended video topics. This is the source record consumed by page,
+/// content and video brief generation.
+model SeoContentMetaAnalysis {
+  id                String  @id @default(cuid())
+  businessId        String
+  // external evidence links (scalar, indexed)
+  runId             String?
+  keywordId         String?
+  locationId        String?
+
+  targetKeyword     String?
+  targetLocation    String?
+  serviceLine       String?
+  marketOrientation String? // local | regional | national
+  dataSource        String? @default("dataforseo")
+  // provider evidence
+  providerTaskId    String?
+  checkUrl          String? @db.Text
+  competitorUrlsJson Json?
+
+  // aggregated structural patterns
+  commonHeadingsJson    Json?
+  commonTopicsJson      Json?
+  commonFaqsJson        Json?
+  commonSchemaJson      Json?
+  commonCtasJson        Json?
+  trustElementsJson     Json?
+  localTermsJson        Json?
+  mediaPatternsJson     Json?
+  videoPatternsJson     Json?
+  conversionPatternsJson Json?
+  contentGapsJson       Json?
+
+  // question / intent patterns (extracted from PAA, Reddit, forums, FAQs)
+  commonCustomerQuestionsJson Json?
+  questionPatternsJson        Json?
+  listiclePatternsJson        Json?
+  comparisonTopicsJson        Json?
+  warningSignTopicsJson       Json?
+  costTopicsJson              Json?
+  serviceProcessTopicsJson    Json?
+  objectionTopicsJson         Json?
+  paaQuestionsJson            Json?
+  faqQuestionsJson            Json?
+
+  // recommendations (intent-derived, not copied)
+  recommendedAngle         String? @db.Text
+  recommendedSectionsJson  Json?
+  recommendedFaqsJson      Json?
+  recommendedSchemaJson    Json?
+  recommendedCtasJson      Json?
+  recommendedVideoTopicsJson Json?
+
+  confidenceScore Float? @default(0)
+  // status: pending | complete | stale | needs_review | failed
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business           Business                     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  competitorAnalyses SeoCompetitorPageAnalysis[]
+  pageBriefs         SeoPageBrief[]
+  contentBriefs      SeoContentBrief[]
+  videoBriefs        SeoVideoBrief[]
+  extractedQuestions SeoExtractedQuestion[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, targetKeyword])
+  @@index([businessId, serviceLine])
+  @@index([createdAt])
+}
+
+/// A single customer question / topic extracted from question-type inputs
+/// (PAA, Reddit, forums, FAQs) or video inputs (YouTube). Classified by
+/// topic_type and funnel stage with a recommended content use + priority.
+model SeoExtractedQuestion {
+  id             String  @id @default(cuid())
+  businessId     String
+  metaAnalysisId String?
+
+  questionText   String  @db.Text
+  // topic_type: warning_signs | comparison | cost | timing | necessity
+  //   | process | risk | DIY_vs_professional | objection | FAQ
+  //   | local_modifier | video_topic
+  topicType      String  @default("FAQ")
+  frequencyCount Int     @default(1)
+  sourceUrlsJson Json?
+  sourceResultTypesJson Json?
+  // funnel_stage: awareness | consideration | decision | retention
+  funnelStage    String?
+  // recommended_content_use: service_page_section | FAQ | blog_article
+  //   | video_script | short_video | carousel | email | social_post
+  //   | landing_page_section
+  recommendedContentUse String?
+  // priority: low | medium | high | critical
+  priority       String  @default("medium")
+  notes          String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business     Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  metaAnalysis SeoContentMetaAnalysis? @relation(fields: [metaAnalysisId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([metaAnalysisId])
+  @@index([businessId, topicType])
+  @@index([businessId, priority])
+}
+
+/// A structured page brief derived from a meta-analysis. Consumed by the
+/// production website build (George structures, Ogilvy writes copy, Tom
+/// Hopkins applies conversion/CTA, Peter validates). Approval is required
+/// before a page is generated from it (no auto-publish).
+model SeoPageBrief {
+  id               String  @id @default(cuid())
+  businessId       String
+  metaAnalysisId   String?
+  websiteProjectId String?
+  websitePageId    String? // page that consumed this brief (scalar record)
+
+  // target_page_type: home | service | location | city | county | about
+  //   | contact | blog | landing | other
+  targetPageType   String  @default("service")
+
+  recommendedSlug            String?
+  recommendedMetaTitle       String?
+  recommendedMetaDescription String? @db.Text
+  recommendedH1              String? @db.Text
+  recommendedSectionsJson    Json?
+  recommendedFaqsJson        Json?
+  recommendedSchemaJson      Json?
+  internalLinkRecommendationsJson Json?
+  ctaRecommendationsJson     Json?
+  formRecommendationsJson    Json?
+  trackingRecommendationsJson Json?
+  differentiationAngle       String? @db.Text
+  evidenceSummary            String? @db.Text
+  sourceCompetitorAnalysisIdsJson Json?
+
+  // status: draft | ready_for_review | approved | used_in_page | stale | rejected
+  status         String    @default("draft")
+  approvedByUserId String?
+  approvedAt     DateTime?
+  // admin override of the research gate (e.g. generate page without research)
+  overrideByUserId String?
+  overrideReason   String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business        Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  metaAnalysis    SeoContentMetaAnalysis? @relation(fields: [metaAnalysisId], references: [id], onDelete: SetNull)
+  pagesUsingBrief WebsitePage[]
+
+  @@index([businessId])
+  @@index([metaAnalysisId])
+  @@index([businessId, status])
+  @@index([businessId, targetPageType])
+}
+
+/// A content brief (blog/guide/FAQ/landing/social/email/video script/etc.)
+/// derived from a meta-analysis. Consumed by content generation. Never
+/// auto-published.
+model SeoContentBrief {
+  id             String  @id @default(cuid())
+  businessId     String
+  metaAnalysisId String?
+
+  // content_type: blog_article | guide | faq_page | landing_page
+  //   | social_post | email | video_script | short_video | carousel
+  contentType    String  @default("blog_article")
+  recommendedTitle        String? @db.Text
+  recommendedOutlineJson  Json?
+  recommendedFaqsJson     Json?
+  recommendedCta          String? @db.Text
+  recommendedInternalLinksJson Json?
+  recommendedMediaJson    Json?
+  audience                String? @db.Text
+  evidenceSummary         String? @db.Text
+
+  // status: draft | ready_for_review | approved | used | stale | rejected
+  status    String   @default("draft")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business     Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  metaAnalysis SeoContentMetaAnalysis? @relation(fields: [metaAnalysisId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([metaAnalysisId])
+  @@index([businessId, status])
+  @@index([businessId, contentType])
+}
+
+/// A video brief derived from a meta-analysis (built from video-input /
+/// question-input patterns). Consumed by video generation (Don Draper for
+/// media patterns). Never auto-published.
+model SeoVideoBrief {
+  id             String  @id @default(cuid())
+  businessId     String
+  metaAnalysisId String?
+
+  // video_type: short_form | explainer | service_overview | faq_answer
+  //   | local_service_intro | testimonial_prompt | comparison | myth_buster
+  videoType      String  @default("short_form")
+  hook           String? @db.Text
+  recommendedScriptOutlineJson Json?
+  keyQuestionsToAnswerJson     Json?
+  visualShotsJson              Json?
+  recommendedCta               String? @db.Text
+  audience                     String? @db.Text
+  // funnel_stage: awareness | consideration | decision | retention
+  funnelStage                  String?
+  evidenceSummary              String? @db.Text
+
+  // status: draft | ready_for_review | approved | used | stale | rejected
+  status    String   @default("draft")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business     Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  metaAnalysis SeoContentMetaAnalysis? @relation(fields: [metaAnalysisId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([metaAnalysisId])
+  @@index([businessId, status])
+  @@index([businessId, videoType])
+}
+
 
 // ════════════════════════════════════════════════════════════════════
 //  Two-Stage Website Workflow (Concept → Production)
@@ -2559,6 +2870,12 @@ model WebsitePage {
 
   html String? @db.Text
 
+  // SEO research gate: which page brief this page was built from + status.
+  // seo_research_status: research_ready | research_missing | research_stale
+  //   | provider_unavailable | generated_without_research | seo_research_missing
+  seoBriefId        String?
+  seoResearchStatus String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2567,12 +2884,14 @@ model WebsitePage {
   production WebsiteProduction @relation(fields: [productionId], references: [id], onDelete: Cascade)
   sections   WebsiteSection[]
   assets     WebsiteAsset[]
+  seoBrief   SeoPageBrief?     @relation(fields: [seoBriefId], references: [id], onDelete: SetNull)
 
   @@index([businessId])
   @@index([websiteProjectId])
   @@index([productionId])
   @@index([pageType])
   @@index([status])
+  @@index([seoBriefId])
 }
 
 /// A content section within a production page (hero, services, about, CTA, etc.).
