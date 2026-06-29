@@ -82,8 +82,10 @@ export async function GET() {
     tracking_pixels: true,
     pixel_discovery: true,
     no_google_scraping: true,
-    // Deliberately-deferred capabilities (off until keys / scheduling are enabled):
-    search_intelligence_live_providers: false,
+    // DataForSEO live provider is wired and available for manual runs.
+    search_intelligence_live_providers: true,
+    two_stage_website_workflow: true,
+    // Deliberately-deferred capability (stays off until explicitly enabled):
     search_intelligence_weekly_automation: false,
   };
 

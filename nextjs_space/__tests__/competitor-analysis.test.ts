@@ -115,7 +115,9 @@ describe('Competitor URL Validation', () => {
   test('invalid URLs fail validation', () => {
     expect(isValidCompetitorUrl('')).toBe(false);
     expect(isValidCompetitorUrl('not a url')).toBe(false);
-    expect(isValidCompetitorUrl('ftp://weird.protocol')).toBe(true); // URL constructor accepts ftp
+    // 'ftp://...' does not start with 'http', so 'https://' is prepended, yielding
+    // hostname 'ftp' (no dot) -> rejected. Only http(s) URLs with a dotted host are valid.
+    expect(isValidCompetitorUrl('ftp://weird.protocol')).toBe(false);
     expect(isValidCompetitorUrl('just-text')).toBe(false);
   });
 
