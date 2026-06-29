@@ -342,6 +342,8 @@ export async function POST(request: NextRequest) {
         userId: userId ?? null,
         businessId: businessId ?? null,
         anonymousToken: anonymousToken ?? null,
+        // Explicit Light Research contract for the preview / first-3-posts flow.
+        researchDepth: 'light',
         ...bizFields,
       },
     });

@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { createProvisionalBusiness, TombstoneError, buildLaneCommands, createAsyncRun } from '@/lib/tombstone';
 import { getUpcomingEvents } from '@/lib/social/upcoming-events';
 import { generateContentBrief } from '@/lib/rss/trade-area-feed';
+import { buildPreviewLightResearchContract } from '@/lib/research-tiers';
 
 /**
  * POST /api/analysis/[id]/launch-pipeline
@@ -143,12 +144,22 @@ export async function POST(
         holidayContext,
       );
 
+      // Preview flow is Tier 1 (Light Research) ONLY. Send the explicit Light
+      // Research contract so the backend never runs deep crawl / competitor /
+      // pixel inspection / provider lookup / ongoing search intelligence for the
+      // first 3 preview posts — instead of relying on a backend default.
+      const researchContract = buildPreviewLightResearchContract();
+      console.log(
+        `[launch-pipeline] Sending Light Research contract (depth=${researchContract.research_depth}, scope=${researchContract.research_scope}, max_pages=${researchContract.max_pages}, deep_allowed=${researchContract.deep_research_allowed})`,
+      );
+
       const asyncResult = await createAsyncRun(
         tombstoneBusinessId,
         businessName,
         analysis.websiteUrl,
         lanes,
         analysisId, // idempotency key
+        researchContract,
       );
 
       const missionId = JSON.stringify({

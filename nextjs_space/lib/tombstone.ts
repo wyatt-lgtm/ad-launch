@@ -335,6 +335,13 @@ export async function createAsyncRun(
   websiteUrl: string,
   lanes: AsyncLaneConfig[],
   idempotencyKey?: string,
+  /**
+   * Optional explicit research contract (e.g. the Light Research contract for the
+   * 3-post preview flow). When provided it is forwarded to the backend as a
+   * top-level `research` object so the run's depth/scope is unambiguous instead
+   * of relying on a backend default. Backward-compatible: omitted when not set.
+   */
+  research?: Record<string, any>,
 ): Promise<AsyncRunResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90000); // 90s — Render cold-starts can take 30-60s on first request of the day
@@ -348,6 +355,7 @@ export async function createAsyncRun(
         website_url: websiteUrl,
         lanes,
         idempotency_key: idempotencyKey,
+        ...(research ? { research } : {}),
       }),
       cache: 'no-store',
       signal: controller.signal,

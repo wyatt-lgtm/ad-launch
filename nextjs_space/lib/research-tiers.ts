@@ -165,3 +165,33 @@ export function canRunDeepResearch(business: {
 export function outputTypeFor(depth: ResearchDepth): string {
   return RESEARCH_OUTPUT_TYPES[depth] ?? RESEARCH_OUTPUT_TYPES.deep;
 }
+
+/**
+ * Explicit Light Research request contract for the first-3-posts preview flow.
+ *
+ * This is the exact, snake_cased payload the app sends to the backend so the
+ * preview run is unambiguously shallow — instead of relying on a backend
+ * default. It mirrors LIGHT_RESEARCH_SCOPE but in the request shape the
+ * Tombstone/research backend expects. Deep-only capabilities are explicitly
+ * turned OFF here.
+ */
+export const PREVIEW_LIGHT_RESEARCH_CONTRACT = {
+  research_depth: 'light',
+  research_scope: 'preview_3_posts',
+  max_pages: LIGHT_RESEARCH_SCOPE.maxPages, // 3
+  deep_research_allowed: false,
+  tracking_pixel_inspection: false,
+  competitor_research: false,
+  provider_lookup: false,
+  ongoing_search_intelligence: false,
+  full_website_crawl: false,
+  social_post_review: false,
+  seo_audit: false,
+} as const;
+
+export type PreviewLightResearchContract = typeof PREVIEW_LIGHT_RESEARCH_CONTRACT;
+
+/** Returns a fresh copy of the preview Light Research contract (safe to mutate). */
+export function buildPreviewLightResearchContract(): Record<string, any> {
+  return { ...PREVIEW_LIGHT_RESEARCH_CONTRACT };
+}
