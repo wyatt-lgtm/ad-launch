@@ -95,6 +95,12 @@ export interface ProviderUsageDescriptor {
   costEstimate?: number | null;
   isSandbox: boolean;
   errorMessage?: string | null;
+  // Audit fields (no credentials) — persisted to ProviderUsageEvent so each
+  // provider call can be independently verified against DataForSEO.
+  providerTaskId?: string | null;
+  checkUrl?: string | null;
+  providerDatetime?: string | null;
+  locationCode?: number | null;
 }
 
 // ── Location mapping ────────────────────────────────────────────────
@@ -326,8 +332,9 @@ function domainsMatch(a?: string | null, b?: string | null): boolean {
 function mapItemType(t: string | undefined): NormalizedObservation['resultType'] {
   switch ((t || '').toLowerCase()) {
     case 'organic':
-    case 'featured_snippet':
       return 'organic';
+    case 'featured_snippet':
+      return 'featured_snippet';
     case 'paid':
       return 'paid_ad';
     case 'local_pack':
@@ -339,16 +346,40 @@ function mapItemType(t: string | undefined): NormalizedObservation['resultType']
       return 'ai_overview';
     case 'shopping':
     case 'popular_products':
+    case 'google_products':
       return 'shopping';
     case 'video':
+    case 'youtube':
       return 'video';
     case 'images':
       return 'image';
     case 'people_also_ask':
       return 'people_also_ask';
+    case 'related_searches':
+      return 'related_searches';
     default:
       return 'unknown';
   }
+}
+
+/**
+ * Compact, auditable summary of a raw SERP item. Keeps only descriptive
+ * fields (never credentials) and is small enough to store per-observation.
+ */
+function summarizeRawItem(item: any): Record<string, any> {
+  if (!item || typeof item !== 'object') return {};
+  const out: Record<string, any> = {};
+  const keep = [
+    'type', 'rank_group', 'rank_absolute', 'domain', 'url', 'title',
+    'description', 'breadcrumb', 'website_name', 'source', 'position',
+    'rating', 'price', 'is_paid', 'is_featured_snippet',
+  ];
+  for (const k of keep) {
+    if (item[k] !== undefined && item[k] !== null) out[k] = item[k];
+  }
+  // For container items (local_pack/people_also_ask) note nested element count.
+  if (Array.isArray(item.items)) out.nested_items = item.items.length;
+  return out;
 }
 
 // ── Normalization (pure — unit-testable without network) ─────────────
@@ -372,6 +403,16 @@ export function normalizeSerpResponse(raw: any, opts: NormalizeOptions = {}): No
   const includeOrganic = opts.includeOrganic !== false;
   const includeLocalPack = opts.includeLocalPack !== false;
 
+  // Audit fields harvested from the first task/result (provider observation
+  // metadata — used to make a run independently verifiable). NO credentials.
+  let checkUrl: string | null = null;
+  let providerDatetime: string | null = null;
+  let locationCode: number | null = null;
+  let locationName: string | null = null;
+  let languageCode: string | null = null;
+  let topDevice: string | null = null;
+  const serpItemTypes: Record<string, number> = {};
+
   const tasks: any[] = Array.isArray(raw?.tasks) ? raw.tasks : [];
   for (const task of tasks) {
     const results: any[] = Array.isArray(task?.result) ? task.result : [];
@@ -379,22 +420,47 @@ export function normalizeSerpResponse(raw: any, opts: NormalizeOptions = {}): No
       const keyword: string | undefined = res?.keyword ?? task?.data?.keyword;
       const locationLabel: string | undefined = res?.location_name ?? task?.data?.location_name;
       const device: string | undefined = res?.device ?? task?.data?.device ?? 'desktop';
+      // Capture audit metadata from the first populated result.
+      if (checkUrl === null && typeof res?.check_url === 'string') checkUrl = res.check_url;
+      if (providerDatetime === null && typeof res?.datetime === 'string') providerDatetime = res.datetime;
+      if (locationCode === null && typeof (res?.location_code ?? task?.data?.location_code) === 'number') {
+        locationCode = res?.location_code ?? task?.data?.location_code;
+      }
+      if (locationName === null && typeof (res?.location_name ?? task?.data?.location_name) === 'string') {
+        locationName = res?.location_name ?? task?.data?.location_name;
+      }
+      if (languageCode === null && typeof (res?.language_code ?? task?.data?.language_code) === 'string') {
+        languageCode = res?.language_code ?? task?.data?.language_code;
+      }
+      if (topDevice === null && typeof device === 'string') topDevice = device;
       const items: any[] = Array.isArray(res?.items) ? res.items : [];
       for (const item of items) {
         const resultType = mapItemType(item?.type);
+        // Track the distinct SERP item types observed (before include filters)
+        // so the run can be audited for what the SERP actually contained.
+        const rawTypeKey = (item?.type || 'unknown').toString().toLowerCase();
+        serpItemTypes[rawTypeKey] = (serpItemTypes[rawTypeKey] ?? 0) + 1;
         if (resultType === 'paid_ad' && !includePaid) continue;
         if (resultType === 'organic' && !includeOrganic) continue;
         if ((resultType === 'local_pack' || resultType === 'map_result') && !includeLocalPack) continue;
         const domain = item?.domain ?? item?.url ? normalizeDomain(item?.domain ?? item?.url) : undefined;
         const isSelf = domainsMatch(domain, opts.selfDomain);
+        const rankGroup = typeof item?.rank_group === 'number' ? item.rank_group : undefined;
+        const rankAbsolute = typeof item?.rank_absolute === 'number' ? item.rank_absolute : undefined;
+        const source = item?.source ?? item?.website_name ?? undefined;
         observations.push({
           keyword,
           locationLabel,
           searchEngine: 'google',
           device,
           resultType,
-          position: item?.rank_absolute ?? item?.rank_group ?? undefined,
-          pageNumber: typeof item?.rank_absolute === 'number' ? Math.ceil(item.rank_absolute / 10) : undefined,
+          // Legacy mirror: kept for backward compatibility (= absolute position).
+          position: rankAbsolute ?? rankGroup ?? undefined,
+          rankGroup,
+          rankAbsolute,
+          source,
+          rawItem: summarizeRawItem(item),
+          pageNumber: typeof rankAbsolute === 'number' ? Math.ceil(rankAbsolute / 10) : undefined,
           domain: domain || undefined,
           url: item?.url ?? undefined,
           title: item?.title ?? undefined,
@@ -416,6 +482,13 @@ export function normalizeSerpResponse(raw: any, opts: NormalizeOptions = {}): No
       taskCount: tasks.length,
       providerStatusCode: typeof raw?.status_code === 'number' ? raw.status_code : null,
       cost: typeof raw?.cost === 'number' ? raw.cost : null,
+      checkUrl,
+      providerDatetime,
+      locationCode,
+      locationName,
+      languageCode,
+      device: topDevice,
+      serpItemTypes,
     },
   };
 }
@@ -634,6 +707,9 @@ export class DataForSeoProvider implements SearchIntelligenceProvider {
       const taskStatusCode = typeof task0?.status_code === 'number' ? task0.status_code : null;
       const cost = typeof body?.cost === 'number' ? body.cost : null;
       const snapshot = buildSanitizedSnapshot(body, { resolvedLocation: resolvedLocations, payload: tasks });
+      const auditResult0 = Array.isArray(task0?.result) ? task0.result[0] : undefined;
+      const checkUrl: string | null = typeof auditResult0?.check_url === 'string' ? auditResult0.check_url : null;
+      const providerDatetime: string | null = typeof auditResult0?.datetime === 'string' ? auditResult0.datetime : null;
       const baseMeta = {
         provider: 'dataforseo',
         rawSnapshot: snapshot,
@@ -641,6 +717,13 @@ export class DataForSeoProvider implements SearchIntelligenceProvider {
         topStatusCode,
         taskStatusCode,
         taskId: task0?.id ?? null, // DataForSEO request id (for support tickets)
+        checkUrl, // DataForSEO verification URL (open to re-inspect the SERP)
+        providerDatetime, // provider-reported capture time
+        providerCost: cost,
+        locationCode: primaryLocation?.location_code ?? null,
+        locationName: primaryLocation?.location_name ?? null,
+        languageCode: 'en',
+        device: 'desktop',
       } as Record<string, any>;
 
       // 1) Top-level transport / API error.
@@ -688,9 +771,19 @@ export class DataForSeoProvider implements SearchIntelligenceProvider {
         targetLocation: primaryLocation?.location_name ?? locs[0] ?? null,
         requestCount: tasks.length, responseStatus: hasObs ? 'ok' : 'empty',
         providerStatusCode: topStatusCode, unitsUsed: tasks.length, costEstimate: cost, isSandbox,
+        providerTaskId: task0?.id ?? null, checkUrl, providerDatetime,
+        locationCode: primaryLocation?.location_code ?? null,
         errorMessage: hasObs ? null : `API returned OK (status ${topStatusCode}) but no SERP items (items_count=${itemsCount}); location="${primaryLocation?.location_name ?? ''}"${primaryLocation?.location_code != null ? ` (code ${primaryLocation.location_code})` : ''}. Inspect location/payload/parser — NOT a funds issue.`,
       });
-      return { ...normalized, meta: { ...(normalized.meta || {}), ...baseMeta, itemsCount } };
+      // Merge order: normalizer-detected audit fields (languageCode/device/
+      // serpItemTypes) take precedence where present; baseMeta supplies the
+      // request id, snapshot, cost and resolved-location fallbacks.
+      const mergedMeta: Record<string, any> = { ...(normalized.meta || {}), ...baseMeta, itemsCount };
+      if (normalized.meta?.languageCode) mergedMeta.languageCode = normalized.meta.languageCode;
+      if (normalized.meta?.device) mergedMeta.device = normalized.meta.device;
+      if (normalized.meta?.locationName) mergedMeta.locationName = normalized.meta.locationName;
+      if (normalized.meta?.locationCode != null) mergedMeta.locationCode = normalized.meta.locationCode;
+      return { ...normalized, meta: mergedMeta };
     } catch (err: any) {
       this.usage.push({
         endpoint: path,

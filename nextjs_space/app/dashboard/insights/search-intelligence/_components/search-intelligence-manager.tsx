@@ -750,27 +750,7 @@ function SettingsTab({ settings, providerAccounts, onSave, api, businessId, show
                 {testResult.isSandbox && <span className="ml-2 inline-block bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Sandbox / test data</span>}
                 {!testResult.health?.configured && <span className="ml-2 text-amber-600">{testResult.health?.message}</span>}
               </div>
-              {(testResult.meta?.taskId || testResult.meta?.resolvedLocation?.location_code != null) && (
-                <div className="text-xs text-gray-500 flex flex-wrap gap-x-4 gap-y-1">
-                  {testResult.meta?.taskId && (
-                    <span>
-                      Task ID:{' '}
-                      <code className="select-all rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">
-                        {testResult.meta.taskId}
-                      </code>
-                    </span>
-                  )}
-                  {testResult.meta?.resolvedLocation?.location_code != null && (
-                    <span>
-                      Location: <span className="text-gray-700">{testResult.meta.resolvedLocation.location_name}</span>{' '}
-                      (code {testResult.meta.resolvedLocation.location_code})
-                    </span>
-                  )}
-                  {typeof testResult.meta?.topStatusCode === 'number' && (
-                    <span>Status: <span className="text-gray-700">{testResult.meta.topStatusCode}</span></span>
-                  )}
-                </div>
-              )}
+              <SerpAuditPanel meta={testResult.meta} />
 
               <ResultBlock title={`Organic results (${organicResults.length})`} rows={organicResults} />
               <ResultBlock title={`Paid ads (${paidResults.length})`} rows={paidResults} />
@@ -778,6 +758,13 @@ function SettingsTab({ settings, providerAccounts, onSave, api, businessId, show
               {(testResult.observations || []).length === 0 && (
                 <div className="text-sm text-gray-400">No results returned{testResult.isSandbox ? ' (sandbox responses are often empty).' : '.'}</div>
               )}
+              <ManualNoteForm
+                api={api}
+                runId={testResult.runId ?? null}
+                keyword={kw.trim()}
+                location={loc.trim()}
+                showToast={showToast}
+              />
             </div>
           )}
         </div>
@@ -820,6 +807,247 @@ function SettingsTab({ settings, providerAccounts, onSave, api, businessId, show
   );
 }
 
+const RESULT_TYPE_LABEL: Record<string, string> = {
+  organic: 'Organic',
+  paid_ad: 'Paid ad',
+  local_pack: 'Local pack',
+  map_result: 'Map result',
+  featured_snippet: 'Featured snippet',
+  people_also_ask: 'People also ask',
+  related_searches: 'Related searches',
+  shopping: 'Shopping',
+  video: 'Video',
+  image: 'Images',
+  ai_overview: 'AI overview',
+  unknown: 'Other',
+};
+
+function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch { /* clipboard unavailable */ }
+      }}
+      className="ml-1 rounded border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
+    >
+      {copied ? 'Copied' : label}
+    </button>
+  );
+}
+
+/**
+ * Provider audit / verification panel. Surfaces the DataForSEO request id
+ * (copyable), the check_url (openable to re-inspect the SERP), the captured
+ * datetime, resolved location code/name, device, language, status and cost so
+ * each test run is independently verifiable. Treats results as an observed
+ * snapshot of the SERP at a point in time — not a single absolute ranking truth.
+ */
+function SerpAuditPanel({ meta }: { meta: any }) {
+  if (!meta) return null;
+  const taskId: string | null = meta.taskId ?? meta.providerTaskId ?? null;
+  const checkUrl: string | null = meta.checkUrl ?? null;
+  const datetime: string | null = meta.providerDatetime ?? null;
+  const locName: string | null = meta.locationName ?? meta.resolvedLocation?.location_name ?? null;
+  const locCode: number | null =
+    (typeof meta.locationCode === 'number' ? meta.locationCode : null) ??
+    meta.resolvedLocation?.location_code ?? null;
+  const device: string | null = meta.device ?? null;
+  const language: string | null = meta.languageCode ?? null;
+  const statusCode: number | null =
+    (typeof meta.taskStatusCode === 'number' ? meta.taskStatusCode : null) ??
+    (typeof meta.topStatusCode === 'number' ? meta.topStatusCode : null);
+  const cost: number | null =
+    (typeof meta.providerCost === 'number' ? meta.providerCost : null) ??
+    (typeof meta.cost === 'number' ? meta.cost : null);
+  const serpItemTypes: Record<string, number> | null =
+    meta.serpItemTypes && typeof meta.serpItemTypes === 'object' ? meta.serpItemTypes : null;
+
+  const hasAny = taskId || checkUrl || datetime || locName || statusCode != null;
+  if (!hasAny) return null;
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-gray-700">Provider verification</div>
+        <span className="text-[10px] text-gray-400">Observed SERP snapshot — not an absolute ranking truth</span>
+      </div>
+      <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1.5 text-xs text-gray-500 sm:grid-cols-2">
+        {taskId && (
+          <div className="flex items-center">
+            <span className="w-28 shrink-0 text-gray-400">Task ID</span>
+            <code className="select-all rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">{taskId}</code>
+            <CopyButton value={taskId} />
+          </div>
+        )}
+        {checkUrl && (
+          <div className="flex items-center">
+            <span className="w-28 shrink-0 text-gray-400">Check URL</span>
+            <a href={checkUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Open SERP</a>
+            <CopyButton value={checkUrl} />
+          </div>
+        )}
+        {datetime && (
+          <div className="flex items-center">
+            <span className="w-28 shrink-0 text-gray-400">Captured at</span>
+            <span className="text-gray-700">{datetime}</span>
+          </div>
+        )}
+        {locName && (
+          <div className="flex items-center">
+            <span className="w-28 shrink-0 text-gray-400">Location</span>
+            <span className="text-gray-700">{locName}{locCode != null ? ` (code ${locCode})` : ''}</span>
+          </div>
+        )}
+        {device && (
+          <div className="flex items-center">
+            <span className="w-28 shrink-0 text-gray-400">Device</span>
+            <span className="text-gray-700">{device}</span>
+          </div>
+        )}
+        {language && (
+          <div className="flex items-center">
+            <span className="w-28 shrink-0 text-gray-400">Language</span>
+            <span className="text-gray-700">{language}</span>
+          </div>
+        )}
+        {statusCode != null && (
+          <div className="flex items-center">
+            <span className="w-28 shrink-0 text-gray-400">Provider status</span>
+            <span className="text-gray-700">{statusCode}</span>
+          </div>
+        )}
+        {cost != null && (
+          <div className="flex items-center">
+            <span className="w-28 shrink-0 text-gray-400">Cost</span>
+            <span className="text-gray-700">${cost.toFixed(4)}</span>
+          </div>
+        )}
+      </div>
+      {serpItemTypes && Object.keys(serpItemTypes).length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] text-gray-400">SERP item types:</span>
+          {Object.entries(serpItemTypes).map(([t, n]) => (
+            <span key={t} className="rounded-full bg-white border border-gray-200 px-2 py-0.5 text-[10px] text-gray-600">
+              {(RESULT_TYPE_LABEL[t] || t)} · {n as number}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Manual comparison note. Lets an admin record an observation made manually
+ * (e.g. "my local browser showed different local-pack results"). This records
+ * a human observation only — it performs no scraping or automated fetching.
+ */
+function ManualNoteForm({ api, runId, keyword, location, showToast }: {
+  api: (p: string) => string; runId: string | null; keyword: string; location: string;
+  showToast?: (ok: boolean, msg: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [observedAt, setObservedAt] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<any[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const q = runId ? `manual-notes?runId=${encodeURIComponent(runId)}` : 'manual-notes';
+      const res = await fetch(api(q));
+      const data = await res.json();
+      if (res.ok && Array.isArray(data?.notes)) setSaved(data.notes);
+    } catch { /* ignore */ }
+  }, [api, runId]);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  const submit = async () => {
+    if (!notes.trim()) { showToast?.(false, 'Enter a note to save'); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(api('manual-notes'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId, keyword, location,
+          manualNotes: notes.trim(),
+          manualObservedAt: observedAt || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data?.ok === false) {
+        showToast?.(false, data?.error || 'Could not save note');
+      } else {
+        showToast?.(true, 'Manual comparison note saved');
+        setNotes(''); setObservedAt('');
+        load();
+      }
+    } catch (e: any) {
+      showToast?.(false, 'Could not save note');
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="rounded-lg border border-dashed border-gray-300 p-3">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs font-medium text-gray-700 hover:text-gray-900">
+        {open ? '−' : '+'} Manual comparison note
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <p className="text-[11px] text-gray-400">
+            Record what you observed manually (e.g. a different local browser result). This stores a human observation only — it does not fetch or scrape Google.
+          </p>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+            placeholder="e.g. My local browser in Houston showed rjsrepair.com in the local pack at position 2, but this run did not."
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-[11px] text-gray-400">Observed at</label>
+            <input
+              type="datetime-local"
+              value={observedAt}
+              onChange={(e) => setObservedAt(e.target.value)}
+              className="rounded-lg border border-gray-300 px-2 py-1 text-xs"
+            />
+            <button
+              type="button"
+              onClick={submit}
+              disabled={saving}
+              className="ml-auto rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save note'}
+            </button>
+          </div>
+          {saved.length > 0 && (
+            <div className="mt-2 space-y-2">
+              {saved.map((n: any) => (
+                <div key={n.id} className="rounded border border-gray-100 bg-gray-50 p-2 text-[11px] text-gray-600">
+                  <div className="whitespace-pre-wrap text-gray-700">{n.manualNotes}</div>
+                  <div className="mt-1 text-gray-400">
+                    {n.keyword ? `“${n.keyword}” · ` : ''}{n.location ? `${n.location} · ` : ''}
+                    observed {n.manualObservedAt ? new Date(n.manualObservedAt).toLocaleString('en-US') : '—'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResultBlock({ title, rows }: { title: string; rows: any[] }) {
   if (!rows || rows.length === 0) return null;
   return (
@@ -829,7 +1057,9 @@ function ResultBlock({ title, rows }: { title: string; rows: any[] }) {
         <table className="min-w-full text-xs">
           <thead>
             <tr className="text-left text-gray-400 border-b border-gray-100">
-              <th className="py-1 pr-3">#</th>
+              <th className="py-1 pr-3" title="Position within its own result block (e.g. organic rank)">Group rank</th>
+              <th className="py-1 pr-3" title="Absolute position across all SERP blocks">Absolute pos</th>
+              <th className="py-1 pr-3">Result type</th>
               <th className="py-1 pr-3">Domain</th>
               <th className="py-1 pr-3">Title</th>
               <th className="py-1 pr-3">URL</th>
@@ -837,15 +1067,21 @@ function ResultBlock({ title, rows }: { title: string; rows: any[] }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r: any, i: number) => (
-              <tr key={i} className="border-b border-gray-50 align-top">
-                <td className="py-1 pr-3 text-gray-500">{r.position ?? '—'}</td>
-                <td className="py-1 pr-3 text-gray-700 whitespace-nowrap">{r.domain || '—'}</td>
-                <td className="py-1 pr-3 text-gray-700 max-w-xs truncate">{r.title || '—'}</td>
-                <td className="py-1 pr-3 text-blue-600 max-w-xs truncate">{r.url || '—'}</td>
-                <td className="py-1 pr-3">{r.isSelf ? <span className="text-green-600 font-medium">Yes</span> : '—'}</td>
-              </tr>
-            ))}
+            {rows.map((r: any, i: number) => {
+              const grp = r.rankGroup ?? null;
+              const abs = r.rankAbsolute ?? (typeof r.position === 'number' ? r.position : null);
+              return (
+                <tr key={i} className="border-b border-gray-50 align-top">
+                  <td className="py-1 pr-3 text-gray-500">{grp ?? '—'}</td>
+                  <td className="py-1 pr-3 text-gray-500">{abs ?? '—'}</td>
+                  <td className="py-1 pr-3 text-gray-600 whitespace-nowrap">{RESULT_TYPE_LABEL[r.resultType] || r.resultType || '—'}</td>
+                  <td className="py-1 pr-3 text-gray-700 whitespace-nowrap">{r.domain || '—'}</td>
+                  <td className="py-1 pr-3 text-gray-700 max-w-xs truncate">{r.title || '—'}</td>
+                  <td className="py-1 pr-3 text-blue-600 max-w-xs truncate">{r.url || '—'}</td>
+                  <td className="py-1 pr-3">{r.isSelf ? <span className="text-green-600 font-medium">Yes</span> : '—'}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

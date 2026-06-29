@@ -46,7 +46,12 @@ export async function logProviderUsage(
         isSandbox: d.isSandbox ?? false,
         errorMessage: d.errorMessage ?? null,
         runId: runId ?? null,
-      })),
+        // Audit fields (no credentials) for independent verification.
+        providerTaskId: d.providerTaskId ?? null,
+        checkUrl: d.checkUrl ?? null,
+        providerDatetime: d.providerDatetime ?? null,
+        locationCode: typeof d.locationCode === 'number' ? d.locationCode : null,
+      })) as any,
     });
   } catch (err: any) {
     // Do not leak anything sensitive; descriptors carry no credentials.

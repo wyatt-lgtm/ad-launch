@@ -108,6 +108,8 @@ model Business {
   organicPositionHistory       OrganicPositionHistory[]
   searchIntelRecommendations   SearchIntelligenceRecommendation[]
   providerUsageEvents          ProviderUsageEvent[]
+  searchManualComparisonNotes  SearchManualComparisonNote[]
+  searchSerpVarianceSummaries  SearchSerpVarianceSummary[]
 
   // ── Two-stage Website workflow (Concept + Production) ──────────────
   websiteProjects    WebsiteProject[]
@@ -1990,11 +1992,12 @@ model SearchIntelligenceKeyword {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
-  business       Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  observations   SearchVisibilityObservation[]
-  paidAds        PaidAdObservation[]
-  organicHistory OrganicPositionHistory[]
-  movements      CompetitorSearchMovement[]
+  business          Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  observations      SearchVisibilityObservation[]
+  paidAds           PaidAdObservation[]
+  organicHistory    OrganicPositionHistory[]
+  movements         CompetitorSearchMovement[]
+  varianceSummaries SearchSerpVarianceSummary[]
 
   @@index([businessId])
   @@index([businessId, status])
@@ -2022,11 +2025,12 @@ model SearchIntelligenceLocation {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  business       Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  observations   SearchVisibilityObservation[]
-  paidAds        PaidAdObservation[]
-  organicHistory OrganicPositionHistory[]
-  movements      CompetitorSearchMovement[]
+  business          Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  observations      SearchVisibilityObservation[]
+  paidAds           PaidAdObservation[]
+  organicHistory    OrganicPositionHistory[]
+  movements         CompetitorSearchMovement[]
+  varianceSummaries SearchSerpVarianceSummary[]
 
   @@index([businessId])
   @@index([businessId, status])
@@ -2058,38 +2062,54 @@ model SearchIntelligenceProviderAccount {
 }
 
 model SearchIntelligenceRun {
-  id                String    @id @default(cuid())
-  businessId        String
+  id                    String    @id @default(cuid())
+  businessId            String
   // run_type: weekly_search_intelligence | organic_serp_check | paid_ad_check | local_pack_check
   //   | maps_check | competitor_ad_check | competitor_organic_check | auction_insights_import
   //   | search_console_sync | google_ads_keyword_sync | google_ads_search_term_sync
   //   | ahrefs_keyword_sync | ahrefs_competitor_sync | manual_import
-  runType           String
-  dataSource        String? // provider id used
-  providerAccountId String?
-  startedAt         DateTime?
-  completedAt       DateTime?
+  runType               String
+  dataSource            String? // provider id used
+  providerAccountId     String?
+  startedAt             DateTime?
+  completedAt           DateTime?
   // status: queued | running | complete | partial | failed | cancelled
-  status            String    @default("queued")
-  keywordCount      Int       @default(0)
-  locationCount     Int       @default(0)
-  observationCount  Int       @default(0)
-  competitorCount   Int       @default(0)
+  status                String    @default("queued")
+  keywordCount          Int       @default(0)
+  locationCount         Int       @default(0)
+  observationCount      Int       @default(0)
+  competitorCount       Int       @default(0)
+  // ── DataForSEO (and other provider) auditability fields ─────────────
+  // First-class audit metadata so a run can be verified against the
+  // provider's own check_url / task lookup. None of these are credentials.
+  providerTaskId        String? // primary DataForSEO tasks[0].id
+  providerTaskIdsJson   Json? // all task ids when a run issues multiple tasks
+  checkUrl              String?   @db.Text // DataForSEO check_url for manual verification
+  providerDatetime      String? // provider-reported capture datetime (as returned)
+  providerStatusCode    Int? // provider status_code (e.g. 20000) or task status
+  providerStatusMessage String?
+  providerCost          Float? // provider-reported cost for the run
+  locationCode          Int? // resolved DataForSEO location_code
+  locationName          String? // resolved canonical location_name
+  languageCode          String?
+  device                String?
+  serpItemTypesJson     Json? // distinct SERP item types seen + counts
   // raw_snapshot_ref: R2 object key for large raw provider payloads (never local paths)
-  rawSnapshotRef    String?
+  rawSnapshotRef        String?
   // isSandbox: true when produced by a DataForSEO sandbox / test request — keeps
   // test data clearly separable from real production observations.
-  isSandbox         Boolean   @default(false)
-  errorMessage      String?   @db.Text
-  createdByTaskId   String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  isSandbox             Boolean   @default(false)
+  errorMessage          String?   @db.Text
+  createdByTaskId       String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   business        Business                           @relation(fields: [businessId], references: [id], onDelete: Cascade)
   providerAccount SearchIntelligenceProviderAccount? @relation(fields: [providerAccountId], references: [id], onDelete: SetNull)
   observations    SearchVisibilityObservation[]
   paidAds         PaidAdObservation[]
   recommendations SearchIntelligenceRecommendation[]
+  manualNotes     SearchManualComparisonNote[]
 
   @@index([businessId])
   @@index([businessId, status])
@@ -2109,7 +2129,14 @@ model SearchVisibilityObservation {
   // result_type: paid_ad | organic | local_pack | map_result | ai_overview
   //   | shopping | video | image | people_also_ask | unknown
   resultType        String   @default("organic")
+  // position retains rank_absolute for backward compatibility; the two new
+  // fields keep group vs absolute ranks distinct so the UI never shows an
+  // absolute SERP position as if it were the organic rank.
   position          Int?
+  rankGroup         Int? // rank within its own result-type block (organic rank)
+  rankAbsolute      Int? // absolute position across all SERP elements
+  source            String? // provider-reported item source (e.g. "Organic", domain source)
+  rawItemJson       Json? // compact raw item summary for auditability
   pageNumber        Int?
   domain            String?
   url               String?
@@ -2279,6 +2306,66 @@ model SearchIntelligenceRecommendation {
   @@index([businessId])
   @@index([businessId, status])
   @@index([businessId, recommendationType])
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SERP auditability: manual comparison notes + variance summaries
+//  These treat DataForSEO output as observation snapshots — never as a
+//  single absolute ranking truth. NO Google scraping / browser automation.
+// ════════════════════════════════════════════════════════════════════
+
+/// A human-recorded comparison note for a run. Lets an admin log that a
+/// local/incognito browser showed a different SERP, WITHOUT that ever being
+/// treated as automated Google scraping. Purely manual, manually entered.
+model SearchManualComparisonNote {
+  id                   String   @id @default(cuid())
+  businessId           String
+  runId                String?
+  keyword              String?
+  location             String?
+  manualObservedAt     DateTime @default(now())
+  manualNotes          String?  @db.Text
+  manualTopResultsJson Json? // optional list of {position, domain, url, title}
+  screenshotRef        String? // optional R2 object key for a manual screenshot
+  createdByUserId      String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  business Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  run      SearchIntelligenceRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, runId])
+  @@index([createdAt])
+}
+
+/// Future-safe SERP variance rollup for a keyword+location over a period.
+/// Populated from multiple observation snapshots so we can distinguish
+/// stable competitors (repeated presence) from volatile ones (one-offs).
+model SearchSerpVarianceSummary {
+  id                       String    @id @default(cuid())
+  businessId               String
+  keywordId                String?
+  locationId               String?
+  periodStart              DateTime?
+  periodEnd                DateTime?
+  observationsCount        Int       @default(0)
+  stableDomainsJson        Json? // domains seen in multiple observations
+  volatileDomainsJson      Json? // domains seen only once
+  selfSeenCount            Int       @default(0)
+  topCompetitorDomainsJson Json?
+  confidenceScore          Float     @default(0)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  business Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  keyword  SearchIntelligenceKeyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  location SearchIntelligenceLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([businessId, keywordId])
+  @@index([businessId, locationId])
+  @@index([createdAt])
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2587,6 +2674,11 @@ model ProviderUsageEvent {
   providerStatusCode Int? // provider status_code (e.g. DataForSEO 20000) or HTTP code
   unitsUsed          Float? // tasks/units consumed if reported
   costEstimate       Float? // provider-reported cost if available
+  // ── Audit metadata (no credentials) ────────────────────────────────
+  providerTaskId     String? // DataForSEO task id for this request
+  checkUrl           String?  @db.Text // DataForSEO check_url
+  providerDatetime   String? // provider-reported capture datetime
+  locationCode       Int? // resolved location_code
   isSandbox          Boolean  @default(false)
   errorMessage       String?  @db.Text
   runId              String?

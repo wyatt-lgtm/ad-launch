@@ -22,6 +22,33 @@ import {
 } from '@/lib/dataforseo-provider';
 import { logProviderUsage } from '@/lib/provider-usage';
 
+/**
+ * Map a provider result `meta` object into the audit columns persisted on a
+ * SearchIntelligenceRun. Keeps a run independently verifiable (DataForSEO task
+ * id, check_url, captured datetime, location/language/device, status, cost).
+ * Contains NO credentials.
+ */
+export function buildRunAuditFields(meta: Record<string, any> | undefined | null): Record<string, any> {
+  const m = meta || {};
+  const serpItemTypes = m.serpItemTypes && typeof m.serpItemTypes === 'object' ? m.serpItemTypes : null;
+  return {
+    providerTaskId: m.taskId ?? m.providerTaskId ?? null,
+    providerTaskIdsJson: (Array.isArray(m.taskIds) ? m.taskIds : null) as any,
+    checkUrl: m.checkUrl ?? null,
+    providerDatetime: m.providerDatetime ?? null,
+    providerStatusCode: typeof m.taskStatusCode === 'number'
+      ? m.taskStatusCode
+      : (typeof m.topStatusCode === 'number' ? m.topStatusCode : (typeof m.providerStatusCode === 'number' ? m.providerStatusCode : null)),
+    providerStatusMessage: m.statusReason ?? null,
+    providerCost: typeof m.providerCost === 'number' ? m.providerCost : (typeof m.cost === 'number' ? m.cost : null),
+    locationCode: typeof m.locationCode === 'number' ? m.locationCode : (m.resolvedLocation?.location_code ?? null),
+    locationName: m.locationName ?? m.resolvedLocation?.location_name ?? null,
+    languageCode: m.languageCode ?? null,
+    device: m.device ?? null,
+    serpItemTypesJson: serpItemTypes as any,
+  };
+}
+
 export function normalizeKeyword(raw: string): string {
   return (raw || '')
     .toLowerCase()
@@ -264,7 +291,8 @@ export async function executeSearchIntelligenceRun(businessId: string, runId: st
         locationCount: locations.length,
         competitorCount: persisted.competitorCount,
         observationCount: persisted.observationCount,
-        rawSnapshotRef: result.rawSnapshotRef ?? null,
+        rawSnapshotRef: (result.meta?.rawSnapshot as string) ?? result.rawSnapshotRef ?? null,
+        ...buildRunAuditFields(result.meta),
         isSandbox,
         errorMessage: health.configured
           ? null
@@ -374,7 +402,12 @@ async function persistResult(
     const locationId = obs.locationLabel ? locByLabel.get(obs.locationLabel) ?? null : null;
     const isSelf = obs.isSelf ?? false;
     const competitorId = !isSelf ? await resolveCompetitor(obs.domain) : null;
-    const position = typeof obs.position === 'number' ? obs.position : null;
+    const rankAbsolute = typeof obs.rankAbsolute === 'number' ? obs.rankAbsolute : null;
+    const rankGroup = typeof obs.rankGroup === 'number' ? obs.rankGroup : null;
+    // Legacy `position` column mirrors the absolute SERP position.
+    const position = typeof obs.position === 'number'
+      ? obs.position
+      : (rankAbsolute ?? rankGroup);
     const histKey = `${keywordId ?? '_'}|${locationId ?? '_'}`;
     let agg = histByKey.get(histKey);
     if (!agg) {
@@ -413,6 +446,7 @@ async function persistResult(
         } as any,
       });
       paidCount++;
+      void rankGroup; void rankAbsolute;
       if (position != null && (agg.paidAdPosition == null || position < agg.paidAdPosition)) {
         agg.paidAdPosition = position;
       }
@@ -431,6 +465,10 @@ async function persistResult(
         device: obs.device ?? 'desktop',
         resultType: obs.resultType ?? 'organic',
         position,
+        rankGroup,
+        rankAbsolute,
+        source: obs.source ?? null,
+        rawItemJson: (obs.rawItem ?? null) as any,
         pageNumber: obs.pageNumber ?? null,
         domain: obs.domain ?? null,
         url: obs.url ?? null,
@@ -573,6 +611,7 @@ export async function runSingleTestSearch(
         completedAt: new Date(),
         observationCount,
         rawSnapshotRef: (result.meta?.rawSnapshot as string) ?? result.rawSnapshotRef ?? null,
+        ...buildRunAuditFields(result.meta),
         isSandbox,
         errorMessage: health.configured ? null : health.message,
       } as any,

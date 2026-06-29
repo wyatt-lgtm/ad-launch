@@ -45,8 +45,14 @@ export interface NormalizedObservation {
     | 'video'
     | 'image'
     | 'people_also_ask'
+    | 'related_searches'
+    | 'featured_snippet'
     | 'unknown';
-  position?: number;
+  position?: number; // legacy: mirrors rankAbsolute for backward compatibility
+  rankGroup?: number; // rank within its own result-type block (organic rank)
+  rankAbsolute?: number; // absolute position across all SERP elements
+  source?: string; // provider-reported item source
+  rawItem?: Record<string, any>; // compact raw item summary (auditability)
   pageNumber?: number;
   domain?: string;
   url?: string;

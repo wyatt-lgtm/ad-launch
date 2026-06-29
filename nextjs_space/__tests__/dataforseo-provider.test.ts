@@ -344,3 +344,128 @@ test('20: success path sends location_code + depth and returns observations', as
     global.fetch = orig;
   }
 });
+
+// ── New: SERP auditability, all item types, rank_group/rank_absolute ──
+
+function multiTypeSample() {
+  return {
+    status_code: 20000,
+    cost: 0.0125,
+    tasks: [
+      {
+        id: 'task-multi-1',
+        status_code: 20000,
+        data: { keyword: 'transmission flush', location_name: 'Houston,Texas,United States', language_code: 'en', device: 'desktop' },
+        result: [
+          {
+            keyword: 'transmission flush',
+            location_name: 'Houston,Texas,United States',
+            location_code: 1026481,
+            language_code: 'en',
+            device: 'desktop',
+            datetime: '2026-06-29 16:43:00 +00:00',
+            check_url: 'https://www.google.com/search?q=transmission+flush&uule=abc',
+            items_count: 6,
+            items: [
+              { type: 'organic', rank_group: 1, rank_absolute: 2, domain: 'a-auto.com', url: 'https://a-auto.com/x', title: 'A', description: 'd', source: 'Organic' },
+              { type: 'paid', rank_group: 1, rank_absolute: 1, domain: 'ads-co.com', url: 'https://ads-co.com', title: 'Ad' },
+              { type: 'local_pack', rank_group: 1, rank_absolute: 3, domain: 'rjsrepair.com', url: 'https://rjsrepair.com', title: 'RJ', api_secret: 'should-not-survive' },
+              { type: 'people_also_ask', rank_group: 1, rank_absolute: 4, items: [{ a: 1 }, { a: 2 }] },
+              { type: 'related_searches', rank_group: 1, rank_absolute: 5 },
+              { type: 'video', rank_group: 1, rank_absolute: 6, domain: 'youtube.com', url: 'https://youtube.com/watch' },
+              { type: 'featured_snippet', rank_group: 1, rank_absolute: 1, domain: 'wikihow.com', url: 'https://wikihow.com', is_featured_snippet: true },
+              { type: 'some_new_thing', rank_group: 1, rank_absolute: 7 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+test('21: all relevant SERP item types are normalized (incl. unknown)', () => {
+  const out = normalizeSerpResponse(multiTypeSample());
+  const types = out.observations.map((o) => o.resultType);
+  expect(types).toContain('organic');
+  expect(types).toContain('paid_ad');
+  expect(types).toContain('local_pack');
+  expect(types).toContain('people_also_ask');
+  expect(types).toContain('related_searches');
+  expect(types).toContain('video');
+  expect(types).toContain('featured_snippet');
+  expect(types).toContain('unknown'); // some_new_thing maps to unknown, never dropped
+});
+
+test('22: both rank_group and rank_absolute are captured per observation', () => {
+  const out = normalizeSerpResponse(multiTypeSample());
+  const organic = out.observations.find((o) => o.resultType === 'organic')!;
+  expect(organic.rankGroup).toBe(1);
+  expect(organic.rankAbsolute).toBe(2);
+  // legacy position mirrors absolute
+  expect(organic.position).toBe(2);
+  expect(organic.source).toBe('Organic');
+});
+
+test('23: meta exposes checkUrl, providerDatetime, serpItemTypes (auditable)', () => {
+  const out = normalizeSerpResponse(multiTypeSample());
+  expect(out.meta.checkUrl).toContain('google.com/search');
+  expect(out.meta.providerDatetime).toBe('2026-06-29 16:43:00 +00:00');
+  expect(out.meta.locationCode).toBe(1026481);
+  expect(out.meta.serpItemTypes).toBeTruthy();
+  expect(out.meta.serpItemTypes.organic).toBe(1);
+  expect(out.meta.serpItemTypes.people_also_ask).toBe(1);
+});
+
+test('24: rawItem summary keeps descriptive fields and excludes credentials', () => {
+  const out = normalizeSerpResponse(multiTypeSample());
+  const local = out.observations.find((o) => o.resultType === 'local_pack')!;
+  expect(local.rawItem).toBeTruthy();
+  expect(local.rawItem!.domain).toBe('rjsrepair.com');
+  // Non-whitelisted secret-like field must NOT survive into rawItem.
+  expect(JSON.stringify(local.rawItem)).not.toContain('api_secret');
+  expect(JSON.stringify(local.rawItem)).not.toContain('should-not-survive');
+  const paa = out.observations.find((o) => o.resultType === 'people_also_ask')!;
+  expect(paa.rawItem!.nested_items).toBe(2);
+});
+
+test('25: provider success meta carries task id + check_url for verification', async () => {
+  setEnv({ DATAFORSEO_ENABLED: 'true', DATAFORSEO_API_LOGIN: 'l', DATAFORSEO_API_PASSWORD: 'p', DATAFORSEO_USE_SANDBOX: 'false' });
+  const orig = global.fetch;
+  global.fetch = jest.fn(async () => ({ ok: true, status: 200, json: async () => multiTypeSample() })) as any;
+  try {
+    const provider = new DataForSeoProvider();
+    const res = await provider.fetchKeywordRankings('biz', ['transmission flush'], ['United States']);
+    expect(res.meta.taskId).toBe('task-multi-1');
+    expect(res.meta.checkUrl).toContain('google.com/search');
+    expect(res.meta.providerDatetime).toBe('2026-06-29 16:43:00 +00:00');
+    const u = provider.usage[0];
+    expect(u.providerTaskId).toBe('task-multi-1');
+    expect(u.checkUrl).toContain('google.com/search');
+  } finally {
+    global.fetch = orig;
+  }
+});
+
+// ── New: SERP evidence rule for website/SEO brief generation ──
+test('26: brief evidence rule prefers stable competitor pages, forums as questions', () => {
+  const src = readFileSync(join(__dirname, '..', 'lib', 'search-intelligence-brief-guidance.ts'), 'utf8');
+  expect(src).toContain('STABLE competitor');
+  expect(src).toMatch(/Reddit|forum/i);
+  expect(src).toContain('Do NOT copy competitor');
+  expect(src).toContain('check_url');
+  // service-content-generator wires the evidence into the page brief prompt.
+  const gen = readFileSync(join(__dirname, '..', 'lib', 'service-content-generator.ts'), 'utf8');
+  expect(gen).toContain('buildSearchIntelligenceEvidence');
+});
+
+// ── New: compliance — no Google scraping, weekly automation stays off ──
+test('27: no Google scraping and weekly automation remains disabled', () => {
+  const provSrc = readFileSync(join(__dirname, '..', 'lib', 'dataforseo-provider.ts'), 'utf8');
+  // We only call the DataForSEO API host; never google.com directly.
+  expect(provSrc).not.toMatch(/fetch\(\s*['"`]https:\/\/(www\.)?google\.com/);
+  const varSrc = readFileSync(join(__dirname, '..', 'lib', 'serp-variance.ts'), 'utf8');
+  // Variance analysis must not schedule or fetch anything.
+  expect(varSrc).not.toContain('setInterval');
+  expect(varSrc).not.toContain('cron');
+  expect(varSrc.toLowerCase()).toContain('no network');
+});

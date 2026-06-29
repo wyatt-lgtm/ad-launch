@@ -9,6 +9,7 @@
  */
 import { prisma } from '@/lib/db';
 import { offeringDisplayName } from '@/lib/industry-services';
+import { buildSearchIntelligenceEvidence } from '@/lib/search-intelligence-brief-guidance';
 
 const LLM_URL = 'https://apps.abacus.ai/v1/chat/completions';
 const MODEL = 'claude-sonnet-4-6';
@@ -113,7 +114,16 @@ export async function generateServicePage(offeringId: string): Promise<ServicePa
     ? `/locations/${locations[0].pageSlug}/services/${offering.slug}`
     : `/services/${offering.slug}`;
 
-  const systemPrompt = `You are an expert local-SEO copywriter creating a service page for a local business. Write trustworthy, specific, conversion-focused copy. Avoid unverifiable superlatives and compliance-risky guarantees. Output ONLY valid JSON matching the requested schema. Do not invent licenses, certifications, awards, or specific statistics.`;
+  // Best-effort Search Intelligence evidence: prefer stable competitor service/
+  // local pages, treat forum/PAA/video as customer questions, and carry a
+  // verifiable DataForSEO citation. Never blocks page generation.
+  let serpEvidenceBlock = '';
+  try {
+    const evidence = await buildSearchIntelligenceEvidence(offering.businessId, { intent: 'local' });
+    if (evidence.hasEvidence) serpEvidenceBlock = evidence.promptBlock;
+  } catch { /* evidence is optional */ }
+
+  const systemPrompt = `You are an expert local-SEO copywriter creating a service page for a local business. Write trustworthy, specific, conversion-focused copy. Avoid unverifiable superlatives and compliance-risky guarantees. Output ONLY valid JSON matching the requested schema. Do not invent licenses, certifications, awards, or specific statistics.${serpEvidenceBlock ? `\n\n${serpEvidenceBlock}` : ''}`;
 
   const userPrompt = `Create a service webpage for this service.
 
