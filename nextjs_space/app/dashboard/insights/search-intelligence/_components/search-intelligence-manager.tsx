@@ -613,6 +613,17 @@ function SettingsTab({ settings, providerAccounts, onSave, api, businessId, show
   };
   const badge = health ? (MODE_BADGE[health.mode] || MODE_BADGE.disabled) : null;
 
+  // Most-recent-request classification badge (distinct from connection mode).
+  const REQUEST_STATE_BADGE: Record<string, { label: string; cls: string }> = {
+    never: { label: 'No request yet', cls: 'bg-gray-100 text-gray-600' },
+    ok_results: { label: 'API OK · results', cls: 'bg-green-100 text-green-700' },
+    ok_zero_items: { label: 'API OK · 0 items', cls: 'bg-amber-100 text-amber-700' },
+    error: { label: 'API error', cls: 'bg-red-100 text-red-700' },
+    disabled: { label: 'Disabled', cls: 'bg-gray-100 text-gray-600' },
+    missing_credentials: { label: 'Missing credentials', cls: 'bg-amber-100 text-amber-700' },
+  };
+  const reqBadge = health?.requestState ? (REQUEST_STATE_BADGE[health.requestState] || null) : null;
+
   // ── Manual test search ───────────────────────────────────────
   const [kw, setKw] = useState('transmission flush');
   const [loc, setLoc] = useState('Houston, TX');
@@ -680,10 +691,29 @@ function SettingsTab({ settings, providerAccounts, onSave, api, businessId, show
         ) : health ? (
           <div className="text-sm text-gray-600 space-y-1">
             <div>{health.message}</div>
+            {/* Most-recent-request status — reflects the latest call, not a stale error. */}
+            {reqBadge && (
+              <div className="flex items-center gap-2 mt-2">
+                <span className={`text-xs font-medium px-2 py-1 rounded-full ${reqBadge.cls}`}>{reqBadge.label}</span>
+                {health.lastProviderStatusCode != null && (
+                  <span className="text-xs text-gray-400">status {health.lastProviderStatusCode}</span>
+                )}
+                {health.lastRequestAt && (
+                  <span className="text-xs text-gray-400">{fmt(health.lastRequestAt)}</span>
+                )}
+              </div>
+            )}
+            {health.lastRequestSummary && (
+              <div className={`text-xs mt-1 ${health.requestState === 'error' ? 'text-red-500' : health.requestState === 'ok_zero_items' ? 'text-amber-600' : 'text-gray-500'}`}>
+                {health.lastRequestSummary}
+                {(health.lastRequestKeyword || health.lastRequestLocation) && (
+                  <span className="text-gray-400"> (“{health.lastRequestKeyword}” — {health.lastRequestLocation})</span>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-500 mt-2">
               <div>Last successful request: <span className="text-gray-700">{fmt(health.lastSuccessAt)}</span></div>
               <div>Last error: <span className="text-gray-700">{fmt(health.lastErrorAt)}</span></div>
-              {health.lastErrorMessage && <div className="sm:col-span-2 text-red-500">{health.lastErrorMessage}</div>}
               <div className="sm:col-span-2">Credentials: <span className="text-gray-700">{health.credentialsRef}</span></div>
             </div>
           </div>

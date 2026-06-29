@@ -16,6 +16,9 @@ import {
   normalizeSerpResponse,
   mapLocationToDataForSeo,
   normalizeDomain,
+  normalizeLocationString,
+  describeProviderStatus,
+  buildSanitizedSnapshot,
   DataForSeoProvider,
 } from '../lib/dataforseo-provider';
 import { runSingleTestSearch } from '../lib/search-intelligence';
@@ -222,4 +225,119 @@ test('location mapping builds a provider location name', () => {
   expect(mapLocationToDataForSeo({ city: 'Houston', state: 'TX' })).toContain('Houston');
   expect(mapLocationToDataForSeo('Houston, TX')).toBe('Houston, TX');
   expect(normalizeDomain('https://WWW.Example.com/page')).toBe('example.com');
+});
+
+// 15. Freeform locations are canonicalized to DataForSEO's exact format.
+test('15: normalizeLocationString canonicalizes freeform locations', () => {
+  expect(normalizeLocationString('Houston, TX')).toBe('Houston,Texas,United States');
+  expect(normalizeLocationString('Houston,Texas')).toBe('Houston,Texas,United States');
+  expect(normalizeLocationString('Houston,Texas,United States')).toBe('Houston,Texas,United States');
+  expect(normalizeLocationString('TX')).toBe('Texas,United States');
+  expect(normalizeLocationString('')).toBe('United States');
+  expect(normalizeLocationString('national')).toBe('United States');
+  expect(normalizeLocationString('United States')).toBe('United States');
+});
+
+// 16. Status-code interpretation never blames funds for a 20000 / unknown code.
+test('16: describeProviderStatus maps codes precisely', () => {
+  expect(describeProviderStatus(20000).reason).toBe('ok');
+  expect(describeProviderStatus(40200).reason).toBe('insufficient_funds');
+  expect(describeProviderStatus(40210).reason).toBe('insufficient_funds');
+  expect(describeProviderStatus(40104).reason).toBe('account_verification_required');
+  expect(describeProviderStatus(40501).reason).toBe('invalid_field_or_location');
+  expect(describeProviderStatus(40505).reason).toBe('invalid_field_or_location');
+  // A generic/unknown code must NOT be attributed to funds.
+  expect(describeProviderStatus(50000).reason).toBe('provider_error');
+  expect(describeProviderStatus(20000).reason).not.toBe('insufficient_funds');
+});
+
+// 17. Sanitized snapshot captures the envelope but never credentials.
+test('17: buildSanitizedSnapshot captures envelope, excludes credentials', () => {
+  const snap = buildSanitizedSnapshot(organicSample(), {
+    resolvedLocation: { canonical: 'Houston,Texas,United States', location_code: 1026201 },
+    payload: [{ keyword: 'transmission flush', location_code: 1026201, language_code: 'en', device: 'desktop', depth: 10 }],
+  });
+  expect(snap).toContain('"status_code":20000');
+  expect(snap).toContain('items_count');
+  expect(snap).toContain('1026201');
+  expect(snap.toLowerCase()).not.toContain('authorization');
+  expect(snap.toLowerCase()).not.toContain('password');
+  expect(snap.toLowerCase()).not.toContain('basic ');
+});
+
+// 18. Top-level 20000 but task-level 40501 must be reported as ERROR, not empty.
+test('18: task-level error (20000 top / 40501 task) is reported as error', async () => {
+  setEnv({ DATAFORSEO_ENABLED: 'true', DATAFORSEO_API_LOGIN: 'l', DATAFORSEO_API_PASSWORD: 'p', DATAFORSEO_USE_SANDBOX: 'false' });
+  const orig = global.fetch;
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      status_code: 20000,
+      status_message: 'Ok.',
+      tasks_count: 1,
+      tasks_error: 1,
+      tasks: [{ status_code: 40501, status_message: 'Invalid Field: location_name.', result: null }],
+    }),
+  })) as any;
+  try {
+    const provider = new DataForSeoProvider();
+    const res = await provider.fetchKeywordRankings('biz', ['transmission flush'], ['United States']);
+    expect(res.observations).toEqual([]);
+    const u = provider.usage[0];
+    expect(u.responseStatus).toBe('error');
+    expect(u.providerStatusCode).toBe(40501);
+    expect((u.errorMessage || '').toLowerCase()).toContain('invalid');
+  } finally {
+    global.fetch = orig;
+  }
+});
+
+// 19. Top-level 20000 with zero items → 'empty' and an explicit not-funds note.
+test('19: 20000 with zero items is empty, not a funds problem', async () => {
+  setEnv({ DATAFORSEO_ENABLED: 'true', DATAFORSEO_API_LOGIN: 'l', DATAFORSEO_API_PASSWORD: 'p', DATAFORSEO_USE_SANDBOX: 'false' });
+  const orig = global.fetch;
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      status_code: 20000,
+      status_message: 'Ok.',
+      tasks_count: 1,
+      tasks_error: 0,
+      tasks: [{ status_code: 20000, status_message: 'Ok.', result: [{ items_count: 0, items: [] }] }],
+    }),
+  })) as any;
+  try {
+    const provider = new DataForSeoProvider();
+    const res = await provider.fetchKeywordRankings('biz', ['transmission flush'], ['United States']);
+    expect(res.observations).toEqual([]);
+    const u = provider.usage[0];
+    expect(u.responseStatus).toBe('empty');
+    expect((u.errorMessage || '').toLowerCase()).toContain('not a funds');
+  } finally {
+    global.fetch = orig;
+  }
+});
+
+// 20. Successful SERP with items → 'ok' and depth:10 + location_code in payload.
+test('20: success path sends location_code + depth and returns observations', async () => {
+  setEnv({ DATAFORSEO_ENABLED: 'true', DATAFORSEO_API_LOGIN: 'l', DATAFORSEO_API_PASSWORD: 'p', DATAFORSEO_USE_SANDBOX: 'false' });
+  const orig = global.fetch;
+  let sentBody: any = null;
+  global.fetch = jest.fn(async (_url: any, init: any) => {
+    sentBody = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => organicSample() } as any;
+  }) as any;
+  try {
+    const provider = new DataForSeoProvider();
+    const res = await provider.fetchKeywordRankings('biz', ['transmission flush'], ['United States']);
+    expect(res.observations.length).toBe(1);
+    expect(provider.usage[0].responseStatus).toBe('ok');
+    expect(Array.isArray(sentBody)).toBe(true);
+    expect(sentBody[0].depth).toBe(10);
+    expect(sentBody[0].location_code).toBe(2840);
+  } finally {
+    global.fetch = orig;
+  }
 });

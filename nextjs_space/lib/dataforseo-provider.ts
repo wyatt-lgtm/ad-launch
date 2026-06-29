@@ -164,6 +164,139 @@ function expandState(s?: string | null): string | null {
   return v; // already a full name
 }
 
+/**
+ * Canonicalize a freeform location string into DataForSEO's exact format.
+ * DataForSEO requires precise names like "Houston,Texas,United States" — a
+ * freeform "Houston, TX" will NOT match and yields a task-level error / zero
+ * items. This expands 2-letter state codes and appends the country.
+ *
+ * Examples:
+ *   "Houston, TX"            → "Houston,Texas,United States"
+ *   "Houston,Texas"          → "Houston,Texas,United States"
+ *   "Texas"                  → "Texas,United States"
+ *   "United States" / ""     → "United States"
+ *   "Houston,Texas,United States" (already canonical) → unchanged
+ */
+export function normalizeLocationString(input?: string | null): string {
+  const raw = (input || '').trim();
+  if (!raw || raw.toLowerCase() === 'national' || raw.toLowerCase() === 'united states') {
+    return 'United States';
+  }
+  const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return 'United States';
+  // Detect an existing trailing country.
+  const last = parts[parts.length - 1];
+  const hasCountry = /united states|usa|^us$/i.test(last);
+  const body = hasCountry ? parts.slice(0, -1) : parts;
+  // Expand a state token (abbreviation or name) wherever it appears as the
+  // last body element (city, state) or the only element (state-level).
+  const rebuilt = body.map((p, idx) => {
+    const isLast = idx === body.length - 1;
+    if (isLast) {
+      const up = p.toUpperCase();
+      if (US_STATES[up]) return US_STATES[up];
+    }
+    return p;
+  });
+  rebuilt.push('United States');
+  return rebuilt.join(',');
+}
+
+// ── Provider status-code interpretation ─────────────────────────────
+
+export interface ProviderStatusInfo {
+  /** machine reason used for UI/branching */
+  reason:
+    | 'ok'
+    | 'insufficient_funds'
+    | 'account_verification_required'
+    | 'invalid_field_or_location'
+    | 'auth_error'
+    | 'rate_limited'
+    | 'provider_error';
+  /** human-readable, credential-free message */
+  message: string;
+}
+
+/**
+ * Interpret a DataForSEO status_code (top-level OR task-level) into a precise,
+ * credential-free reason. Critically: a 20000 OK with zero items is NOT a funds
+ * problem — callers must only attribute funds issues to 40200/40210.
+ */
+export function describeProviderStatus(code?: number | null): ProviderStatusInfo {
+  const c = typeof code === 'number' ? code : 0;
+  if (c === 20000) return { reason: 'ok', message: 'OK' };
+  if (c === 40200 || c === 40210) {
+    return { reason: 'insufficient_funds', message: `Insufficient DataForSEO funds (status ${c}). Add funds to the account.` };
+  }
+  if (c === 40104) {
+    return { reason: 'account_verification_required', message: `DataForSEO account verification required (status ${c}).` };
+  }
+  if (c === 40501 || c === 40505) {
+    return { reason: 'invalid_field_or_location', message: `Invalid or outdated field / location parameter (status ${c}). Check location_code / location_name and payload fields.` };
+  }
+  if (c === 40100 || c === 40101 || c === 40102 || c === 40103) {
+    return { reason: 'auth_error', message: `DataForSEO authentication error (status ${c}).` };
+  }
+  if (c === 40402 || c === 40403 || c === 40429) {
+    return { reason: 'rate_limited', message: `DataForSEO rate/usage limit reached (status ${c}).` };
+  }
+  return { reason: 'provider_error', message: `DataForSEO returned status ${c || 'unknown'}.` };
+}
+
+/**
+ * Build a sanitized, credential-free snapshot of a raw DataForSEO response for
+ * diagnostics. Contains NO Authorization header and NO login/password — only
+ * the public response envelope and the (echoed) request payload, which carries
+ * no secrets. Truncated so it fits safely in a text column.
+ */
+export function buildSanitizedSnapshot(
+  raw: any,
+  context: { resolvedLocation?: any; payload?: any } = {},
+): string {
+  const task0 = Array.isArray(raw?.tasks) ? raw.tasks[0] : undefined;
+  const result0 = Array.isArray(task0?.result) ? task0.result[0] : undefined;
+  const items: any[] = Array.isArray(result0?.items) ? result0.items : [];
+  const summary = {
+    capturedAt: new Date().toISOString(),
+    top: {
+      status_code: raw?.status_code ?? null,
+      status_message: raw?.status_message ?? null,
+      tasks_count: raw?.tasks_count ?? null,
+      tasks_error: raw?.tasks_error ?? null,
+      cost: typeof raw?.cost === 'number' ? raw.cost : null,
+    },
+    task0: task0
+      ? {
+          status_code: task0?.status_code ?? null,
+          status_message: task0?.status_message ?? null,
+          result_count: task0?.result_count ?? null,
+          cost: typeof task0?.cost === 'number' ? task0.cost : null,
+          data: task0?.data ?? null, // echoed request — no credentials
+        }
+      : null,
+    result0: result0
+      ? {
+          items_count: result0?.items_count ?? null,
+          items_length: items.length,
+          first_items: items.slice(0, 3).map((it: any) => ({
+            type: it?.type ?? null,
+            title: it?.title ?? null,
+            domain: it?.domain ?? null,
+            url: it?.url ?? null,
+          })),
+        }
+      : null,
+    resolvedLocation: context.resolvedLocation ?? null,
+    payloadShape: context.payload ?? null,
+  };
+  try {
+    return JSON.stringify(summary).slice(0, 7000);
+  } catch {
+    return JSON.stringify({ error: 'snapshot_serialize_failed', top: summary.top }).slice(0, 2000);
+  }
+}
+
 // ── Domain helpers (self vs competitor) ─────────────────────────────
 
 export function normalizeDomain(value?: string | null): string {
@@ -329,6 +462,83 @@ export class DataForSeoProvider implements SearchIntelligenceProvider {
     }
   }
 
+  private async get(path: string): Promise<{ ok: boolean; status: number; body: any }> {
+    const auth = this.authHeader();
+    if (!auth) return { ok: false, status: 0, body: { error: 'missing_credentials' } };
+    const url = `${this.cfg.effectiveBaseUrl}${path}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.cfg.timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: auth }, // secret — never logged
+        signal: controller.signal,
+      });
+      let body: any = null;
+      try { body = await res.json(); } catch { body = null; }
+      return { ok: res.ok, status: res.status, body };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Resolve a canonical location name to a DataForSEO location_code by
+   * inspecting /v3/serp/google/locations (cached per process). Falls back to
+   * the canonical location_name when no code match is found. This is the
+   * compliant, documented way to target a SERP location precisely.
+   */
+  private async resolveLocation(rawInput: string): Promise<{
+    input: string;
+    canonical: string;
+    location_code: number | null;
+    location_name: string;
+    method: 'builtin' | 'locations_lookup' | 'name_fallback';
+    matched: boolean;
+  }> {
+    const input = (rawInput || '').trim();
+    const canonical = normalizeLocationString(input);
+    // Built-in fast path for the US national code.
+    if (canonical === 'United States') {
+      return { input, canonical, location_code: 2840, location_name: canonical, method: 'builtin', matched: true };
+    }
+    try {
+      const map = await DataForSeoProvider.loadLocationMap(this);
+      const hit = map.get(canonical.toLowerCase());
+      if (typeof hit === 'number') {
+        return { input, canonical, location_code: hit, location_name: canonical, method: 'locations_lookup', matched: true };
+      }
+    } catch {
+      // fall through to name fallback
+    }
+    return { input, canonical, location_code: null, location_name: canonical, method: 'name_fallback', matched: false };
+  }
+
+  // Process-level cache of DataForSEO SERP locations (location_name → code).
+  private static locationMap: Map<string, number> | null = null;
+  private static locationMapPromise: Promise<Map<string, number>> | null = null;
+  private static async loadLocationMap(self: DataForSeoProvider): Promise<Map<string, number>> {
+    if (DataForSeoProvider.locationMap) return DataForSeoProvider.locationMap;
+    if (DataForSeoProvider.locationMapPromise) return DataForSeoProvider.locationMapPromise;
+    DataForSeoProvider.locationMapPromise = (async () => {
+      const { ok, body } = await self.get('/v3/serp/google/locations');
+      const map = new Map<string, number>();
+      const list: any[] = ok && Array.isArray(body?.tasks?.[0]?.result) ? body.tasks[0].result : [];
+      for (const loc of list) {
+        const name = typeof loc?.location_name === 'string' ? loc.location_name.toLowerCase() : null;
+        const code = typeof loc?.location_code === 'number' ? loc.location_code : null;
+        if (name && code != null && !map.has(name)) map.set(name, code);
+      }
+      if (map.size > 0) DataForSeoProvider.locationMap = map;
+      return map;
+    })();
+    try {
+      return await DataForSeoProvider.locationMapPromise;
+    } finally {
+      DataForSeoProvider.locationMapPromise = null;
+    }
+  }
+
   async fetchProviderHealth(): Promise<ProviderHealth> {
     if (!this.cfg.enabled) {
       return { provider: this.type, configured: false, healthy: false, message: 'DataForSEO is disabled (DATAFORSEO_ENABLED is not true).' };
@@ -380,42 +590,79 @@ export class DataForSeoProvider implements SearchIntelligenceProvider {
     const locs = locations.length ? locations : ['United States'];
     const device = (options?.device as string) || 'desktop';
     const maxTasks = Math.max(1, Math.min(100, options?.maxResults ?? 100));
+    const depth = Math.max(1, Math.min(100, (options as any)?.depth ?? 10));
+
+    // Resolve every location to a precise DataForSEO target (location_code
+    // preferred, canonical location_name fallback). One task per pair.
     const tasks: any[] = [];
+    const resolvedLocations: any[] = [];
     for (const kw of keywords) {
       for (const loc of locs) {
         if (tasks.length >= maxTasks) break;
-        tasks.push({
+        const resolved = await this.resolveLocation(loc);
+        resolvedLocations.push(resolved);
+        const task: any = {
           keyword: kw,
-          location_name: loc,
           language_code: this.cfg.defaultLanguageCode,
           device: device === 'both' ? 'desktop' : device,
-        });
+          depth,
+        };
+        if (typeof resolved.location_code === 'number') {
+          task.location_code = resolved.location_code;
+        } else {
+          task.location_name = resolved.location_name;
+        }
+        tasks.push(task);
       }
     }
     if (tasks.length === 0) {
       return { observations: [], rawSnapshotRef: null, meta: { provider: 'dataforseo', taskCount: 0 } };
     }
+    const primaryLocation = resolvedLocations[0] ?? null;
 
     try {
       const { ok, status, body } = await this.post(path, tasks);
-      const providerStatusCode = typeof body?.status_code === 'number' ? body.status_code : status;
+      const topStatusCode = typeof body?.status_code === 'number' ? body.status_code : status;
+      const task0 = Array.isArray(body?.tasks) ? body.tasks[0] : undefined;
+      const taskStatusCode = typeof task0?.status_code === 'number' ? task0.status_code : null;
       const cost = typeof body?.cost === 'number' ? body.cost : null;
+      const snapshot = buildSanitizedSnapshot(body, { resolvedLocation: resolvedLocations, payload: tasks });
+      const baseMeta = {
+        provider: 'dataforseo',
+        rawSnapshot: snapshot,
+        resolvedLocation: primaryLocation,
+        topStatusCode,
+        taskStatusCode,
+      } as Record<string, any>;
+
+      // 1) Top-level transport / API error.
       if (!ok || (typeof body?.status_code === 'number' && body.status_code >= 40000)) {
+        const info = describeProviderStatus(topStatusCode);
         this.usage.push({
-          endpoint: path,
-          queryType: 'serp_organic',
-          targetKeyword: keywords[0] ?? null,
-          targetLocation: locs[0] ?? null,
-          requestCount: tasks.length,
-          responseStatus: 'error',
-          providerStatusCode,
-          unitsUsed: tasks.length,
-          costEstimate: cost,
-          isSandbox,
-          errorMessage: (body?.status_message || `HTTP ${status}`).toString().slice(0, 500),
+          endpoint: path, queryType: 'serp_organic', targetKeyword: keywords[0] ?? null,
+          targetLocation: primaryLocation?.location_name ?? locs[0] ?? null,
+          requestCount: tasks.length, responseStatus: 'error', providerStatusCode: topStatusCode,
+          unitsUsed: tasks.length, costEstimate: cost, isSandbox,
+          errorMessage: `${info.message} ${(body?.status_message || `HTTP ${status}`)}`.toString().slice(0, 500),
         });
-        return { observations: [], rawSnapshotRef: null, meta: { provider: 'dataforseo', error: true, providerStatusCode } };
+        return { observations: [], rawSnapshotRef: null, meta: { ...baseMeta, error: true, providerStatusCode: topStatusCode, statusReason: info.reason } };
       }
+
+      // 2) Top-level OK (20000) but the TASK itself failed (e.g. 40501 invalid
+      //    location). This was previously mis-reported as "empty".
+      if (taskStatusCode != null && taskStatusCode >= 40000) {
+        const info = describeProviderStatus(taskStatusCode);
+        this.usage.push({
+          endpoint: path, queryType: 'serp_organic', targetKeyword: keywords[0] ?? null,
+          targetLocation: primaryLocation?.location_name ?? locs[0] ?? null,
+          requestCount: tasks.length, responseStatus: 'error', providerStatusCode: taskStatusCode,
+          unitsUsed: tasks.length, costEstimate: cost, isSandbox,
+          errorMessage: `${info.message} ${(task0?.status_message || '')}`.toString().slice(0, 500),
+        });
+        return { observations: [], rawSnapshotRef: null, meta: { ...baseMeta, error: true, providerStatusCode: taskStatusCode, statusReason: info.reason } };
+      }
+
+      // 3) Genuine success envelope — normalize and classify ok vs zero-items.
       const normalized = normalizeSerpResponse(body, {
         selfDomain: options?.selfDomain,
         isSandbox,
@@ -423,19 +670,19 @@ export class DataForSeoProvider implements SearchIntelligenceProvider {
         includeOrganic: options?.includeOrganic,
         includeLocalPack: options?.includeLocalPack,
       });
+      const result0 = Array.isArray(task0?.result) ? task0.result[0] : undefined;
+      const itemsCount = typeof result0?.items_count === 'number'
+        ? result0.items_count
+        : (Array.isArray(result0?.items) ? result0.items.length : 0);
+      const hasObs = normalized.observations.length > 0;
       this.usage.push({
-        endpoint: path,
-        queryType: 'serp_organic',
-        targetKeyword: keywords[0] ?? null,
-        targetLocation: locs[0] ?? null,
-        requestCount: tasks.length,
-        responseStatus: normalized.observations.length > 0 ? 'ok' : 'empty',
-        providerStatusCode,
-        unitsUsed: tasks.length,
-        costEstimate: cost,
-        isSandbox,
+        endpoint: path, queryType: 'serp_organic', targetKeyword: keywords[0] ?? null,
+        targetLocation: primaryLocation?.location_name ?? locs[0] ?? null,
+        requestCount: tasks.length, responseStatus: hasObs ? 'ok' : 'empty',
+        providerStatusCode: topStatusCode, unitsUsed: tasks.length, costEstimate: cost, isSandbox,
+        errorMessage: hasObs ? null : `API returned OK (status ${topStatusCode}) but no SERP items (items_count=${itemsCount}); location="${primaryLocation?.location_name ?? ''}"${primaryLocation?.location_code != null ? ` (code ${primaryLocation.location_code})` : ''}. Inspect location/payload/parser — NOT a funds issue.`,
       });
-      return normalized;
+      return { ...normalized, meta: { ...(normalized.meta || {}), ...baseMeta, itemsCount } };
     } catch (err: any) {
       this.usage.push({
         endpoint: path,

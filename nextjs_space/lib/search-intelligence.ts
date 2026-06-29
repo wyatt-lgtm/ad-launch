@@ -572,7 +572,7 @@ export async function runSingleTestSearch(
         status: health.configured ? 'complete' : 'partial',
         completedAt: new Date(),
         observationCount,
-        rawSnapshotRef: result.rawSnapshotRef ?? null,
+        rawSnapshotRef: (result.meta?.rawSnapshot as string) ?? result.rawSnapshotRef ?? null,
         isSandbox,
         errorMessage: health.configured ? null : health.message,
       } as any,
