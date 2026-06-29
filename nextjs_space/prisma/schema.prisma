@@ -110,6 +110,7 @@ model Business {
   providerUsageEvents          ProviderUsageEvent[]
   searchManualComparisonNotes  SearchManualComparisonNote[]
   searchSerpVarianceSummaries  SearchSerpVarianceSummary[]
+  searchIntelKeywordImports    SearchIntelligenceKeywordImport[]
 
   // ── Two-stage Website workflow (Concept + Production) ──────────────
   websiteProjects    WebsiteProject[]
@@ -2313,6 +2314,33 @@ model SearchIntelligenceRecommendation {
 //  These treat DataForSEO output as observation snapshots — never as a
 //  single absolute ranking truth. NO Google scraping / browser automation.
 // ════════════════════════════════════════════════════════════════════
+
+// ── Keyword/Location bulk file import (audit batch) ────────────────
+// Records each uploaded keyword/location file: parsed counts, status, and a
+// JSON summary of row-level results (for download/audit). Business-scoped.
+model SearchIntelligenceKeywordImport {
+  id               String   @id @default(cuid())
+  businessId       String
+  uploadedByUserId String?
+  fileName         String?
+  fileType         String? // csv | tsv | txt
+  rowCount         Int      @default(0)
+  importedCount    Int      @default(0)
+  duplicateCount   Int      @default(0)
+  needsReviewCount Int      @default(0)
+  invalidCount     Int      @default(0)
+  keywordCreated   Int      @default(0)
+  locationCreated  Int      @default(0)
+  status           String   @default("completed") // completed | partial | failed
+  errorSummary     String?  @db.Text
+  rowsJson         Json? // row-level parsed details for audit / error report
+  createdAt        DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, createdAt])
+}
 
 /// A human-recorded comparison note for a run. Lets an admin log that a
 /// local/incognito browser showed a different SERP, WITHOUT that ever being

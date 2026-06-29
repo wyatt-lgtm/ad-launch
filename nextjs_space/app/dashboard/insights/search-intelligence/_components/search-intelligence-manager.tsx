@@ -6,10 +6,11 @@ import { useRouter } from 'next/navigation';
 import {
   Loader2, Lock, LogIn, Search, BarChart3, KeyRound, MapPin, TrendingUp,
   Megaphone, MapPinned, Compass, ArrowLeftRight, Lightbulb, Settings as SettingsIcon,
-  Plus, Trash2, Gauge,
+  Plus, Trash2, Gauge, Upload,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import BusinessIntelligencePanel from './business-intelligence-panel';
+import KeywordUploadModal from './keyword-upload-modal';
 
 const LABEL = (s?: string | null) => (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -235,7 +236,7 @@ export default function SearchIntelligenceManager() {
       ) : (
         <>
           {tab === 'overview' && <OverviewTab overview={overview} />}
-          {tab === 'keywords' && <KeywordsTab keywords={keywords} onAdd={addKeywords} onDelete={deleteKeyword} />}
+          {tab === 'keywords' && <KeywordsTab keywords={keywords} onAdd={addKeywords} onDelete={deleteKeyword} businessId={businessId} onReload={loadAll} showToast={showToast} />}
           {tab === 'locations' && <LocationsTab locations={locations} onAdd={addLocation} onDelete={deleteLocation} />}
           {tab === 'organic' && <OrganicTab data={organic} />}
           {tab === 'paid' && <PaidTab paidAds={paidAds} />}
@@ -292,12 +293,17 @@ function OverviewTab({ overview }: any) {
 }
 
 // ── Keywords ────────────────────────────────────────────────────
-function KeywordsTab({ keywords, onAdd, onDelete }: any) {
+function KeywordsTab({ keywords, onAdd, onDelete, businessId, onReload, showToast }: any) {
   const [val, setVal] = useState('');
+  const [uploadOpen, setUploadOpen] = useState(false);
   return (
     <div className="space-y-4">
       <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <label className="block text-sm font-medium text-gray-700 mb-2">Add keywords (comma or newline separated)</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-700">Add keywords (comma or newline separated)</label>
+          <button onClick={() => setUploadOpen(true)} disabled={!businessId}
+            className="inline-flex items-center gap-2 px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-50"><Upload className="w-4 h-4" /> Upload File</button>
+        </div>
         <textarea value={val} onChange={(e) => setVal(e.target.value)} rows={3}
           placeholder="emergency plumber denver, water heater repair, drain cleaning near me"
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
@@ -306,6 +312,14 @@ function KeywordsTab({ keywords, onAdd, onDelete }: any) {
             className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"><Plus className="w-4 h-4" /> Add Keywords</button>
         </div>
       </div>
+      {uploadOpen && businessId && (
+        <KeywordUploadModal
+          businessId={businessId}
+          onClose={() => setUploadOpen(false)}
+          onImported={() => { onReload?.(); }}
+          showToast={showToast}
+        />
+      )}
       {keywords.length === 0 ? (
         <EmptyState icon={KeyRound} title="No keywords tracked" desc="Add the search terms your customers use. Keywords are also seeded automatically from deep research." />
       ) : (
