@@ -23,25 +23,54 @@ const KNOWN_AGENTS = [
   { name: 'Bat Masterson', display_name: 'Bat Masterson', department: 'Creative Review' },
   { name: 'Creative Synthesizer', display_name: 'Creative Synthesizer', department: 'Creative Synthesis' },
   { name: 'Creative War Room', display_name: 'Creative War Room', department: 'Creative Prompt Engineering' },
-  { name: 'Clark Kent', display_name: 'Clark Kent', department: 'Research' },
   { name: 'Asset Scout', display_name: 'Asset Scout', department: 'Asset Retrieval' },
   { name: 'Clara Barton', display_name: 'Clara Barton', department: 'SEO Audit' },
   { name: 'Rand Fishkin', display_name: 'Rand Fishkin', department: 'Keyword Strategy' },
   { name: 'Gutenberg', display_name: 'Gutenberg', department: 'Site Publishing' },
 ];
 
+// App-level services are NOT Tombstone worker agents. Clark Kent is the Launch OS
+// Social Scout feature (local news + interest-feed + event discovery); the work it
+// triggers is owned by Jim Bridger + the social-lane pipeline. It does not claim
+// tasks or emit heartbeats, so it is surfaced as a typed "app_service" card.
+const APP_SERVICES = [
+  {
+    name: 'Clark Kent',
+    display_name: 'Clark Kent',
+    kind: 'app_service',
+    status_source: 'Launch OS Social Scout',
+    department: 'Social Scout / Launch OS',
+    role: 'Local news, interest-feed, and event discovery',
+    worker_type: 'App-level service',
+    backend_agent: null,
+  },
+];
+
 function fallbackRoster(error: string) {
   return NextResponse.json({
-    agents: KNOWN_AGENTS.map(a => ({
-      ...a,
-      status: 'unreachable',
-      running: false,
-      last_seen: null,
-      current_task_id: null,
-      seconds_since_heartbeat: null,
-      service_name: null,
-      instance_id: null,
-    })),
+    agents: [
+      ...KNOWN_AGENTS.map(a => ({
+        ...a,
+        status: 'unreachable',
+        running: false,
+        last_seen: null,
+        current_task_id: null,
+        seconds_since_heartbeat: null,
+        service_name: null,
+        instance_id: null,
+      })),
+      // App services are not affected by Tombstone reachability — always app_service.
+      ...APP_SERVICES.map(s => ({
+        ...s,
+        status: 'app_service',
+        running: false,
+        last_seen: null,
+        current_task_id: null,
+        seconds_since_heartbeat: null,
+        service_name: null,
+        instance_id: null,
+      })),
+    ],
     fetchedAt: new Date().toISOString(),
     error,
     api_unreachable: true,

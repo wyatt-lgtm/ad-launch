@@ -55,6 +55,10 @@ interface Agent {
   last_seen: string | null; current_task_id: number | null;
   department: string | null; running: boolean;
   seconds_since_heartbeat?: number; service_name?: string; instance_id?: string;
+  // App-level service fields (Clark Kent / Launch OS Social Scout). When kind ===
+  // 'app_service' the entry is NOT a Tombstone worker and has no heartbeat.
+  kind?: string; status_source?: string; worker_type?: string;
+  role?: string; backend_agent?: string | null;
 }
 
 interface Task {
@@ -893,13 +897,20 @@ function AgentsTab() {
     stale: { color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', label: 'Stale', dot: 'bg-amber-500' },
     offline: { color: 'text-red-700', bg: 'bg-red-50 border-red-200', label: 'On standby', dot: 'bg-red-500' },
     unreachable: { color: 'text-gray-500', bg: 'bg-gray-50 border-gray-300 border-dashed', label: 'Unreachable', dot: 'bg-gray-400' },
+    app_service: { color: 'text-blue-700', bg: 'bg-blue-50 border-blue-200', label: 'App Service', dot: 'bg-blue-400' },
   };
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-blue-600 animate-spin" /></div>;
 
-  const alive = agents.filter(a => a.status === 'alive_idle' || a.status === 'alive_busy').length;
-  const stale = agents.filter(a => a.status === 'stale').length;
-  const offline = agents.filter(a => a.status === 'offline').length;
+  // App-level services (e.g. Clark Kent / Launch OS Social Scout) are not
+  // Tombstone workers — keep them out of the worker grid and the online/stale/
+  // offline counts so the board stays truthful.
+  const workers = agents.filter(a => a.kind !== 'app_service' && a.status !== 'app_service');
+  const appServices = agents.filter(a => a.kind === 'app_service' || a.status === 'app_service');
+
+  const alive = workers.filter(a => a.status === 'alive_idle' || a.status === 'alive_busy').length;
+  const stale = workers.filter(a => a.status === 'stale').length;
+  const offline = workers.filter(a => a.status === 'offline').length;
 
   // Heartbeat freshness alerting — warn if any critical worker is > 120s stale
   const HEARTBEAT_WARN_SECONDS = 120;
@@ -968,7 +979,7 @@ function AgentsTab() {
 
       {/* Agent grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {agents.map(agent => {
+        {workers.map(agent => {
           const cfg = statusConfig[agent.status] || statusConfig.offline;
           const hbWarn = agent.seconds_since_heartbeat != null && agent.seconds_since_heartbeat > HEARTBEAT_WARN_SECONDS;
           return (
@@ -1010,6 +1021,52 @@ function AgentsTab() {
             </div>
           );
         })}
+
+      {/* App Services — Launch OS app-level services (NOT Tombstone workers). */}
+      {appServices.length > 0 && (
+        <div className="mt-8">
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="text-sm font-semibold text-gray-700">App Services</h3>
+            <span className="text-[10px] uppercase tracking-wide font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">Launch OS</span>
+          </div>
+          <p className="text-xs text-gray-400 mb-3">
+            Application-level services that run inside Launch OS. They are not task-claiming worker agents and do not emit heartbeats.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {appServices.map(svc => {
+              const cfg = statusConfig.app_service;
+              return (
+                <div key={svc.name} className={`rounded-xl border p-4 ${cfg.bg}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className={`text-sm font-semibold ${cfg.color}`}>{svc.display_name}</h3>
+                    <span className={`w-3 h-3 rounded-full ${cfg.dot}`} />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-500">
+                      Status: <span className={`font-medium ${cfg.color}`}>{cfg.label}</span>
+                    </p>
+                    {svc.status_source && (
+                      <p className="text-xs text-gray-500">Source: {svc.status_source}</p>
+                    )}
+                    {svc.department && (
+                      <p className="text-xs text-gray-500">Dept: {svc.department}</p>
+                    )}
+                    {svc.role && (
+                      <p className="text-xs text-gray-500">Role: {svc.role}</p>
+                    )}
+                    {svc.worker_type && (
+                      <p className="text-xs text-gray-500">Type: {svc.worker_type}</p>
+                    )}
+                    <p className="text-xs text-gray-400">
+                      Backend agent: <span className="font-medium">{svc.backend_agent ?? 'None'}</span>
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

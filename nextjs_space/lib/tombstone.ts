@@ -376,6 +376,104 @@ export async function createAsyncRun(
 }
 
 /**
+ * Dispatch an APPROVED SEO page brief to Tombstone WF3 (website SEO page workflow).
+ *
+ * This is the Launch OS -> Tombstone bridge for the SEO research consumption layer.
+ * The approved brief travels entirely inside the HTTP run payload (the `page_brief`
+ * object). Tombstone embeds it into the WF3 task execution_notes so the pipeline
+ * agents (Rand brief, Ogilvy draft, Tom Hopkins conversion) consume it directly —
+ * no Tombstone agent ever queries the Launch OS database (boundary preserved).
+ *
+ * Maps Prisma SeoPageBrief (+ optional linked SeoContentMetaAnalysis) fields onto
+ * the Tombstone page_brief contract keys. Caller MUST ensure the brief is approved.
+ */
+export interface ApprovedPageBriefInput {
+  // Prisma SeoPageBrief fields
+  id: string;
+  targetPageType?: string | null;
+  recommendedSlug?: string | null;
+  recommendedMetaTitle?: string | null;
+  recommendedMetaDescription?: string | null;
+  recommendedH1?: string | null;
+  recommendedSectionsJson?: any;
+  recommendedFaqsJson?: any;
+  recommendedSchemaJson?: any;
+  differentiationAngle?: string | null;
+  evidenceSummary?: string | null;
+  // Optional context derived from the linked meta-analysis
+  metaAnalysis?: {
+    targetKeyword?: string | null;
+    targetLocation?: string | null;
+    serviceLine?: string | null;
+  } | null;
+  // Optional overrides
+  primaryKeyword?: string | null;
+  secondaryKeywords?: string[] | null;
+  searchIntent?: string | null;
+  funnelStage?: string | null;
+}
+
+export async function dispatchApprovedPageBrief(
+  brief: ApprovedPageBriefInput,
+  opts: { tombstoneBusinessId: number; objective?: string; sourceType?: string },
+): Promise<{ ok: boolean; workflowId?: string; usedApprovedBrief?: boolean; detail?: string }> {
+  const sections = Array.isArray(brief.recommendedSectionsJson) ? brief.recommendedSectionsJson : [];
+  const faqs = Array.isArray(brief.recommendedFaqsJson) ? brief.recommendedFaqsJson : [];
+  const primaryKeyword = brief.primaryKeyword ?? brief.metaAnalysis?.targetKeyword ?? null;
+  const targetLocation = brief.metaAnalysis?.targetLocation ?? null;
+
+  const page_brief: Record<string, any> = {
+    primary_keyword: primaryKeyword,
+    secondary_keywords: brief.secondaryKeywords ?? [],
+    search_intent: brief.searchIntent ?? null,
+    funnel_stage: brief.funnelStage ?? null,
+    target_page_type: brief.targetPageType ?? 'service',
+    target_location: targetLocation,
+    recommended_slug: brief.recommendedSlug ?? null,
+    meta_title: brief.recommendedMetaTitle ?? null,
+    meta_description: brief.recommendedMetaDescription ?? null,
+    h1: brief.recommendedH1 ?? null,
+    content_outline: sections,
+    faqs,
+    schema: brief.recommendedSchemaJson ?? null,
+    differentiation_angle: brief.differentiationAngle ?? null,
+    evidence_summary: brief.evidenceSummary ?? null,
+    brief_id: brief.id,
+    source: 'launch_os_seo_research',
+  };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  try {
+    const res = await fetch(`${TOMBSTONE_URL}/seo/page-workflow`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        business_id: opts.tombstoneBusinessId,
+        objective: opts.objective,
+        source_type: opts.sourceType ?? 'website_generation',
+        page_brief,
+      }),
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({} as any));
+    if (!res.ok) {
+      const detail = data?.detail || `HTTP ${res.status}`;
+      console.error(`[tombstone] dispatchApprovedPageBrief failed: ${detail}`);
+      return { ok: false, detail };
+    }
+    console.log(`[tombstone] Approved page brief dispatched: brief_id=${brief.id} workflow=${data.workflow_id} used_approved_brief=${data.used_approved_brief}`);
+    return { ok: true, workflowId: data.workflow_id, usedApprovedBrief: data.used_approved_brief };
+  } catch (err: any) {
+    console.error(`[tombstone] dispatchApprovedPageBrief error: ${err?.message}`);
+    return { ok: false, detail: err?.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Poll the status of an async command run.
  * Returns per-lane progress with timing, workflow IDs, and errors.
  */
