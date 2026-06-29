@@ -750,6 +750,27 @@ function SettingsTab({ settings, providerAccounts, onSave, api, businessId, show
                 {testResult.isSandbox && <span className="ml-2 inline-block bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Sandbox / test data</span>}
                 {!testResult.health?.configured && <span className="ml-2 text-amber-600">{testResult.health?.message}</span>}
               </div>
+              {(testResult.meta?.taskId || testResult.meta?.resolvedLocation?.location_code != null) && (
+                <div className="text-xs text-gray-500 flex flex-wrap gap-x-4 gap-y-1">
+                  {testResult.meta?.taskId && (
+                    <span>
+                      Task ID:{' '}
+                      <code className="select-all rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">
+                        {testResult.meta.taskId}
+                      </code>
+                    </span>
+                  )}
+                  {testResult.meta?.resolvedLocation?.location_code != null && (
+                    <span>
+                      Location: <span className="text-gray-700">{testResult.meta.resolvedLocation.location_name}</span>{' '}
+                      (code {testResult.meta.resolvedLocation.location_code})
+                    </span>
+                  )}
+                  {typeof testResult.meta?.topStatusCode === 'number' && (
+                    <span>Status: <span className="text-gray-700">{testResult.meta.topStatusCode}</span></span>
+                  )}
+                </div>
+              )}
 
               <ResultBlock title={`Organic results (${organicResults.length})`} rows={organicResults} />
               <ResultBlock title={`Paid ads (${paidResults.length})`} rows={paidResults} />

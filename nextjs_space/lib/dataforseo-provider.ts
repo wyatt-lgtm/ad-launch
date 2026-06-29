@@ -254,11 +254,17 @@ export function buildSanitizedSnapshot(
   raw: any,
   context: { resolvedLocation?: any; payload?: any } = {},
 ): string {
-  const task0 = Array.isArray(raw?.tasks) ? raw.tasks[0] : undefined;
+  const allTasks: any[] = Array.isArray(raw?.tasks) ? raw.tasks : [];
+  const task0 = allTasks[0];
   const result0 = Array.isArray(task0?.result) ? task0.result[0] : undefined;
   const items: any[] = Array.isArray(result0?.items) ? result0.items : [];
+  // DataForSEO task identifier — request id, NOT a credential. Needed for
+  // provider support tickets ("share the TaskID of your check").
+  const taskIds = allTasks.map((t: any) => t?.id ?? null).filter((x: any) => x != null);
   const summary = {
     capturedAt: new Date().toISOString(),
+    taskId: task0?.id ?? null,
+    taskIds,
     top: {
       status_code: raw?.status_code ?? null,
       status_message: raw?.status_message ?? null,
@@ -268,6 +274,7 @@ export function buildSanitizedSnapshot(
     },
     task0: task0
       ? {
+          id: task0?.id ?? null,
           status_code: task0?.status_code ?? null,
           status_message: task0?.status_message ?? null,
           result_count: task0?.result_count ?? null,
@@ -633,6 +640,7 @@ export class DataForSeoProvider implements SearchIntelligenceProvider {
         resolvedLocation: primaryLocation,
         topStatusCode,
         taskStatusCode,
+        taskId: task0?.id ?? null, // DataForSEO request id (for support tickets)
       } as Record<string, any>;
 
       // 1) Top-level transport / API error.

@@ -260,6 +260,9 @@ test('17: buildSanitizedSnapshot captures envelope, excludes credentials', () =>
   expect(snap).toContain('"status_code":20000');
   expect(snap).toContain('items_count');
   expect(snap).toContain('1026201');
+  // Task ID (DataForSEO request id) must be captured for support tickets.
+  expect(snap).toContain('"taskId":"task-1"');
+  expect(snap).toContain('"taskIds":["task-1"]');
   expect(snap.toLowerCase()).not.toContain('authorization');
   expect(snap.toLowerCase()).not.toContain('password');
   expect(snap.toLowerCase()).not.toContain('basic ');
