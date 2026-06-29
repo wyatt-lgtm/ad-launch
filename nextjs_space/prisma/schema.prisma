@@ -107,6 +107,7 @@ model Business {
   paidAdObservations           PaidAdObservation[]
   organicPositionHistory       OrganicPositionHistory[]
   searchIntelRecommendations   SearchIntelligenceRecommendation[]
+  providerUsageEvents          ProviderUsageEvent[]
 
   // ── Two-stage Website workflow (Concept + Production) ──────────────
   websiteProjects    WebsiteProject[]
@@ -2076,6 +2077,9 @@ model SearchIntelligenceRun {
   competitorCount   Int       @default(0)
   // raw_snapshot_ref: R2 object key for large raw provider payloads (never local paths)
   rawSnapshotRef    String?
+  // isSandbox: true when produced by a DataForSEO sandbox / test request — keeps
+  // test data clearly separable from real production observations.
+  isSandbox         Boolean   @default(false)
   errorMessage      String?   @db.Text
   createdByTaskId   String?
   createdAt         DateTime  @default(now())
@@ -2118,6 +2122,7 @@ model SearchVisibilityObservation {
   confidenceScore   Float    @default(0)
   dataSource        String? // provider / methodology — required for compliance
   rawSnapshotRef    String?
+  isSandbox         Boolean  @default(false)
   createdAt         DateTime @default(now())
 
   business   Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -2208,6 +2213,7 @@ model PaidAdObservation {
   competitorId    String?
   dataSource      String?
   rawSnapshotRef  String?
+  isSandbox       Boolean  @default(false)
   createdAt       DateTime @default(now())
 
   business   Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -2560,4 +2566,35 @@ model WebsiteQaResult {
   @@index([websiteProjectId])
   @@index([conceptId])
   @@index([productionId])
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Provider Usage / Quota Tracking (Search Intelligence SEO/SERP providers)
+//  Lightweight per-business usage ledger so no single business can silently
+//  consume all provider quota. Written for every external provider request
+//  (e.g. DataForSEO). NEVER stores credentials — only the endpoint + counts.
+// ════════════════════════════════════════════════════════════════════
+model ProviderUsageEvent {
+  id                 String   @id @default(cuid())
+  businessId         String
+  provider           String // dataforseo | ahrefs | google_ads | ...
+  endpoint           String // provider endpoint path that was called
+  queryType          String? // serp_organic | serp_with_paid | keyword_metrics | health_check
+  targetKeyword      String?
+  targetLocation     String?
+  requestCount       Int      @default(1)
+  responseStatus     String? // ok | error | empty | disabled | missing_credentials
+  providerStatusCode Int? // provider status_code (e.g. DataForSEO 20000) or HTTP code
+  unitsUsed          Float? // tasks/units consumed if reported
+  costEstimate       Float? // provider-reported cost if available
+  isSandbox          Boolean  @default(false)
+  errorMessage       String?  @db.Text
+  runId              String?
+  createdAt          DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([businessId, provider])
+  @@index([businessId, createdAt])
 }

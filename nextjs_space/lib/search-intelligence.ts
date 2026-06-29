@@ -12,8 +12,15 @@ import {
   getSearchIntelligenceProvider,
   resolveProviderType,
   type NormalizedObservation,
+  type NormalizedResult,
   type ProviderRequestOptions,
 } from '@/lib/search-intelligence-provider';
+import {
+  getDataForSeoConfig,
+  normalizeDomain,
+  type ProviderUsageDescriptor,
+} from '@/lib/dataforseo-provider';
+import { logProviderUsage } from '@/lib/provider-usage';
 
 export function normalizeKeyword(raw: string): string {
   return (raw || '')
@@ -151,6 +158,29 @@ export async function queueSearchIntelligenceRun(
   return { runId: run.id };
 }
 
+function computeLocationLabel(l: {
+  marketLabel?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+}): string {
+  return (
+    l.marketLabel ||
+    [l.city, l.state].filter(Boolean).join(', ') ||
+    l.zip ||
+    'national'
+  );
+}
+
+/** Resolve the business self-domain (host only) from its website URL. */
+async function getSelfDomain(businessId: string): Promise<string | null> {
+  const biz = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { websiteUrl: true },
+  });
+  return biz?.websiteUrl ? normalizeDomain(biz.websiteUrl) || null : null;
+}
+
 export async function executeSearchIntelligenceRun(businessId: string, runId: string): Promise<void> {
   const settings = await ensureSearchIntelSettings(businessId);
   const run = await prisma.searchIntelligenceRun.findFirst({ where: { id: runId, businessId } });
@@ -161,8 +191,12 @@ export async function executeSearchIntelligenceRun(businessId: string, runId: st
     data: { status: 'running', startedAt: new Date() } as any,
   });
 
+  const providerType = resolveProviderType(settings.defaultProvider);
+  const cfg = getDataForSeoConfig();
+  const isSandbox = providerType === 'dataforseo' ? cfg.useSandbox : false;
+
   try {
-    const [keywords, locations, competitors] = await Promise.all([
+    const [keywords, locations, competitors, selfDomain] = await Promise.all([
       prisma.searchIntelligenceKeyword.findMany({
         where: { businessId, status: 'active' },
         take: settings.maxKeywordsPerRun,
@@ -172,9 +206,9 @@ export async function executeSearchIntelligenceRun(businessId: string, runId: st
         take: settings.maxLocationsPerRun,
       }),
       prisma.searchCompetitor.findMany({ where: { businessId, status: 'active' } }),
+      getSelfDomain(businessId),
     ]);
 
-    const providerType = resolveProviderType(settings.defaultProvider);
     const provider = getSearchIntelligenceProvider(providerType);
     const health = await provider.fetchProviderHealth();
 
@@ -183,40 +217,55 @@ export async function executeSearchIntelligenceRun(businessId: string, runId: st
       includePaid: settings.includePaidAds,
       includeOrganic: settings.includeOrganic,
       includeLocalPack: settings.includeLocalPack,
+      selfDomain,
     };
 
     const keywordStrings = keywords.map((k) => k.keyword);
-    const locationStrings = locations.map(
-      (l) => l.marketLabel || [l.city, l.state].filter(Boolean).join(', ') || l.zip || 'national',
-    );
-    const competitorDomains = competitors.map((c) => c.domain || c.competitorName || '').filter(Boolean);
+    const locationStrings = locations.map((l) => computeLocationLabel(l));
+    const competitorDomains = competitors
+      .map((c) => c.domain || c.competitorName || '')
+      .filter(Boolean);
 
-    const result = await provider.fetchKeywordRankings(
-      businessId,
-      keywordStrings,
-      locationStrings,
-      options,
-    );
+    const result =
+      competitorDomains.length > 0
+        ? await provider.fetchCompetitorRankings(
+            businessId,
+            keywordStrings,
+            locationStrings,
+            competitorDomains,
+            options,
+          )
+        : await provider.fetchKeywordRankings(businessId, keywordStrings, locationStrings, options);
 
-    let observationCount = 0;
+    // Persist provider usage events (business-scoped, no credentials).
+    const usage = (provider as any).usage as ProviderUsageDescriptor[] | undefined;
+    if (Array.isArray(usage) && usage.length > 0) {
+      await logProviderUsage(businessId, providerType, usage, runId);
+    }
+
+    let persisted = { observationCount: 0, paidCount: 0, competitorCount: competitors.length };
     if (result.observations.length > 0) {
-      observationCount = await persistObservations(businessId, runId, result.observations, {
+      persisted = await persistResult(businessId, runId, result.observations, {
         keywords,
         locations,
         dataSource: `${providerType}:fetchKeywordRankings`,
+        isSandbox,
+        selfDomain,
+        existingCompetitorCount: competitors.length,
       });
     }
 
     await prisma.searchIntelligenceRun.update({
       where: { id: runId },
       data: {
-        status: health.configured && observationCount > 0 ? 'complete' : 'partial',
+        status: health.configured && persisted.observationCount > 0 ? 'complete' : 'partial',
         completedAt: new Date(),
         keywordCount: keywords.length,
         locationCount: locations.length,
-        competitorCount: competitors.length,
-        observationCount,
+        competitorCount: persisted.competitorCount,
+        observationCount: persisted.observationCount,
         rawSnapshotRef: result.rawSnapshotRef ?? null,
+        isSandbox,
         errorMessage: health.configured
           ? null
           : `Provider ${providerType} not configured — ${health.message}`,
@@ -228,48 +277,327 @@ export async function executeSearchIntelligenceRun(businessId: string, runId: st
       data: {
         status: 'failed',
         completedAt: new Date(),
+        isSandbox,
         errorMessage: String(err?.message || err).slice(0, 1000),
       } as any,
     });
   }
 }
 
-async function persistObservations(
+interface PersistCtx {
+  keywords: Array<{ id: string; keyword: string; normalizedKeyword: string }>;
+  locations: Array<{
+    id: string;
+    marketLabel: string | null;
+    city: string | null;
+    state?: string | null;
+    zip: string | null;
+  }>;
+  dataSource: string;
+  isSandbox: boolean;
+  selfDomain: string | null;
+  existingCompetitorCount: number;
+}
+
+/**
+ * Normalize provider observations into the storage tables:
+ *  - SearchVisibilityObservation (organic / local pack / etc.)
+ *  - PaidAdObservation (paid ads)
+ *  - SearchCompetitor (upsert discovered non-self domains, source='observed')
+ *  - OrganicPositionHistory (per keyword + location summary row)
+ * All rows carry businessId, runId, dataSource, observedAt and the sandbox flag.
+ */
+async function persistResult(
   businessId: string,
   runId: string,
   observations: NormalizedObservation[],
-  ctx: {
-    keywords: Array<{ id: string; keyword: string; normalizedKeyword: string }>;
-    locations: Array<{ id: string; marketLabel: string | null; city: string | null; zip: string | null }>;
-    dataSource: string;
-  },
-): Promise<number> {
+  ctx: PersistCtx,
+): Promise<{ observationCount: number; paidCount: number; competitorCount: number }> {
   const kwByNorm = new Map(ctx.keywords.map((k) => [k.normalizedKeyword, k.id]));
-  let count = 0;
+  const locByLabel = new Map(ctx.locations.map((l) => [computeLocationLabel(l), l.id]));
+  const observedAt = new Date();
+
+  // Cache of domain -> competitorId discovered/upserted during this run.
+  const competitorCache = new Map<string, string>();
+  let newCompetitors = 0;
+
+  async function resolveCompetitor(domain: string | undefined | null): Promise<string | null> {
+    if (!domain) return null;
+    const key = domain.toLowerCase();
+    if (competitorCache.has(key)) return competitorCache.get(key)!;
+    const existing = await prisma.searchCompetitor.findFirst({
+      where: { businessId, domain: key },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.searchCompetitor.update({
+        where: { id: existing.id },
+        data: { lastSeenAt: observedAt },
+      });
+      competitorCache.set(key, existing.id);
+      return existing.id;
+    }
+    const created = await prisma.searchCompetitor.create({
+      data: {
+        businessId,
+        domain: key,
+        competitorName: key,
+        source: 'observed',
+        firstSeenAt: observedAt,
+        lastSeenAt: observedAt,
+        status: 'active',
+      },
+    });
+    competitorCache.set(key, created.id);
+    newCompetitors++;
+    return created.id;
+  }
+
+  // Aggregate organic-position-history per keyword+location.
+  type HistAgg = {
+    keywordId: string | null;
+    locationId: string | null;
+    selfPosition: number | null;
+    selfUrl: string | null;
+    bestCompetitorPosition: number | null;
+    topCompetitorId: string | null;
+    localPackPosition: number | null;
+    paidAdPosition: number | null;
+  };
+  const histByKey = new Map<string, HistAgg>();
+
+  let observationCount = 0;
+  let paidCount = 0;
+
   for (const obs of observations) {
     const keywordId = obs.keyword ? kwByNorm.get(normalizeKeyword(obs.keyword)) ?? null : null;
+    const locationId = obs.locationLabel ? locByLabel.get(obs.locationLabel) ?? null : null;
+    const isSelf = obs.isSelf ?? false;
+    const competitorId = !isSelf ? await resolveCompetitor(obs.domain) : null;
+    const position = typeof obs.position === 'number' ? obs.position : null;
+    const histKey = `${keywordId ?? '_'}|${locationId ?? '_'}`;
+    let agg = histByKey.get(histKey);
+    if (!agg) {
+      agg = {
+        keywordId,
+        locationId,
+        selfPosition: null,
+        selfUrl: null,
+        bestCompetitorPosition: null,
+        topCompetitorId: null,
+        localPackPosition: null,
+        paidAdPosition: null,
+      };
+      histByKey.set(histKey, agg);
+    }
+
+    if (obs.resultType === 'paid_ad') {
+      await prisma.paidAdObservation.create({
+        data: {
+          businessId,
+          runId,
+          observedAt,
+          keywordId,
+          locationId,
+          advertiserName: obs.domain ?? null,
+          displayUrl: obs.domain ?? null,
+          finalUrl: obs.url ?? null,
+          headlineText: obs.title ?? null,
+          descriptionText: obs.snippet ?? null,
+          position,
+          adFormat: 'text',
+          isSelf,
+          competitorId,
+          dataSource: obs.dataSource ?? ctx.dataSource,
+          isSandbox: ctx.isSandbox,
+        } as any,
+      });
+      paidCount++;
+      if (position != null && (agg.paidAdPosition == null || position < agg.paidAdPosition)) {
+        agg.paidAdPosition = position;
+      }
+      continue;
+    }
+
+    const businessMatchType = isSelf ? 'self' : obs.domain ? 'competitor' : 'unknown';
     await prisma.searchVisibilityObservation.create({
       data: {
         businessId,
         runId,
+        observedAt,
         keywordId,
+        locationId,
         searchEngine: obs.searchEngine ?? 'google',
         device: obs.device ?? 'desktop',
         resultType: obs.resultType ?? 'organic',
-        position: obs.position ?? null,
+        position,
         pageNumber: obs.pageNumber ?? null,
         domain: obs.domain ?? null,
         url: obs.url ?? null,
         title: obs.title ?? null,
         snippet: obs.snippet ?? null,
-        isSelf: obs.isSelf ?? false,
+        businessMatchType,
+        isSelf,
+        competitorId,
         confidenceScore: obs.confidenceScore ?? 0,
         dataSource: obs.dataSource ?? ctx.dataSource,
+        isSandbox: ctx.isSandbox,
       } as any,
     });
-    count++;
+    observationCount++;
+
+    if (obs.resultType === 'organic') {
+      if (isSelf && position != null && (agg.selfPosition == null || position < agg.selfPosition)) {
+        agg.selfPosition = position;
+        agg.selfUrl = obs.url ?? null;
+      }
+      if (!isSelf && position != null && (agg.bestCompetitorPosition == null || position < agg.bestCompetitorPosition)) {
+        agg.bestCompetitorPosition = position;
+        agg.topCompetitorId = competitorId;
+      }
+    } else if ((obs.resultType === 'local_pack' || obs.resultType === 'map_result') && position != null) {
+      if (isSelf && (agg.localPackPosition == null || position < agg.localPackPosition)) {
+        agg.localPackPosition = position;
+      }
+    }
   }
-  return count;
+
+  // Write one OrganicPositionHistory summary per keyword+location.
+  for (const agg of histByKey.values()) {
+    await prisma.organicPositionHistory.create({
+      data: {
+        businessId,
+        keywordId: agg.keywordId,
+        locationId: agg.locationId,
+        observedAt,
+        selfPosition: agg.selfPosition,
+        selfUrl: agg.selfUrl,
+        bestCompetitorPosition: agg.bestCompetitorPosition,
+        topCompetitorId: agg.topCompetitorId,
+        localPackPosition: agg.localPackPosition,
+        paidAdPosition: agg.paidAdPosition,
+        organicRankBucket: organicRankBucket(agg.selfPosition),
+        dataSource: ctx.dataSource,
+      } as any,
+    });
+  }
+
+  return {
+    observationCount,
+    paidCount,
+    competitorCount: ctx.existingCompetitorCount + newCompetitors,
+  };
+}
+
+/**
+ * Manual single-keyword / single-location test search (Settings panel).
+ * Creates a run, executes against the configured provider, persists results
+ * (flagged with the current sandbox mode), logs usage, and returns the
+ * normalized observations so the UI can render organic + paid results.
+ */
+export async function runSingleTestSearch(
+  businessId: string,
+  input: { keyword: string; location: string },
+): Promise<{
+  runId: string;
+  providerType: string;
+  isSandbox: boolean;
+  health: { configured: boolean; healthy: boolean; message: string };
+  observations: NormalizedObservation[];
+  meta: Record<string, any>;
+}> {
+  const settings = await ensureSearchIntelSettings(businessId);
+  const providerType = resolveProviderType(settings.defaultProvider);
+  const cfg = getDataForSeoConfig();
+  const isSandbox = providerType === 'dataforseo' ? cfg.useSandbox : false;
+
+  const keyword = (input.keyword || '').trim();
+  const location = (input.location || '').trim() || 'United States';
+
+  const run = await prisma.searchIntelligenceRun.create({
+    data: {
+      businessId,
+      runType: 'manual_test_search',
+      dataSource: providerType,
+      status: 'running',
+      startedAt: new Date(),
+      keywordCount: 1,
+      locationCount: 1,
+      isSandbox,
+    } as any,
+  });
+
+  try {
+    const selfDomain = await getSelfDomain(businessId);
+    const provider = getSearchIntelligenceProvider(providerType);
+    const health = await provider.fetchProviderHealth();
+
+    const options: ProviderRequestOptions = {
+      device: (settings.device as any) ?? 'desktop',
+      includePaid: settings.includePaidAds,
+      includeOrganic: settings.includeOrganic,
+      includeLocalPack: settings.includeLocalPack,
+      maxResults: 1,
+      selfDomain,
+    };
+
+    const result: NormalizedResult = await provider.fetchKeywordRankings(
+      businessId,
+      [keyword],
+      [location],
+      options,
+    );
+
+    const usage = (provider as any).usage as ProviderUsageDescriptor[] | undefined;
+    if (Array.isArray(usage) && usage.length > 0) {
+      await logProviderUsage(businessId, providerType, usage, run.id);
+    }
+
+    let observationCount = 0;
+    if (result.observations.length > 0) {
+      const persisted = await persistResult(businessId, run.id, result.observations, {
+        keywords: [],
+        locations: [],
+        dataSource: `${providerType}:manual_test_search`,
+        isSandbox,
+        selfDomain,
+        existingCompetitorCount: 0,
+      });
+      observationCount = persisted.observationCount + persisted.paidCount;
+    }
+
+    await prisma.searchIntelligenceRun.update({
+      where: { id: run.id },
+      data: {
+        status: health.configured ? 'complete' : 'partial',
+        completedAt: new Date(),
+        observationCount,
+        rawSnapshotRef: result.rawSnapshotRef ?? null,
+        isSandbox,
+        errorMessage: health.configured ? null : health.message,
+      } as any,
+    });
+
+    return {
+      runId: run.id,
+      providerType,
+      isSandbox,
+      health: { configured: health.configured, healthy: health.healthy, message: health.message },
+      observations: result.observations,
+      meta: result.meta ?? {},
+    };
+  } catch (err: any) {
+    await prisma.searchIntelligenceRun.update({
+      where: { id: run.id },
+      data: {
+        status: 'failed',
+        completedAt: new Date(),
+        isSandbox,
+        errorMessage: String(err?.message || err).slice(0, 1000),
+      } as any,
+    });
+    throw err;
+  }
 }
 
 export async function nextWeeklyRun(businessId: string): Promise<Date | null> {

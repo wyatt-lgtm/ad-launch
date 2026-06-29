@@ -243,7 +243,7 @@ export default function SearchIntelligenceManager() {
           {tab === 'competitors' && <CompetitorsTab competitors={competitors} onAdd={addCompetitor} />}
           {tab === 'movements' && <MovementsTab movements={movements} />}
           {tab === 'recommendations' && <RecommendationsTab recommendations={recommendations} onUpdate={updateRecommendation} />}
-          {tab === 'settings' && <SettingsTab settings={settings} providerAccounts={providerAccounts} onSave={saveSettings} />}
+          {tab === 'settings' && <SettingsTab settings={settings} providerAccounts={providerAccounts} onSave={saveSettings} api={api} businessId={businessId} showToast={showToast} />}
         </>
       )}
     </div>
@@ -571,7 +571,7 @@ function RecommendationsTab({ recommendations, onUpdate }: any) {
 }
 
 // ── Settings ────────────────────────────────────────────────────
-function SettingsTab({ settings, providerAccounts, onSave }: any) {
+function SettingsTab({ settings, providerAccounts, onSave, api, businessId, showToast }: any) {
   const s = settings || {};
   const Toggle = ({ field, label, desc }: { field: string; label: string; desc?: string }) => (
     <label className="flex items-start justify-between gap-4 py-3 border-b border-gray-100 last:border-0">
@@ -579,6 +579,73 @@ function SettingsTab({ settings, providerAccounts, onSave }: any) {
       <input type="checkbox" checked={!!s[field]} onChange={(e) => onSave({ [field]: e.target.checked })} className="mt-1 h-4 w-4" />
     </label>
   );
+
+  const PROVIDER_OPTIONS = [
+    { value: 'manual_import', label: 'Manual import' },
+    { value: 'dataforseo', label: 'DataForSEO (live SEO/SERP)' },
+    { value: 'ahrefs', label: 'Ahrefs API' },
+    { value: 'google_search_console', label: 'Google Search Console' },
+    { value: 'google_ads', label: 'Google Ads API' },
+    { value: 'google_business_profile', label: 'Google Business Profile' },
+    { value: 'approved_serp_provider', label: 'Approved SERP provider' },
+  ];
+
+  // ── DataForSEO provider status ───────────────────────────────
+  const [health, setHealth] = useState<any>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const loadHealth = useCallback(async () => {
+    if (!businessId) return;
+    setHealthLoading(true);
+    try {
+      const res = await fetch(api('provider-health'));
+      const data = await res.json();
+      setHealth(data?.dataforseo || null);
+    } catch { setHealth(null); }
+    finally { setHealthLoading(false); }
+  }, [businessId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadHealth(); }, [loadHealth]);
+
+  const MODE_BADGE: Record<string, { label: string; cls: string }> = {
+    disabled: { label: 'Disabled', cls: 'bg-gray-100 text-gray-600' },
+    missing_credentials: { label: 'Missing credentials', cls: 'bg-amber-100 text-amber-700' },
+    sandbox: { label: 'Sandbox enabled', cls: 'bg-blue-100 text-blue-700' },
+    live: { label: 'Live enabled', cls: 'bg-green-100 text-green-700' },
+  };
+  const badge = health ? (MODE_BADGE[health.mode] || MODE_BADGE.disabled) : null;
+
+  // ── Manual test search ───────────────────────────────────────
+  const [kw, setKw] = useState('transmission flush');
+  const [loc, setLoc] = useState('Houston, TX');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
+  const runTest = async () => {
+    if (!kw.trim()) { showToast?.(false, 'Enter a keyword to test'); return; }
+    setTesting(true); setTestResult(null);
+    try {
+      const res = await fetch(api('test-run'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: kw.trim(), location: loc.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || data?.ok === false) {
+        showToast?.(false, data?.error || 'Test search failed');
+        setTestResult({ error: data?.error || 'Test search failed' });
+      } else {
+        setTestResult(data);
+        showToast?.(true, `Test run complete — ${(data.observations || []).length} result(s)`);
+      }
+      loadHealth();
+    } catch (e: any) {
+      showToast?.(false, 'Test search failed');
+      setTestResult({ error: String(e?.message || e) });
+    } finally { setTesting(false); }
+  };
+
+  const organicResults = (testResult?.observations || []).filter((o: any) => o.resultType === 'organic');
+  const paidResults = (testResult?.observations || []).filter((o: any) => o.resultType === 'paid_ad');
+  const otherResults = (testResult?.observations || []).filter((o: any) => o.resultType !== 'organic' && o.resultType !== 'paid_ad');
+
   return (
     <div className="space-y-6">
       <div className="bg-white border border-gray-200 rounded-xl p-5">
@@ -589,8 +656,84 @@ function SettingsTab({ settings, providerAccounts, onSave }: any) {
         <Toggle field="includeLocalPack" label="Track local map pack" />
         <Toggle field="includeCompetitors" label="Track competitors" />
       </div>
+
       <div className="bg-white border border-gray-200 rounded-xl p-5">
-        <h3 className="font-semibold text-gray-900 mb-2">Data Providers</h3>
+        <h3 className="font-semibold text-gray-900 mb-2">Active data provider</h3>
+        <p className="text-xs text-gray-500 mb-3">The provider used when a search intelligence run executes. Providers without configured credentials are skipped gracefully.</p>
+        <select
+          value={s.defaultProvider || 'manual_import'}
+          onChange={(e) => onSave({ defaultProvider: e.target.value })}
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full"
+        >
+          {PROVIDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+
+      {/* DataForSEO status + manual test */}
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-semibold text-gray-900">DataForSEO</h3>
+          {badge && <span className={`text-xs font-medium px-2 py-1 rounded-full ${badge.cls}`}>{badge.label}</span>}
+        </div>
+        {healthLoading && !health ? (
+          <div className="text-sm text-gray-400 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Checking status…</div>
+        ) : health ? (
+          <div className="text-sm text-gray-600 space-y-1">
+            <div>{health.message}</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-500 mt-2">
+              <div>Last successful request: <span className="text-gray-700">{fmt(health.lastSuccessAt)}</span></div>
+              <div>Last error: <span className="text-gray-700">{fmt(health.lastErrorAt)}</span></div>
+              {health.lastErrorMessage && <div className="sm:col-span-2 text-red-500">{health.lastErrorMessage}</div>}
+              <div className="sm:col-span-2">Credentials: <span className="text-gray-700">{health.credentialsRef}</span></div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-400">Status unavailable.</div>
+        )}
+
+        <div className="mt-4 border-t border-gray-100 pt-4">
+          <div className="text-sm font-medium text-gray-800 mb-2">Run a test search</div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-1">
+              <label className="block text-xs text-gray-500 mb-1">Keyword</label>
+              <input value={kw} onChange={(e) => setKw(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full" placeholder="transmission flush" />
+            </div>
+            <div className="sm:col-span-1">
+              <label className="block text-xs text-gray-500 mb-1">Location</label>
+              <input value={loc} onChange={(e) => setLoc(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full" placeholder="Houston, TX" />
+            </div>
+            <div className="sm:col-span-1 flex items-end">
+              <button onClick={runTest} disabled={testing} className="inline-flex items-center justify-center gap-2 bg-gray-900 text-white text-sm font-medium rounded-lg px-4 py-2 w-full disabled:opacity-50">
+                {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {testing ? 'Running…' : 'Run test'}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">Language: en. One keyword × one location. Results below reflect the active provider &amp; sandbox/live mode.</p>
+
+          {testResult?.error && <div className="mt-3 text-sm text-red-600">{testResult.error}</div>}
+
+          {testResult && !testResult.error && (
+            <div className="mt-4 space-y-4">
+              <div className="text-xs text-gray-500">
+                Provider: <span className="text-gray-700">{LABEL(testResult.providerType)}</span>
+                {testResult.isSandbox && <span className="ml-2 inline-block bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Sandbox / test data</span>}
+                {!testResult.health?.configured && <span className="ml-2 text-amber-600">{testResult.health?.message}</span>}
+              </div>
+
+              <ResultBlock title={`Organic results (${organicResults.length})`} rows={organicResults} />
+              <ResultBlock title={`Paid ads (${paidResults.length})`} rows={paidResults} />
+              {otherResults.length > 0 && <ResultBlock title={`Other features (${otherResults.length})`} rows={otherResults} />}
+              {(testResult.observations || []).length === 0 && (
+                <div className="text-sm text-gray-400">No results returned{testResult.isSandbox ? ' (sandbox responses are often empty).' : '.'}</div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h3 className="font-semibold text-gray-900 mb-2">Other data sources</h3>
         <p className="text-xs text-gray-500 mb-3">Enable the compliant data sources you have access to. Providers without configured credentials are skipped gracefully.</p>
         <Toggle field="includeAhrefs" label="Ahrefs API" desc="Keyword & backlink data via the Ahrefs (hrefs) API." />
         <Toggle field="includeSearchConsole" label="Google Search Console" />
@@ -606,6 +749,7 @@ function SettingsTab({ settings, providerAccounts, onSave }: any) {
           </div>
         )}
       </div>
+
       <div className="bg-white border border-gray-200 rounded-xl p-5">
         <h3 className="font-semibold text-gray-900 mb-3">Schedule</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -620,6 +764,39 @@ function SettingsTab({ settings, providerAccounts, onSave }: any) {
             <input value={s.weeklyRunTime || '03:00'} onChange={(e) => onSave({ weeklyRunTime: e.target.value })} className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full" placeholder="03:00" />
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ResultBlock({ title, rows }: { title: string; rows: any[] }) {
+  if (!rows || rows.length === 0) return null;
+  return (
+    <div>
+      <div className="text-sm font-medium text-gray-800 mb-2">{title}</div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-xs">
+          <thead>
+            <tr className="text-left text-gray-400 border-b border-gray-100">
+              <th className="py-1 pr-3">#</th>
+              <th className="py-1 pr-3">Domain</th>
+              <th className="py-1 pr-3">Title</th>
+              <th className="py-1 pr-3">URL</th>
+              <th className="py-1 pr-3">Self</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r: any, i: number) => (
+              <tr key={i} className="border-b border-gray-50 align-top">
+                <td className="py-1 pr-3 text-gray-500">{r.position ?? '—'}</td>
+                <td className="py-1 pr-3 text-gray-700 whitespace-nowrap">{r.domain || '—'}</td>
+                <td className="py-1 pr-3 text-gray-700 max-w-xs truncate">{r.title || '—'}</td>
+                <td className="py-1 pr-3 text-blue-600 max-w-xs truncate">{r.url || '—'}</td>
+                <td className="py-1 pr-3">{r.isSelf ? <span className="text-green-600 font-medium">Yes</span> : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

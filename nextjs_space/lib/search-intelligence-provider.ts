@@ -12,6 +12,7 @@
  */
 
 import type { Prisma } from '@prisma/client';
+import { DataForSeoProvider } from '@/lib/dataforseo-provider';
 
 export type SearchProviderType =
   | 'google_search_console'
@@ -19,6 +20,7 @@ export type SearchProviderType =
   | 'google_business_profile'
   | 'ahrefs'
   | 'approved_serp_provider'
+  | 'dataforseo'
   | 'manual_import';
 
 export interface ProviderHealth {
@@ -220,6 +222,7 @@ const REGISTRY: Record<SearchProviderType, () => SearchIntelligenceProvider> = {
   google_ads_api: () => new GoogleAdsProvider(),
   google_business_profile: () => new GoogleBusinessProfileProvider(),
   approved_serp_provider: () => new ApprovedSerpProvider(),
+  dataforseo: () => new DataForSeoProvider(),
   manual_import: () => new ManualImportProvider(),
 };
 
@@ -240,6 +243,8 @@ export function resolveProviderType(value: string | null | undefined): SearchPro
       return 'google_business_profile';
     case 'approved_serp_provider':
       return 'approved_serp_provider';
+    case 'dataforseo':
+      return 'dataforseo';
     default:
       return 'manual_import';
   }
