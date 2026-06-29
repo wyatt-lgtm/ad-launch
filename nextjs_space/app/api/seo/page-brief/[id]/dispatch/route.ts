@@ -95,6 +95,25 @@ export async function POST(
     );
   }
 
+  // Persist the WF3 workflow id so the read-only quality/QA display layer (P10)
+  // can surface pipeline status, QA scores and required fixes for this brief.
+  if (result.workflowId) {
+    try {
+      const userId = (session.user as any)?.id ?? null;
+      await prisma.seoPageBrief.update({
+        where: { id: briefId },
+        data: {
+          wf3WorkflowId: result.workflowId,
+          wf3DispatchedAt: new Date(),
+          wf3DispatchedByUserId: userId,
+        },
+      });
+    } catch (err: any) {
+      // Non-fatal: dispatch succeeded; tracking persistence is best-effort.
+      console.error(`[dispatch] failed to persist wf3WorkflowId for brief ${briefId}: ${err?.message}`);
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     briefId,

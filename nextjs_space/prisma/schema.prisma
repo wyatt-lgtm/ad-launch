@@ -2624,6 +2624,13 @@ model SeoPageBrief {
   overrideByUserId String?
   overrideReason   String?  @db.Text
 
+  // WF3 (Website-SEO AI workflow) dispatch tracking. Populated when an approved
+  // brief is dispatched to the Tombstone SEO page workflow. Read-only display
+  // layer (P10) uses wf3WorkflowId to fetch normalized quality/QA data.
+  wf3WorkflowId        String?
+  wf3DispatchedAt      DateTime?
+  wf3DispatchedByUserId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2635,6 +2642,7 @@ model SeoPageBrief {
   @@index([metaAnalysisId])
   @@index([businessId, status])
   @@index([businessId, targetPageType])
+  @@index([wf3WorkflowId])
 }
 
 /// A content brief (blog/guide/FAQ/landing/social/email/video script/etc.)

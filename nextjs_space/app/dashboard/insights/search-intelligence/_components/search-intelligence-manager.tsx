@@ -6,11 +6,12 @@ import { useRouter } from 'next/navigation';
 import {
   Loader2, Lock, LogIn, Search, BarChart3, KeyRound, MapPin, TrendingUp,
   Megaphone, MapPinned, Compass, ArrowLeftRight, Lightbulb, Settings as SettingsIcon,
-  Plus, Trash2, Gauge, Upload,
+  Plus, Trash2, Gauge, Upload, FileText,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 import BusinessIntelligencePanel from './business-intelligence-panel';
 import KeywordUploadModal from './keyword-upload-modal';
+import PageBriefsTab from './page-briefs-tab';
 
 const LABEL = (s?: string | null) => (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -22,7 +23,7 @@ function fmt(d?: string | null) {
 
 type Tab =
   | 'overview' | 'keywords' | 'locations' | 'organic' | 'paid'
-  | 'localpack' | 'competitors' | 'movements' | 'recommendations' | 'settings';
+  | 'localpack' | 'competitors' | 'movements' | 'recommendations' | 'pagebriefs' | 'settings';
 
 export default function SearchIntelligenceManager() {
   const { data: session, status: sessionStatus } = useSession() || {};
@@ -189,6 +190,7 @@ export default function SearchIntelligenceManager() {
     { key: 'competitors', label: 'Competitors', icon: Compass, count: competitors.length },
     { key: 'movements', label: 'Movements', icon: ArrowLeftRight, count: movements.length },
     { key: 'recommendations', label: 'Recommendations', icon: Lightbulb, count: recommendations.length },
+    { key: 'pagebriefs', label: 'Page Briefs', icon: FileText },
     { key: 'settings', label: 'Settings', icon: SettingsIcon },
   ];
 
@@ -244,6 +246,7 @@ export default function SearchIntelligenceManager() {
           {tab === 'competitors' && <CompetitorsTab competitors={competitors} onAdd={addCompetitor} />}
           {tab === 'movements' && <MovementsTab movements={movements} />}
           {tab === 'recommendations' && <RecommendationsTab recommendations={recommendations} onUpdate={updateRecommendation} />}
+          {tab === 'pagebriefs' && <PageBriefsTab businessId={businessId} />}
           {tab === 'settings' && <SettingsTab settings={settings} providerAccounts={providerAccounts} onSave={saveSettings} api={api} businessId={businessId} showToast={showToast} />}
         </>
       )}
