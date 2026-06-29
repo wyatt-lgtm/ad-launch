@@ -108,6 +108,15 @@ model Business {
   organicPositionHistory       OrganicPositionHistory[]
   searchIntelRecommendations   SearchIntelligenceRecommendation[]
 
+  // ── Two-stage Website workflow (Concept + Production) ──────────────
+  websiteProjects    WebsiteProject[]
+  websiteConcepts    WebsiteConcept[]
+  websiteProductions WebsiteProduction[]
+  websitePages       WebsitePage[]
+  websiteSections    WebsiteSection[]
+  websiteAssets      WebsiteAsset[]
+  websiteQaResults   WebsiteQaResult[]
+
   // ── Industry match (from Jim Bridger / owner-confirmed) ────────────
   matchedIndustryId         String?
   matchedIndustryConfidence String? // high | medium | low
@@ -2264,4 +2273,291 @@ model SearchIntelligenceRecommendation {
   @@index([businessId])
   @@index([businessId, status])
   @@index([businessId, recommendationType])
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Two-Stage Website Workflow (Concept → Production)
+//  Concept records and Production records are kept fully separate so a
+//  concept revision can never overwrite generated production pages.
+// ════════════════════════════════════════════════════════════════════
+
+/// One website project per business. Tracks which stage the website is in
+/// and the independent concept + production status machines.
+model WebsiteProject {
+  id         String @id @default(cuid())
+  businessId String
+
+  projectName String?
+
+  // current_stage: concept | production
+  currentStage String @default("concept")
+
+  // concept_status: not_started | generating | ready_for_review |
+  //                 revision_requested | approved | rejected | archived
+  conceptStatus String @default("not_started")
+
+  // production_status: not_started | waiting_for_concept_approval | planning |
+  //                    generating | qa_pending | qa_failed | ready_for_review |
+  //                    approved | published | archived
+  productionStatus String @default("not_started")
+
+  // Pointers to the active approved concept and current production version
+  approvedConceptVersionId   String?
+  currentProductionVersionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  concepts    WebsiteConcept[]
+  productions WebsiteProduction[]
+  pages       WebsitePage[]
+  sections    WebsiteSection[]
+  assets      WebsiteAsset[]
+  qaResults   WebsiteQaResult[]
+
+  @@index([businessId])
+  @@index([conceptStatus])
+  @@index([productionStatus])
+}
+
+/// A concept website version (single-page creative direction produced by the
+/// existing 8-step Tombstone concept workflow). Never overwritten by production.
+model WebsiteConcept {
+  id               String @id @default(cuid())
+  businessId       String
+  websiteProjectId String
+
+  // Pointer back to the Tombstone concept workflow that produced this concept
+  workflowId  String?
+  finalTaskId String?
+
+  conceptHtml    String? @db.Text
+  conceptSummary String? @db.Text
+
+  // Creative direction captured from the concept workflow for reuse by production
+  designDirectionJson Json?
+  brandDirectionJson  Json?
+  imageDirectionJson  Json?
+  ctaDirectionJson    Json?
+
+  // status: generating | ready_for_review | revision_requested |
+  //         approved | rejected | archived
+  status  String @default("generating")
+  version Int    @default(1)
+
+  approvedByUserId String?
+  approvedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project   WebsiteProject    @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  assets    WebsiteAsset[]
+  qaResults WebsiteQaResult[]
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([status])
+  @@index([workflowId])
+}
+
+/// A production website version (multi-page SEO build). Only created after a
+/// concept has been approved. Holds the sitemap and high-level metadata; the
+/// individual pages live in WebsitePage records.
+model WebsiteProduction {
+  id               String @id @default(cuid())
+  businessId       String
+  websiteProjectId String
+
+  // The approved concept this production build was derived from (creative direction)
+  sourceConceptId String?
+
+  workflowId String?
+
+  // status: planning | generating | qa_pending | qa_failed |
+  //         ready_for_review | approved | published | archived
+  status  String @default("planning")
+  version Int    @default(1)
+
+  sitemapJson Json?
+  robotsTxt   String? @db.Text
+  schemaJson  Json?
+
+  // qa_status: pending | passed | failed
+  qaStatus String @default("pending")
+
+  approvedByUserId String?
+  approvedAt       DateTime?
+  publishedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project   WebsiteProject    @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  pages     WebsitePage[]
+  sections  WebsiteSection[]
+  assets    WebsiteAsset[]
+  qaResults WebsiteQaResult[]
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([status])
+}
+
+/// A first-class production page (home, service, city/county landing page, etc.).
+model WebsitePage {
+  id               String @id @default(cuid())
+  businessId       String
+  websiteProjectId String
+  productionId     String
+
+  // page_type: home | service | location | city | county | about | contact | blog | other
+  pageType String @default("other")
+
+  title              String?
+  slug               String?
+  path               String?
+  metaTitle          String?
+  metaDescription    String? @db.Text
+  canonicalUrl       String?
+  h1                 String?
+  targetKeywordsJson Json?
+
+  serviceLine       String?
+  marketOrientation String? // local | regional | national
+  city              String?
+  county            String?
+  state             String?
+
+  // status: draft | generating | ready | needs_review | approved | archived
+  status    String @default("draft")
+  sortOrder Int    @default(0)
+
+  html String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business   Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project    WebsiteProject    @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  production WebsiteProduction @relation(fields: [productionId], references: [id], onDelete: Cascade)
+  sections   WebsiteSection[]
+  assets     WebsiteAsset[]
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([productionId])
+  @@index([pageType])
+  @@index([status])
+}
+
+/// A content section within a production page (hero, services, about, CTA, etc.).
+model WebsiteSection {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String
+  pageId           String
+  productionId     String?
+
+  // section_type: hero | services | about | how_it_works | testimonials |
+  //               faq | cta | contact | gallery | other
+  sectionType String @default("other")
+
+  heading   String?
+  body      String? @db.Text
+  ctaText   String?
+  ctaTarget String?
+
+  assetIdsJson Json?
+  sortOrder    Int   @default(0)
+
+  // status: draft | ready | needs_review | approved | archived
+  status String @default("draft")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project    WebsiteProject     @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  page       WebsitePage        @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  production WebsiteProduction? @relation(fields: [productionId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([pageId])
+  @@index([sectionType])
+}
+
+/// An image / media asset used by a concept or production page/section.
+model WebsiteAsset {
+  id               String @id @default(cuid())
+  businessId       String
+  websiteProjectId String
+
+  conceptId    String?
+  productionId String?
+  pageId       String?
+  sectionId    String?
+
+  // asset_type: hero_image | section_image | logo | icon | background | other
+  assetType String @default("other")
+
+  r2Key     String?
+  publicUrl String?
+  altText   String?
+  width     Int?
+  height    Int?
+
+  // status: pending | ready | failed | archived
+  status String @default("ready")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project    WebsiteProject     @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  concept    WebsiteConcept?    @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+  production WebsiteProduction? @relation(fields: [productionId], references: [id], onDelete: SetNull)
+  page       WebsitePage?       @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([conceptId])
+  @@index([productionId])
+  @@index([pageId])
+}
+
+/// A QA / quality-review result for a concept or production build.
+model WebsiteQaResult {
+  id               String @id @default(cuid())
+  businessId       String
+  websiteProjectId String
+
+  conceptId    String?
+  productionId String?
+
+  // qa_type: concept_war_room | production_qa | seo_audit | accessibility | other
+  qaType  String  @default("other")
+  qaAgent String?
+
+  // verdict: APPROVED | REJECTED | WARNING | PENDING
+  verdict String @default("PENDING")
+
+  gatesJson    Json?
+  failuresJson Json?
+
+  createdAt DateTime @default(now())
+
+  business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project    WebsiteProject     @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  concept    WebsiteConcept?    @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+  production WebsiteProduction? @relation(fields: [productionId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([conceptId])
+  @@index([productionId])
 }

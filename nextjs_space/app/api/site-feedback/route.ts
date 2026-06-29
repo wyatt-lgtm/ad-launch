@@ -18,11 +18,14 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const analysisId = searchParams.get('analysisId');
-    if (!analysisId) {
-      return NextResponse.json({ error: 'analysisId required' }, { status: 400 });
+    const businessId = searchParams.get('businessId');
+    if (!analysisId && !businessId) {
+      return NextResponse.json({ error: 'analysisId or businessId required' }, { status: 400 });
     }
 
-    const where: any = { analysisId };
+    const where: any = {};
+    if (analysisId) where.analysisId = analysisId;
+    if (businessId) where.businessId = businessId;
     const sectionId = searchParams.get('sectionId');
     if (sectionId) where.sectionId = sectionId;
 

@@ -609,6 +609,27 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
     return () => { cancelled = true; };
   }, [analysisId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Persist the finished concept into a durable WebsiteConcept record so the
+  // two-stage Website workspace can track concept approval + production gating.
+  // Best-effort: never blocks or breaks the existing concept preview flow.
+  const syncConceptRecord = useCallback(async () => {
+    try {
+      const wf = workflowRef.current;
+      const businessId = data?.businessId;
+      if (!wf?.workflowId || !businessId) return;
+      await fetch('/api/website-concept/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId,
+          workflowId: wf.workflowId,
+          finalTaskId: wf.finalTaskId,
+          analysisId,
+        }),
+      });
+    } catch { /* non-fatal */ }
+  }, [data, analysisId]);
+
   const pollStatus = useCallback(async () => {
     const wf = workflowRef.current;
     if (!wf) return;
@@ -641,6 +662,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         }
         if (result.competitorIntelligence) setCompetitorIntel(result.competitorIntelligence);
         setGenerating(false);
+        if (result.html) syncConceptRecord();
       } else if (result.status === 'error') {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
 
@@ -652,6 +674,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
           setGeneratedUrl(url);
           window.open(url, '_blank');
           setGenerating(false);
+          syncConceptRecord();
         } else {
           // Build specific failure detail from steps
           const failedSteps = (result.steps ?? []).filter((s: any) => s.status === 'error');
@@ -682,6 +705,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
             status: s.status === 'waiting' ? 'complete' as const : s.status,
           })));
           setWorkflowStatus('completed');
+          syncConceptRecord();
           return;
         }
 
