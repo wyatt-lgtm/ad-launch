@@ -26,16 +26,29 @@ export interface EnvValidationResult {
   secretKeys: string[];
 }
 
-const SECRET_VALUE_PATTERNS = [
+/**
+ * Shared secret-value detectors. Exported so deployment-target / credential
+ * handling can reuse the exact same guard and never let a raw secret leak into
+ * a normal database column or an API/UI response.
+ */
+export const SECRET_VALUE_PATTERNS = [
   /sk_live_[a-z0-9]/i,
   /sk_test_[a-z0-9]/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /[?&]X-Amz-(Signature|Credential|Security-Token)=/i,
   /\bAKIA[0-9A-Z]{16}\b/,
   /\bghp_[A-Za-z0-9]{20,}\b/,
+  /\bgho_[A-Za-z0-9]{20,}\b/,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
 ];
 
-const SECRET_KEY_HINTS = /(secret|password|token|api[_-]?key|private[_-]?key|credential)/i;
+/** True when `value` looks like an actual secret/credential value. */
+export function looksLikeSecretValue(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return SECRET_VALUE_PATTERNS.some((re) => re.test(value));
+}
+
+export const SECRET_KEY_HINTS = /(secret|password|token|api[_-]?key|private[_-]?key|credential)/i;
 
 export function validateEnvVars(vars: EnvVarInput[]): EnvValidationResult {
   const issues: EnvValidationIssue[] = [];

@@ -144,6 +144,12 @@ export default function StaticBuildCard() {
                 <div className="mt-0.5 text-xs text-gray-500">
                   {latest?.completedAt ? new Date(latest.completedAt).toLocaleString('en-US') : 'No builds yet'}
                 </div>
+                {latest && (latest.sourceRef || latest.outputRef) && (
+                  <div className="mt-1 space-y-0.5 text-[11px] text-gray-400">
+                    {latest.sourceRef && <div className="truncate" title={latest.sourceRef}>src: {latest.sourceRef}</div>}
+                    {latest.outputRef && <div className="truncate" title={latest.outputRef}>out: {latest.outputRef}</div>}
+                  </div>
+                )}
               </div>
               <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
                 <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-gray-400"><KeyRound className="h-3.5 w-3.5" /> Credentials</div>
