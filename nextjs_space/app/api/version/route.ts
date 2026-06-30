@@ -85,6 +85,8 @@ export async function GET() {
     // DataForSEO live provider is wired and available for manual runs.
     search_intelligence_live_providers: true,
     two_stage_website_workflow: true,
+    // WF3 SEO page quality visibility (P10) — read-only QA/publish-readiness UI.
+    wf3_page_quality_visibility: true,
     // Deliberately-deferred capability (stays off until explicitly enabled):
     search_intelligence_weekly_automation: false,
   };
