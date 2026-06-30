@@ -129,6 +129,11 @@ model Business {
   websiteAssets      WebsiteAsset[]
   websiteQaResults   WebsiteQaResult[]
 
+  // ── Static-first site generation: deployment targets / builds / env ─
+  siteDeploymentTargets    SiteDeploymentTarget[]
+  siteBuilds               SiteBuild[]
+  siteEnvironmentVariables SiteEnvironmentVariable[]
+
   // ── Industry match (from Jim Bridger / owner-confirmed) ────────────
   matchedIndustryId         String?
   matchedIndustryConfidence String? // high | medium | low
@@ -2403,6 +2408,7 @@ model SearchSerpVarianceSummary {
   @@index([businessId, locationId])
   @@index([createdAt])
 }
+
 // ════════════════════════════════════════════════════════════════════
 //  SEO Research Consumption Layer
 //  Turns DataForSEO SERP observations (provider-returned top URLs ONLY)
@@ -2431,31 +2437,31 @@ model SeoCompetitorPageAnalysis {
   checkUrl       String? @db.Text
   rawSnapshotRef String? // R2 object key for the raw fetched page payload
 
-  domain         String?
-  url            String  @db.Text
-  rankGroup      Int?
-  rankAbsolute   Int?
+  domain          String?
+  url             String  @db.Text
+  rankGroup       Int?
+  rankAbsolute    Int?
   // result_type: organic | local_pack | maps | paid | featured_snippet
   //   | people_also_ask | reddit | forum | youtube | video | other
-  resultType     String  @default("organic")
+  resultType      String  @default("organic")
   // classified_input: service_page | question_input | video_input
-  classifiedInput String @default("service_page")
+  classifiedInput String  @default("service_page")
 
-  pageTitle         String? @db.Text
-  metaDescription   String? @db.Text
-  h1                String? @db.Text
-  headingsJson      Json?
-  topicsJson        Json?
-  faqsJson          Json?
-  schemaTypesJson   Json?
-  ctaSummary        String? @db.Text
-  trustElementsJson Json?
-  localTermsJson    Json?
-  mediaElementsJson Json?
-  videoElementsJson Json?
-  contentGapsJson   Json?
+  pageTitle              String? @db.Text
+  metaDescription        String? @db.Text
+  h1                     String? @db.Text
+  headingsJson           Json?
+  topicsJson             Json?
+  faqsJson               Json?
+  schemaTypesJson        Json?
+  ctaSummary             String? @db.Text
+  trustElementsJson      Json?
+  localTermsJson         Json?
+  mediaElementsJson      Json?
+  videoElementsJson      Json?
+  contentGapsJson        Json?
   conversionElementsJson Json?
-  analysisSummary   String? @db.Text
+  analysisSummary        String? @db.Text
 
   // status: pending | complete | failed | skipped
   status    String   @default("pending")
@@ -2478,35 +2484,35 @@ model SeoCompetitorPageAnalysis {
 /// + recommended video topics. This is the source record consumed by page,
 /// content and video brief generation.
 model SeoContentMetaAnalysis {
-  id                String  @id @default(cuid())
-  businessId        String
+  id         String  @id @default(cuid())
+  businessId String
   // external evidence links (scalar, indexed)
-  runId             String?
-  keywordId         String?
-  locationId        String?
+  runId      String?
+  keywordId  String?
+  locationId String?
 
-  targetKeyword     String?
-  targetLocation    String?
-  serviceLine       String?
-  marketOrientation String? // local | regional | national
-  dataSource        String? @default("dataforseo")
+  targetKeyword      String?
+  targetLocation     String?
+  serviceLine        String?
+  marketOrientation  String? // local | regional | national
+  dataSource         String? @default("dataforseo")
   // provider evidence
-  providerTaskId    String?
-  checkUrl          String? @db.Text
+  providerTaskId     String?
+  checkUrl           String? @db.Text
   competitorUrlsJson Json?
 
   // aggregated structural patterns
-  commonHeadingsJson    Json?
-  commonTopicsJson      Json?
-  commonFaqsJson        Json?
-  commonSchemaJson      Json?
-  commonCtasJson        Json?
-  trustElementsJson     Json?
-  localTermsJson        Json?
-  mediaPatternsJson     Json?
-  videoPatternsJson     Json?
+  commonHeadingsJson     Json?
+  commonTopicsJson       Json?
+  commonFaqsJson         Json?
+  commonSchemaJson       Json?
+  commonCtasJson         Json?
+  trustElementsJson      Json?
+  localTermsJson         Json?
+  mediaPatternsJson      Json?
+  videoPatternsJson      Json?
   conversionPatternsJson Json?
-  contentGapsJson       Json?
+  contentGapsJson        Json?
 
   // question / intent patterns (extracted from PAA, Reddit, forums, FAQs)
   commonCustomerQuestionsJson Json?
@@ -2521,20 +2527,20 @@ model SeoContentMetaAnalysis {
   faqQuestionsJson            Json?
 
   // recommendations (intent-derived, not copied)
-  recommendedAngle         String? @db.Text
-  recommendedSectionsJson  Json?
-  recommendedFaqsJson      Json?
-  recommendedSchemaJson    Json?
-  recommendedCtasJson      Json?
+  recommendedAngle           String? @db.Text
+  recommendedSectionsJson    Json?
+  recommendedFaqsJson        Json?
+  recommendedSchemaJson      Json?
+  recommendedCtasJson        Json?
   recommendedVideoTopicsJson Json?
 
-  confidenceScore Float? @default(0)
+  confidenceScore Float?   @default(0)
   // status: pending | complete | stale | needs_review | failed
-  status    String   @default("pending")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status          String   @default("pending")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  business           Business                     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business           Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
   competitorAnalyses SeoCompetitorPageAnalysis[]
   pageBriefs         SeoPageBrief[]
   contentBriefs      SeoContentBrief[]
@@ -2556,23 +2562,23 @@ model SeoExtractedQuestion {
   businessId     String
   metaAnalysisId String?
 
-  questionText   String  @db.Text
+  questionText          String  @db.Text
   // topic_type: warning_signs | comparison | cost | timing | necessity
   //   | process | risk | DIY_vs_professional | objection | FAQ
   //   | local_modifier | video_topic
-  topicType      String  @default("FAQ")
-  frequencyCount Int     @default(1)
-  sourceUrlsJson Json?
+  topicType             String  @default("FAQ")
+  frequencyCount        Int     @default(1)
+  sourceUrlsJson        Json?
   sourceResultTypesJson Json?
   // funnel_stage: awareness | consideration | decision | retention
-  funnelStage    String?
+  funnelStage           String?
   // recommended_content_use: service_page_section | FAQ | blog_article
   //   | video_script | short_video | carousel | email | social_post
   //   | landing_page_section
   recommendedContentUse String?
   // priority: low | medium | high | critical
-  priority       String  @default("medium")
-  notes          String? @db.Text
+  priority              String  @default("medium")
+  notes                 String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2599,36 +2605,36 @@ model SeoPageBrief {
 
   // target_page_type: home | service | location | city | county | about
   //   | contact | blog | landing | other
-  targetPageType   String  @default("service")
+  targetPageType String @default("service")
 
-  recommendedSlug            String?
-  recommendedMetaTitle       String?
-  recommendedMetaDescription String? @db.Text
-  recommendedH1              String? @db.Text
-  recommendedSectionsJson    Json?
-  recommendedFaqsJson        Json?
-  recommendedSchemaJson      Json?
+  recommendedSlug                 String?
+  recommendedMetaTitle            String?
+  recommendedMetaDescription      String? @db.Text
+  recommendedH1                   String? @db.Text
+  recommendedSectionsJson         Json?
+  recommendedFaqsJson             Json?
+  recommendedSchemaJson           Json?
   internalLinkRecommendationsJson Json?
-  ctaRecommendationsJson     Json?
-  formRecommendationsJson    Json?
-  trackingRecommendationsJson Json?
-  differentiationAngle       String? @db.Text
-  evidenceSummary            String? @db.Text
+  ctaRecommendationsJson          Json?
+  formRecommendationsJson         Json?
+  trackingRecommendationsJson     Json?
+  differentiationAngle            String? @db.Text
+  evidenceSummary                 String? @db.Text
   sourceCompetitorAnalysisIdsJson Json?
 
   // status: draft | ready_for_review | approved | used_in_page | stale | rejected
-  status         String    @default("draft")
+  status           String    @default("draft")
   approvedByUserId String?
-  approvedAt     DateTime?
+  approvedAt       DateTime?
   // admin override of the research gate (e.g. generate page without research)
   overrideByUserId String?
-  overrideReason   String?  @db.Text
+  overrideReason   String?   @db.Text
 
   // WF3 (Website-SEO AI workflow) dispatch tracking. Populated when an approved
   // brief is dispatched to the Tombstone SEO page workflow. Read-only display
   // layer (P10) uses wf3WorkflowId to fetch normalized quality/QA data.
-  wf3WorkflowId        String?
-  wf3DispatchedAt      DateTime?
+  wf3WorkflowId         String?
+  wf3DispatchedAt       DateTime?
   wf3DispatchedByUserId String?
 
   createdAt DateTime @default(now())
@@ -2655,15 +2661,15 @@ model SeoContentBrief {
 
   // content_type: blog_article | guide | faq_page | landing_page
   //   | social_post | email | video_script | short_video | carousel
-  contentType    String  @default("blog_article")
-  recommendedTitle        String? @db.Text
-  recommendedOutlineJson  Json?
-  recommendedFaqsJson     Json?
-  recommendedCta          String? @db.Text
+  contentType                  String  @default("blog_article")
+  recommendedTitle             String? @db.Text
+  recommendedOutlineJson       Json?
+  recommendedFaqsJson          Json?
+  recommendedCta               String? @db.Text
   recommendedInternalLinksJson Json?
-  recommendedMediaJson    Json?
-  audience                String? @db.Text
-  evidenceSummary         String? @db.Text
+  recommendedMediaJson         Json?
+  audience                     String? @db.Text
+  evidenceSummary              String? @db.Text
 
   // status: draft | ready_for_review | approved | used | stale | rejected
   status    String   @default("draft")
@@ -2689,8 +2695,8 @@ model SeoVideoBrief {
 
   // video_type: short_form | explainer | service_overview | faq_answer
   //   | local_service_intro | testimonial_prompt | comparison | myth_buster
-  videoType      String  @default("short_form")
-  hook           String? @db.Text
+  videoType                    String  @default("short_form")
+  hook                         String? @db.Text
   recommendedScriptOutlineJson Json?
   keyQuestionsToAnswerJson     Json?
   visualShotsJson              Json?
@@ -2713,7 +2719,6 @@ model SeoVideoBrief {
   @@index([businessId, status])
   @@index([businessId, videoType])
 }
-
 
 // ════════════════════════════════════════════════════════════════════
 //  Two-Stage Website Workflow (Concept → Production)
@@ -2748,13 +2753,15 @@ model WebsiteProject {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  concepts    WebsiteConcept[]
-  productions WebsiteProduction[]
-  pages       WebsitePage[]
-  sections    WebsiteSection[]
-  assets      WebsiteAsset[]
-  qaResults   WebsiteQaResult[]
+  business          Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  concepts          WebsiteConcept[]
+  productions       WebsiteProduction[]
+  pages             WebsitePage[]
+  sections          WebsiteSection[]
+  assets            WebsiteAsset[]
+  qaResults         WebsiteQaResult[]
+  deploymentTargets SiteDeploymentTarget[]
+  builds            SiteBuild[]
 
   @@index([businessId])
   @@index([conceptStatus])
@@ -2841,6 +2848,7 @@ model WebsiteProduction {
   sections  WebsiteSection[]
   assets    WebsiteAsset[]
   qaResults WebsiteQaResult[]
+  builds    SiteBuild[]
 
   @@index([businessId])
   @@index([websiteProjectId])
@@ -3008,6 +3016,136 @@ model WebsiteQaResult {
   @@index([websiteProjectId])
   @@index([conceptId])
   @@index([productionId])
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  Static-First Site Generation — Deployment Targets / Builds / Env Vars
+//  Platform-neutral deployment data model. Additive only; no live deploy
+//  is performed by these records — they describe WHERE a generated static
+//  site could be published and track build artifacts. Default target type
+//  is `hostgator_static`. Secrets are NEVER stored here — only references.
+// ════════════════════════════════════════════════════════════════════
+
+/// A deployment destination for a generated static site. Describes the
+/// target platform + its (non-secret) configuration. Credentials are stored
+/// externally and referenced via `credentialsRef` only.
+model SiteDeploymentTarget {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+
+  // target_type: hostgator_static | cloudflare_pages | vercel |
+  //              wordpress_export | manual_export
+  targetType String @default("hostgator_static")
+
+  name String?
+
+  // status: draft | configured | disabled | archived
+  status String @default("draft")
+
+  domain         String?
+  siteUrl        String?
+  deployBasePath String?
+
+  gitRepoUrl      String?
+  gitBranch       String?
+  buildCommand    String?
+  outputDirectory String?
+
+  cloudflareZoneId String?
+  hostgatorHostRef String?
+  vercelProjectId  String?
+  wordpressSiteUrl String?
+
+  // Reference (NOT the value) to externally-stored deploy credentials.
+  credentialsRef String?
+
+  configJson Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project  WebsiteProject?           @relation(fields: [websiteProjectId], references: [id], onDelete: SetNull)
+  builds   SiteBuild[]
+  envVars  SiteEnvironmentVariable[]
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([targetType])
+  @@index([status])
+}
+
+/// A build of a generated static site. Tracks the build lifecycle and the
+/// artifact manifest. NO deploy execution happens here in this phase — the
+/// furthest a build can advance autonomously is `ready_for_preview`.
+model SiteBuild {
+  id                  String  @id @default(cuid())
+  businessId          String
+  websiteProjectId    String
+  websiteProductionId String?
+  deploymentTargetId  String?
+
+  // build_status: draft | building | build_failed | ready_for_preview |
+  //               approved_for_deploy | deploying | deployed | deploy_failed |
+  //               archived
+  buildStatus String @default("draft")
+  buildNumber Int    @default(1)
+
+  gitCommitSha String?
+  sourceRef    String?
+  outputRef    String?
+  previewUrl   String?
+
+  artifactManifestJson Json?
+
+  startedAt    DateTime?
+  completedAt  DateTime?
+  errorMessage String?   @db.Text
+
+  createdByUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business         Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project          WebsiteProject        @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  production       WebsiteProduction?    @relation(fields: [websiteProductionId], references: [id], onDelete: SetNull)
+  deploymentTarget SiteDeploymentTarget? @relation(fields: [deploymentTargetId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([websiteProductionId])
+  @@index([deploymentTargetId])
+  @@index([buildStatus])
+}
+
+/// An environment variable associated with a deployment target. Public
+/// (NEXT_PUBLIC_*) values may be stored inline via `valueRef`; secrets must
+/// NOT use the NEXT_PUBLIC_ prefix and store only an external reference.
+/// Secret values are NEVER logged or stored in plaintext here.
+model SiteEnvironmentVariable {
+  id                 String  @id @default(cuid())
+  businessId         String
+  deploymentTargetId String?
+
+  key      String
+  valueRef String?
+  isPublic Boolean @default(false)
+  isSecret Boolean @default(false)
+
+  // environment: production | preview | development | all
+  environment String @default("production")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business         Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  deploymentTarget SiteDeploymentTarget? @relation(fields: [deploymentTargetId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([deploymentTargetId])
+  @@index([environment])
 }
 
 // ════════════════════════════════════════════════════════════════════
