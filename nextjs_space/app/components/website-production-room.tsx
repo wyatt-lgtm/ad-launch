@@ -69,6 +69,26 @@ interface OperatorDiag {
   heartbeat_at: string | null;
   claimed_at: string | null;
   warning: string | null;
+  hero_diagnostics?: HeroDiagnostics | null;
+}
+
+interface HeroDiagnostics {
+  hero_source?: string | null;
+  don_contract_present?: boolean | null;
+  andy_select_or_generate?: string | null;
+  final_hero_asset_url?: string | null;
+  hero_visual_score?: number | null;
+  mobile_hero_score?: number | null;
+  brand_fit_score?: number | null;
+  text_readability_score?: number | null;
+  focal_point_score?: number | null;
+  qa_status?: string | null;
+  scoring_method?: string | null;
+  required_fixes?: string[] | null;
+  top_recommendation_eligible?: boolean | null;
+  needs_visual_revision?: boolean | null;
+  repair_task_id?: number | null;
+  acceptance_reason?: string | null;
 }
 
 interface ProgressData {
@@ -82,6 +102,7 @@ interface ProgressData {
   total_count: number;
   events: any[];
   operator_diagnostics: OperatorDiag[];
+  hero_diagnostics?: HeroDiagnostics | null;
   artifact_details: Record<string, any>;
 }
 
@@ -803,6 +824,105 @@ function ReviewGateControls({
 
 // ── Operator Diagnostics (Admin Only) ────────────────────────────────────────
 
+function ScorePill({ label, value }: { label: string; value?: number | null }) {
+  const v = typeof value === 'number' ? value : null;
+  const tone =
+    v === null ? 'bg-gray-100 text-gray-400' :
+    v >= 85 ? 'bg-green-100 text-green-700' :
+    v >= 70 ? 'bg-amber-100 text-amber-700' :
+    'bg-red-100 text-red-700';
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <span className={`px-2 py-1 rounded-md text-sm font-bold tabular-nums ${tone}`}>
+        {v === null ? '—' : v}
+      </span>
+      <span className="text-[10px] text-gray-400 text-center leading-tight">{label}</span>
+    </div>
+  );
+}
+
+function HeroDiagnosticsPanel({ hero }: { hero: HeroDiagnostics }) {
+  const [open, setOpen] = useState(true);
+  const eligible = hero.top_recommendation_eligible === true;
+  const qaStatus = (hero.qa_status || 'unknown').toLowerCase();
+  const qaTone =
+    qaStatus === 'passed' ? 'bg-green-100 text-green-700' :
+    qaStatus === 'review' ? 'bg-amber-100 text-amber-700' :
+    qaStatus === 'failed' ? 'bg-red-100 text-red-700' :
+    'bg-gray-100 text-gray-600';
+
+  const truncatedUrl = (() => {
+    const u = hero.final_hero_asset_url || '';
+    if (!u) return null;
+    try {
+      const noQuery = u.split('?')[0];
+      const parts = noQuery.split('/');
+      return parts[parts.length - 1] || noQuery;
+    } catch { return u.slice(0, 48); }
+  })();
+
+  return (
+    <div className="px-5 py-3 border-t border-gray-100 bg-indigo-50/40">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 text-xs font-semibold text-indigo-600 uppercase tracking-wider hover:text-indigo-800 transition-colors w-full"
+      >
+        <ImageIcon className="w-3.5 h-3.5" />
+        Hero Image Diagnostics (Admin)
+        <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold normal-case ${eligible ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+          {eligible ? 'Top Rec ELIGIBLE' : 'Top Rec BLOCKED'}
+        </span>
+        {open ? <ChevronUp className="w-3 h-3 ml-auto" /> : <ChevronDown className="w-3 h-3 ml-auto" />}
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+            <div><span className="text-gray-400">Hero source:</span> <span className="text-gray-700 font-medium">{hero.hero_source || '—'}</span></div>
+            <div><span className="text-gray-400">Don contract:</span> <span className={`font-medium ${hero.don_contract_present ? 'text-green-600' : 'text-red-500'}`}>{hero.don_contract_present ? 'present' : 'missing'}</span></div>
+            <div><span className="text-gray-400">Andy:</span> <span className="text-gray-700 font-medium">{hero.andy_select_or_generate || '—'}</span></div>
+            <div><span className="text-gray-400">QA status:</span> <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${qaTone}`}>{hero.qa_status || 'unknown'}</span></div>
+            <div><span className="text-gray-400">Scoring:</span> <span className="text-gray-700 font-medium">{hero.scoring_method || '—'}</span></div>
+            <div><span className="text-gray-400">Repair task:</span> <span className="text-gray-700 font-medium">{hero.repair_task_id ? `#${hero.repair_task_id} created` : 'none'}</span></div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 justify-start pt-1">
+            <ScorePill label="Hero Visual" value={hero.hero_visual_score} />
+            <ScorePill label="Mobile" value={hero.mobile_hero_score} />
+            <ScorePill label="Brand Fit" value={hero.brand_fit_score} />
+            <ScorePill label="Text Read." value={hero.text_readability_score} />
+            <ScorePill label="Focal Point" value={hero.focal_point_score} />
+          </div>
+
+          {truncatedUrl && (
+            <div className="text-xs">
+              <span className="text-gray-400">Final hero asset:</span>{' '}
+              <span className="text-gray-600 font-mono break-all">{truncatedUrl}</span>
+            </div>
+          )}
+
+          {hero.acceptance_reason && (
+            <div className="text-xs">
+              <span className="text-gray-400">Acceptance reason:</span>{' '}
+              <span className="text-gray-700">{hero.acceptance_reason}</span>
+            </div>
+          )}
+
+          {Array.isArray(hero.required_fixes) && hero.required_fixes.length > 0 && (
+            <div className="text-xs">
+              <div className="text-gray-400 mb-1">Required fixes:</div>
+              <ul className="list-disc list-inside space-y-0.5 text-amber-700">
+                {hero.required_fixes.slice(0, 8).map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OperatorDiagnostics({ diags }: { diags: OperatorDiag[] }) {
   const [open, setOpen] = useState(false);
   if (diags.length === 0) return null;
@@ -1084,6 +1204,11 @@ export default function WebsiteProductionRoom({
           onReviewAction={handleReviewAction}
           reviewStates={reviewStates}
         />
+      )}
+
+      {/* Hero Image Diagnostics (admin only) */}
+      {isAdmin && progress.hero_diagnostics && (
+        <HeroDiagnosticsPanel hero={progress.hero_diagnostics} />
       )}
 
       {/* Operator Diagnostics (admin only) */}
