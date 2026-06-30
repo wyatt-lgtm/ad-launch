@@ -17,12 +17,15 @@ import { useActiveBusiness } from '@/hooks/use-active-business';
  * only — never secret values.
  */
 
+// Ordered by product priority: HostGator (default) -> Cloudflare (strategic)
+// -> WordPress export (optional) -> Manual export (fallback) -> Vercel (future,
+// de-emphasized; kept in the model but not a focus this phase).
 const TARGET_TYPES = [
-  { value: 'hostgator_static', label: 'HostGator (static)' },
-  { value: 'cloudflare_pages', label: 'Cloudflare Pages' },
-  { value: 'vercel', label: 'Vercel' },
-  { value: 'wordpress_export', label: 'WordPress export' },
-  { value: 'manual_export', label: 'Manual export' },
+  { value: 'hostgator_static', label: 'HostGator Static (default)' },
+  { value: 'cloudflare_pages', label: 'Cloudflare Pages (strategic)' },
+  { value: 'wordpress_export', label: 'WordPress Export (optional)' },
+  { value: 'manual_export', label: 'Manual Export (fallback)' },
+  { value: 'vercel', label: 'Vercel (future)' },
 ];
 const STATUSES = ['draft', 'configured', 'disabled', 'archived'];
 const ENVIRONMENTS = ['production', 'preview', 'development', 'all'];
@@ -286,13 +289,19 @@ export default function DeploymentSettingsCard() {
               <Field label="Build command" value={form.buildCommand || ''} onChange={(v) => set('buildCommand', v)} placeholder="npm run build" mono />
               <Field label="Output directory" value={form.outputDirectory || ''} onChange={(v) => set('outputDirectory', v)} placeholder="out" mono />
               {showCloudflare && (
-                <Field label="Cloudflare zone id" value={form.cloudflareZoneId || ''} onChange={(v) => set('cloudflareZoneId', v)} mono />
+                <div className="lg:col-span-2 space-y-1">
+                  <Field label="Cloudflare zone id" value={form.cloudflareZoneId || ''} onChange={(v) => set('cloudflareZoneId', v)} placeholder="cf-zone-reference" mono />
+                  <p className="text-[11px] text-gray-400">Cloudflare Pages is the strategic long-term target. Capture the project/zone reference and build settings now; deployment stays dry-run only this phase.</p>
+                </div>
               )}
               {showHostgator && (
                 <Field label="HostGator host ref" value={form.hostgatorHostRef || ''} onChange={(v) => set('hostgatorHostRef', v)} placeholder="vault://hostgator/host" mono />
               )}
               {showVercel && (
-                <Field label="Vercel project id" value={form.vercelProjectId || ''} onChange={(v) => set('vercelProjectId', v)} mono />
+                <div className="lg:col-span-2 space-y-1">
+                  <Field label="Vercel project id (optional reference)" value={form.vercelProjectId || ''} onChange={(v) => set('vercelProjectId', v)} mono />
+                  <p className="text-[11px] text-gray-400">Vercel is a future, low-priority target. It is kept for forward compatibility only — no Vercel deployment is wired up in this phase.</p>
+                </div>
               )}
               {showWordpress && (
                 <Field label="WordPress URL" value={form.wordpressSiteUrl || ''} onChange={(v) => set('wordpressSiteUrl', v)} placeholder="https://blog.example.com" />
