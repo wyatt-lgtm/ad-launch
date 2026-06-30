@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Server, Lock, Save, RefreshCw, KeyRound, Globe, GitBranch,
   Plus, ShieldCheck, AlertTriangle, CheckCircle2, Variable,
+  Cloud, Database, XCircle,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
@@ -61,6 +62,38 @@ interface EnvVar {
   valueRef: string | null;
   hasValue: boolean;
 }
+interface AssetStores {
+  generatedBucket: { name: string; configured: boolean };
+  customerAssetsBucket: { name: string; configured: boolean };
+  r2Endpoint: { configured: boolean; host: string | null };
+  r2Account: { configured: boolean };
+  r2Credential: { configured: boolean };
+}
+interface CloudflareReadiness {
+  accountId: { configured: boolean };
+  pagesApiToken: { configured: boolean };
+  dnsApiToken: { configured: boolean };
+  defaultZoneId: { configured: boolean };
+  ready: boolean;
+  missing: string[];
+}
+
+/** A single yes/no readiness row. Shows presence only — never a secret value. */
+function ReadyRow({ label, ok, hint }: { label: string; ok: boolean; hint?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+      <span className="text-gray-600">
+        {label}
+        {hint && <span className="ml-1 text-[10px] text-gray-400">({hint})</span>}
+      </span>
+      {ok ? (
+        <span className="inline-flex items-center gap-1 font-medium text-green-600"><CheckCircle2 className="h-3.5 w-3.5" /> Yes</span>
+      ) : (
+        <span className="inline-flex items-center gap-1 font-medium text-gray-400"><XCircle className="h-3.5 w-3.5" /> No</span>
+      )}
+    </div>
+  );
+}
 
 const PUBLIC_EXAMPLES = [
   'NEXT_PUBLIC_SITE_URL',
@@ -99,6 +132,8 @@ export default function DeploymentSettingsCard() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [assetStores, setAssetStores] = useState<AssetStores | null>(null);
+  const [cloudflare, setCloudflare] = useState<CloudflareReadiness | null>(null);
 
   // New env var inputs
   const [newKey, setNewKey] = useState('');
@@ -122,6 +157,8 @@ export default function DeploymentSettingsCard() {
         const first: DeployTarget | null = data.targets?.[0] || null;
         setTarget(first);
         setForm(first ? { ...first } : { targetType: 'hostgator_static', status: 'draft' });
+        setAssetStores(data.assetStores || null);
+        setCloudflare(data.cloudflare || null);
       }
       if (eRes.ok) {
         const data = await eRes.json();
@@ -319,6 +356,70 @@ export default function DeploymentSettingsCard() {
                 <span className="text-gray-400">Last verified: {new Date(target.lastVerifiedAt).toLocaleString('en-US')}</span>
               )}
               <span className="text-gray-400">Secret values are never stored or shown.</span>
+            </div>
+
+            {/* R2 asset stores + Cloudflare Pages readiness (references only) */}
+            <div className="grid gap-4 lg:grid-cols-2">
+              {/* R2 source asset stores */}
+              <div className="rounded-xl border border-gray-100 p-4">
+                <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                  <Database className="h-4 w-4 text-indigo-500" /> Asset stores (Cloudflare R2)
+                </div>
+                <p className="mb-2 text-[11px] text-gray-500">
+                  Existing source buckets. Generated assets are materialized into the static package
+                  (<code>public/images</code>/<code>public/assets</code>) — no signed R2 URLs are embedded. Bucket names are safe to show; credentials are never displayed.
+                </p>
+                {assetStores ? (
+                  <div className="divide-y divide-gray-50">
+                    <ReadyRow
+                      label="Generated asset bucket configured"
+                      ok={assetStores.generatedBucket.configured}
+                      hint={assetStores.generatedBucket.name}
+                    />
+                    <ReadyRow
+                      label="Customer asset bucket configured"
+                      ok={assetStores.customerAssetsBucket.configured}
+                      hint={assetStores.customerAssetsBucket.name}
+                    />
+                    <ReadyRow
+                      label="R2 endpoint configured"
+                      ok={assetStores.r2Endpoint.configured}
+                      hint={assetStores.r2Endpoint.host || undefined}
+                    />
+                    <ReadyRow label="R2 account reference configured" ok={assetStores.r2Account.configured} />
+                    <ReadyRow label="R2 credential reference configured" ok={assetStores.r2Credential.configured} />
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-gray-400">Loading asset-store configuration…</p>
+                )}
+              </div>
+
+              {/* Cloudflare Pages readiness (strategic target) */}
+              <div className="rounded-xl border border-gray-100 p-4">
+                <div className="mb-1 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                    <Cloud className="h-4 w-4 text-orange-500" /> Cloudflare Pages readiness
+                  </div>
+                  {cloudflare && (
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${cloudflare.ready ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {cloudflare.ready ? 'Ready' : 'Not ready'}
+                    </span>
+                  )}
+                </div>
+                <p className="mb-2 text-[11px] text-gray-500">
+                  Strategic long-term target. These are credential <em>references</em> — token values are never read or displayed. No Cloudflare deploy runs in this phase.
+                </p>
+                {cloudflare ? (
+                  <div className="divide-y divide-gray-50">
+                    <ReadyRow label="CLOUDFLARE_ACCOUNT_ID" ok={cloudflare.accountId.configured} />
+                    <ReadyRow label="CLOUDFLARE_PAGES_API_TOKEN" ok={cloudflare.pagesApiToken.configured} />
+                    <ReadyRow label="CLOUDFLARE_DNS_API_TOKEN" ok={cloudflare.dnsApiToken.configured} />
+                    <ReadyRow label="CLOUDFLARE_DEFAULT_ZONE_ID" ok={cloudflare.defaultZoneId.configured} hint="optional" />
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-gray-400">Loading Cloudflare readiness…</p>
+                )}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">

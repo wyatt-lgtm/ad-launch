@@ -49,12 +49,26 @@ interface BuildRow {
   completedAt: string | null;
   createdAt: string;
 }
+interface AssetStores {
+  generatedBucket: { name: string; configured: boolean };
+  customerAssetsBucket: { name: string; configured: boolean };
+  r2Endpoint: { configured: boolean; host: string | null };
+  r2Account: { configured: boolean };
+  r2Credential: { configured: boolean };
+}
 interface BuildData {
   deployTarget: DeployTarget | null;
   liveDeployEnabled: boolean;
+  assetStores?: AssetStores | null;
   builds: BuildRow[];
   latest: (BuildRow & { artifactManifest: any }) | null;
   dryRunPlan: DryRunPlan;
+}
+
+function YesNo({ ok }: { ok: boolean }) {
+  return ok
+    ? <span className="font-medium text-green-600">Yes</span>
+    : <span className="font-medium text-gray-400">No</span>;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -98,6 +112,15 @@ export default function StaticBuildCard() {
   const plan = data?.dryRunPlan || null;
   const target = data?.deployTarget || null;
   const latest = data?.latest || null;
+  const assetStores = data?.assetStores || null;
+  const totals = manifest?.assets?.totals || null;
+  const materializationStatus = !manifest
+    ? 'No build yet'
+    : (totals?.failed ?? 0) > 0
+      ? 'Completed with failures'
+      : (totals?.missing ?? 0) > 0
+        ? 'Completed with missing assets'
+        : 'All assets materialized';
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -201,13 +224,23 @@ export default function StaticBuildCard() {
 
                 {/* Assets */}
                 <div className="rounded-xl border border-gray-100 p-4">
-                  <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-gray-800"><ImageIcon className="h-4 w-4 text-indigo-500" /> Asset portability</div>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800"><ImageIcon className="h-4 w-4 text-indigo-500" /> Asset portability</div>
+                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] text-gray-500">{materializationStatus}</span>
+                  </div>
                   <div className="flex flex-wrap gap-3 text-xs">
                     <span className="rounded-md bg-green-50 px-2 py-1 text-green-700">Copied: {manifest.assets?.totals?.copied ?? 0}</span>
                     <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">Missing: {manifest.assets?.totals?.missing ?? 0}</span>
                     <span className="rounded-md bg-red-50 px-2 py-1 text-red-700">Failed: {manifest.assets?.totals?.failed ?? 0}</span>
                     <span className="rounded-md bg-gray-50 px-2 py-1 text-gray-600">{fmtBytes(manifest.assets?.totals?.totalBytes ?? 0)}</span>
                   </div>
+                  {assetStores && (
+                    <div className="mt-2 rounded-lg bg-gray-50 p-2 text-[11px] text-gray-600">
+                      <div>Generated asset bucket (<code>{assetStores.generatedBucket.name}</code>) configured: <YesNo ok={assetStores.generatedBucket.configured} /></div>
+                      <div>Customer asset bucket (<code>{assetStores.customerAssetsBucket.name}</code>) configured: <YesNo ok={assetStores.customerAssetsBucket.configured} /></div>
+                      <div className="mt-0.5 text-[10px] text-gray-400">Assets are copied into the package from R2; no signed URLs or credentials are embedded.</div>
+                    </div>
+                  )}
                   <ul className="mt-2 max-h-32 space-y-1 overflow-auto">
                     {(manifest.assets?.copied || []).slice(0, 12).map((a: any) => (
                       <li key={a.assetId} className="truncate text-[11px] text-gray-500"><code>{a.webPath}</code></li>

@@ -11,6 +11,10 @@ import {
   serializeTarget,
   TARGET_SELECT,
 } from '@/lib/site-deploy/target-config';
+import {
+  getAssetStoreReadiness,
+  getCloudflareReadiness,
+} from '@/lib/site-deploy/asset-store-config';
 
 /**
  * Phase 4 — business-scoped deployment-target configuration.
@@ -53,6 +57,9 @@ export async function GET(
       liveDeployEnabled: false,
       defaultTargetType: DEFAULT_DEPLOYMENT_TARGET,
       targets: targets.map(serializeTarget),
+      // Config REFERENCES only — bucket names + presence booleans, never secrets.
+      assetStores: getAssetStoreReadiness(),
+      cloudflare: getCloudflareReadiness(),
     });
   } catch (err: any) {
     return NextResponse.json(

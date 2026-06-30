@@ -8,6 +8,7 @@ import { resolveBusinessAccess, ensureWebsiteProject } from '@/lib/website-workf
 import { buildStaticSite } from '@/lib/site-builder';
 import { DEFAULT_DEPLOYMENT_TARGET } from '@/lib/site-deploy/targets';
 import { computeDryRunPlan, type DeployTargetConfig } from '@/lib/site-deploy/dry-run';
+import { getAssetStoreReadiness } from '@/lib/site-deploy/asset-store-config';
 import type { ArtifactManifest } from '@/lib/site-builder/artifact-manifest';
 
 /**
@@ -139,6 +140,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       deployTarget: safeTarget(target),
       liveDeployEnabled: false,
+      // R2 source bucket config (names + presence only — never credentials).
+      assetStores: getAssetStoreReadiness(),
       builds: buildList,
       latest: latest
         ? {
