@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import Header from '../../components/header';
 import Footer from '../../components/footer';
 import WebsiteSection from './_components/website-section';
-import StaticFoundationCard from './_components/static-foundation-card';
+import StaticBuildCard from './_components/static-build-card';
 
 export default function WebsitePage() {
   return (
@@ -10,7 +10,7 @@ export default function WebsitePage() {
       <Header />
       <main className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-          <StaticFoundationCard />
+          <StaticBuildCard />
         </div>
         <Suspense>
           <WebsiteSection />
