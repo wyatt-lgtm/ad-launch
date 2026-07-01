@@ -450,6 +450,23 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
   const [defaultsPrefilled, setDefaultsPrefilled] = useState(false);
   const [competitorUrls, setCompetitorUrls] = useState<string[]>(['']);
   const [seoWarnings, setSeoWarnings] = useState<string[]>([]);
+  const [searchDiagnostics, setSearchDiagnostics] = useState<{
+    activeSearchProvider: string | null;
+    providerConfigured: boolean;
+    providerHealthy: boolean;
+    providerSource: string | null;
+    searchIntelligenceAvailable: boolean;
+    latestSearchRunAt: string | null;
+    seoMetaAnalysisId: string | null;
+    approvedPageBriefId: string | null;
+    usedApprovedPageBrief: boolean;
+    competitorUrlCount: number;
+    researchFreshnessStatus: string;
+    fallbackReason: string;
+    manualCompetitorFallbackAvailable: boolean;
+    warningState: string;
+    diagnosticMessage: string;
+  } | null>(null);
 
   // Competitor intelligence (3 concepts + war room)
   const [competitorIntel, setCompetitorIntel] = useState<any>(null);
@@ -851,9 +868,16 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
       }
 
       // ── Workflow mode ──
-      // Surface any warnings from backend (e.g., no search API configured)
+      // Surface any warnings from backend (only emitted when NO search provider
+      // and NO stored SEO research are available).
       if (result.warnings?.length) {
         setSeoWarnings(result.warnings);
+      } else {
+        setSeoWarnings([]);
+      }
+      // Capture the search/SEO diagnostics for the Website War Room panel.
+      if (result.searchDiagnostics) {
+        setSearchDiagnostics(result.searchDiagnostics);
       }
 
       if (!result.workflowId) {
@@ -1054,7 +1078,7 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
         </div>
       )}
 
-      {/* SEO warnings */}
+      {/* SEO warnings — only shown when no provider AND no stored research */}
       {seoWarnings.length > 0 && (
         <div className="px-6 py-3 bg-amber-50 border-b border-amber-100">
           {seoWarnings.map((w, i) => (
@@ -1063,6 +1087,32 @@ export default function WebsiteConcept({ data, locked = false, analysisId, colla
               {w}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Search Intelligence diagnostics (Website War Room) */}
+      {searchDiagnostics && seoWarnings.length === 0 && (
+        <div className="px-6 py-3 bg-slate-50 border-b border-slate-100">
+          <div className="flex items-start gap-2 text-slate-700 text-sm">
+            {searchDiagnostics.searchIntelligenceAvailable || searchDiagnostics.providerConfigured ? (
+              <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5 text-emerald-500" />
+            ) : (
+              <Search className="w-4 h-4 flex-shrink-0 mt-0.5 text-slate-400" />
+            )}
+            <div className="flex-1">
+              <p className="font-medium text-slate-800">{searchDiagnostics.diagnosticMessage}</p>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                <span>Provider: {searchDiagnostics.activeSearchProvider ?? 'none'}{searchDiagnostics.providerConfigured ? ' (configured)' : ''}</span>
+                <span>Stored research: {searchDiagnostics.searchIntelligenceAvailable ? 'yes' : 'no'}</span>
+                {searchDiagnostics.latestSearchRunAt && (
+                  <span>Latest run: {new Date(searchDiagnostics.latestSearchRunAt).toISOString().slice(0, 10)}</span>
+                )}
+                <span>Approved brief used: {searchDiagnostics.usedApprovedPageBrief ? 'yes' : 'no'}</span>
+                <span>Competitor URLs: {searchDiagnostics.competitorUrlCount}</span>
+                <span>Manual fallback: {searchDiagnostics.manualCompetitorFallbackAvailable ? 'available' : 'none'}</span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

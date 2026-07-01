@@ -2178,6 +2178,35 @@ export interface ConceptWebsitePayload {
   }>;
   // Approved asset context from Launch OS asset permission layer
   asset_context?: TombstoneAssetContext;
+  // Search/SEO research contract (snake_case). Lets the backend thread
+  // competitor + search context into its agents WITHOUT querying Launch OS.
+  // See lib/website-research-contract.ts (toResearchContractPayload).
+  research_contract?: {
+    business_id: string;
+    search_provider: {
+      active_provider: string | null;
+      configured: boolean;
+      healthy: boolean;
+      source: string | null;
+      search_intelligence_available: boolean;
+      latest_search_run_at: string | null;
+    };
+    seo_research: {
+      meta_analysis_id: string | null;
+      approved_page_brief_id: string | null;
+      research_status: string;
+      research_freshness_status: string;
+      target_keywords: string[];
+      target_locations: string[];
+      competitor_urls: string[];
+      competitor_domains: string[];
+      serp_evidence_summary: Array<Record<string, any>>;
+    };
+    fallback_reason: string;
+    diagnostic_message: string;
+    warning_state: string;
+    should_warn: boolean;
+  };
 }
 
 /**

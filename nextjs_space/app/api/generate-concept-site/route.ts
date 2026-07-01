@@ -4,6 +4,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createConceptWebsiteMission } from '@/lib/tombstone';
 import { prisma } from '@/lib/db';
 import { buildWebsiteAssetContext } from '@/lib/tombstone-asset-bridge';
+import {
+  buildWebsiteResearchContract,
+  toResearchContractPayload,
+  type WebsiteResearchContract,
+} from '@/lib/website-research-contract';
 
 /**
  * POST /api/generate-concept-site
@@ -65,10 +70,40 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        // Check for search API availability if competitor auto-discovery requested
-        const hasSearchApi = !!(process.env.SERPAPI_API_KEY || process.env.DATAFORSEO_LOGIN || process.env.GOOGLE_CUSTOM_SEARCH_KEY || process.env.BING_SEARCH_API_KEY);
-        if (analyzeCompetitors && !competitorUrls?.length && !hasSearchApi) {
-          warnings.push('No search provider configured; automatic competitor discovery skipped. Provide competitor URLs manually for best results.');
+        // ── Resolve the current search-provider / stored-research availability ──
+        // Historically this checked a couple of raw env vars (and the WRONG
+        // DataForSEO var name), completely ignoring the Search Intelligence
+        // layer. We now build a research contract from the real system:
+        //   1. approved SEO page brief  2. recent meta-analysis
+        //   3. recent Search Intelligence run  4. configured+healthy provider
+        //   5. manual competitor URLs   6. nothing -> warning
+        let researchContract: WebsiteResearchContract | null = null;
+        if (businessId) {
+          try {
+            researchContract = await buildWebsiteResearchContract({
+              businessId,
+              targetKeyword: primaryKeyword,
+              targetLocations: tradeArea ? [tradeArea] : undefined,
+              competitorUrls,
+            });
+          } catch (rcErr: any) {
+            console.warn('[generate-concept-site] Research contract build failed (non-fatal):', rcErr?.message);
+          }
+        }
+        // Only warn when competitor discovery was requested AND the contract
+        // confirms none of priorities 1–5 are available. When no businessId is
+        // present we cannot resolve stored research, so fall back to a simple
+        // manual-URL check.
+        if (researchContract) {
+          if (analyzeCompetitors && researchContract.shouldWarn) {
+            warnings.push(researchContract.diagnosticMessage);
+          }
+        } else if (analyzeCompetitors && !competitorUrls?.length) {
+          const cfgHasDataForSeo = process.env.DATAFORSEO_ENABLED === 'true'
+            && !!process.env.DATAFORSEO_API_LOGIN && !!process.env.DATAFORSEO_API_PASSWORD;
+          if (!cfgHasDataForSeo) {
+            warnings.push('No search provider or stored SEO research is available. Add competitor URLs manually or configure Search Intelligence.');
+          }
         }
 
         // Fetch all locations for multi-location website generation
@@ -158,6 +193,9 @@ export async function POST(request: NextRequest) {
           owner_feedback: Array.isArray(ownerFeedback) ? ownerFeedback : undefined,
           // Approved asset context from Launch OS
           asset_context: assetContext,
+          // Search/SEO research contract — lets Tombstone thread competitor +
+          // search context into its agents WITHOUT querying the Launch OS DB.
+          research_contract: researchContract ? toResearchContractPayload(researchContract) : undefined,
         });
 
         if (result.success && result.workflowId) {
@@ -169,6 +207,26 @@ export async function POST(request: NextRequest) {
             stepCount: result.stepCount,
             finalTaskId: result.taskIds?.[result.taskIds.length - 1] ?? null,
             warnings,
+            // Search/SEO diagnostics for the Website War Room / Operator panel.
+            searchDiagnostics: researchContract
+              ? {
+                  activeSearchProvider: researchContract.activeSearchProvider,
+                  providerConfigured: researchContract.providerConfigured,
+                  providerHealthy: researchContract.providerHealthy,
+                  providerSource: researchContract.providerSource,
+                  searchIntelligenceAvailable: researchContract.searchIntelligenceAvailable,
+                  latestSearchRunAt: researchContract.latestSearchRunAt,
+                  seoMetaAnalysisId: researchContract.seoMetaAnalysisId,
+                  approvedPageBriefId: researchContract.approvedPageBriefId,
+                  usedApprovedPageBrief: Boolean(researchContract.approvedPageBriefId),
+                  competitorUrlCount: researchContract.competitorUrlCount,
+                  researchFreshnessStatus: researchContract.researchFreshnessStatus,
+                  fallbackReason: researchContract.fallbackReason,
+                  manualCompetitorFallbackAvailable: researchContract.hasManualCompetitorUrls,
+                  warningState: researchContract.warningState,
+                  diagnosticMessage: researchContract.diagnosticMessage,
+                }
+              : null,
           });
         }
         // Tombstone returned a non-success result
