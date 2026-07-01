@@ -132,6 +132,7 @@ model Business {
   websiteServiceDiscoveries WebsiteServiceDiscovery[]
   websiteSitemaps           WebsiteSitemap[]
   websiteSitemapRevisions   WebsiteSitemapRevision[]
+  websitePageCopies         WebsitePageCopy[]
   websiteQaResults   WebsiteQaResult[]
 
   // ── Static-first site generation: deployment targets / builds / env ─
@@ -2763,6 +2764,7 @@ model WebsiteProject {
   productions       WebsiteProduction[]
   serviceDiscoveries WebsiteServiceDiscovery[]
   sitemaps          WebsiteSitemap[]
+  pageCopies        WebsitePageCopy[]
   pages             WebsitePage[]
   sections          WebsiteSection[]
   assets            WebsiteAsset[]
@@ -3284,4 +3286,42 @@ model WebsiteSitemapRevision {
 
   @@index([businessId])
   @@index([sitemapId])
+}
+
+/// Generated page copy (Milestone 3). One row per page per generation, scoped by
+/// business (+ optional project) and tied to the approved sitemap it was generated
+/// from. Copy is DRAFT for user review; it is never auto-approved, published, or
+/// deployed. `copyJson` holds the full PageCopy artifact (schema per M3 lib).
+model WebsitePageCopy {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+  sitemapId        String
+
+  slug     String
+  pageType String
+
+  // Authoritative H1 copied from the approved sitemap.
+  h1 String?
+
+  // stage: draft (copy for review). status: draft | approved (reserved).
+  stage  String @default("draft")
+  status String @default("draft")
+
+  // Full PageCopy artifact JSON.
+  copyJson Json
+
+  version            Int    @default(1)
+  generatedByUserId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project  WebsiteProject? @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([sitemapId])
+  @@index([businessId, slug])
 }
