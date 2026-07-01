@@ -492,6 +492,23 @@ export default function SocialDashboard() {
 
 
 
+  // Surface the polished "Your Post Assets" preview cards into the Post Queue
+  // for the active business. Idempotent — safe to call on every load.
+  const importPreviewPosts = useCallback(async () => {
+    if (!activeBusinessId) return;
+    try {
+      const res = await fetch('/api/social/import-preview-posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId: activeBusinessId }),
+      });
+      const data = await res.json();
+      console.log('[SocialPosts] imported preview post assets', data);
+    } catch (e) {
+      console.error('Failed to import preview posts:', e);
+    }
+  }, [activeBusinessId]);
+
   // Poll Tombstone for pending missions and import completed posts
   const pollMissions = useCallback(async (silent = false) => {
     if (!silent) setPolling(true);
@@ -555,14 +572,16 @@ export default function SocialDashboard() {
 
   useEffect(() => {
     if (sessionStatus === 'authenticated') {
-      Promise.all([fetchPosts()])
+      // Import the polished preview post assets first so they appear in the queue.
+      importPreviewPosts()
+        .then(() => Promise.all([fetchPosts()]))
         .then(async () => {
           setLoading(false);
           // Auto-poll for any pending missions on page load
           await pollMissions(true);
         });
     }
-  }, [sessionStatus, fetchPosts, pollMissions]);
+  }, [sessionStatus, fetchPosts, pollMissions, importPreviewPosts]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
