@@ -475,21 +475,32 @@ export default function PublishingDashboard() {
 
   // ── Fetch GHL social accounts ────────────────────────────────────────────────
 
-  const fetchGhlAccounts = useCallback(async () => {
+  const fetchGhlAccounts = useCallback(async (manual = false) => {
     if (!activeBusinessId) { setGhlAccounts([]); setGhlAccountsStatus(null); return; }
     setGhlAccountsLoading(true);
     try {
-      const res = await fetch(`/api/businesses/${activeBusinessId}/ghl/social-accounts`);
+      const res = await fetch(`/api/businesses/${activeBusinessId}/ghl/social-accounts`, { cache: 'no-store' });
       const data = await res.json();
-      setGhlAccounts(data.accounts || []);
+      const accts = data.accounts || [];
+      setGhlAccounts(accts);
       setGhlAccountsStatus({ connected: data.connected, reason: data.reason, message: data.message });
+      if (manual) {
+        if (data.reason === 'lookup_failed') {
+          showToast('error', 'Could not reach Launch CRM. Check the connection and try again.');
+        } else if (accts.length > 0) {
+          showToast('success', `Found ${accts.length} connected channel${accts.length !== 1 ? 's' : ''} in Launch CRM.`);
+        } else {
+          showToast('error', 'Still no accounts. Connect a social account inside Launch CRM → Marketing → Social Planner first, then refresh.');
+        }
+      }
     } catch {
       setGhlAccounts([]);
       setGhlAccountsStatus({ connected: false, reason: 'error', message: 'Failed to load Launch CRM accounts.' });
+      if (manual) showToast('error', 'Failed to load Launch CRM accounts.');
     } finally {
       setGhlAccountsLoading(false);
     }
-  }, [activeBusinessId]);
+  }, [activeBusinessId, showToast]);
 
   useEffect(() => {
     if (sessionStatus === 'authenticated' && activeBusinessId) fetchGhlAccounts();
@@ -1188,13 +1199,13 @@ export default function PublishingDashboard() {
                     <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                       <p className="text-xs font-medium text-red-700">Could not load social accounts from Launch CRM.</p>
                       <p className="text-xs text-red-600 mt-0.5">Verify the Launch CRM connection and try again.</p>
-                      <button onClick={fetchGhlAccounts} className="text-xs font-medium text-blue-600 hover:text-blue-800 mt-2">Retry →</button>
+                      <button onClick={() => fetchGhlAccounts(true)} className="text-xs font-medium text-blue-600 hover:text-blue-800 mt-2">Retry →</button>
                     </div>
                   ) : ghlAccounts.length === 0 ? (
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                       <p className="text-xs font-medium text-amber-700">No social accounts connected inside Launch CRM Social Planner.</p>
-                      <p className="text-xs text-amber-600 mt-0.5">Connect your social accounts in Launch CRM, then refresh.</p>
-                      <button onClick={fetchGhlAccounts} className="text-xs font-medium text-blue-600 hover:text-blue-800 mt-2">Refresh Launch CRM Accounts →</button>
+                      <p className="text-xs text-amber-600 mt-0.5">Setting up the CRM location ID and token only links the account &mdash; you still need to connect each social account (Facebook, Instagram, Google, etc.) inside Launch CRM under <span className="font-medium">Marketing &rarr; Social Planner &rarr; Settings</span>. Once connected there, click refresh below.</p>
+                      <button onClick={() => fetchGhlAccounts(true)} disabled={ghlAccountsLoading} className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 mt-2 disabled:opacity-50">{ghlAccountsLoading ? (<><Loader2 className="w-3 h-3 animate-spin" /> Checking&hellip;</>) : (<>Refresh Launch CRM Accounts &rarr;</>)}</button>
                     </div>
                   ) : (
                     <div className="space-y-2">
