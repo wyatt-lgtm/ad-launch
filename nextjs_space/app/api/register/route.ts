@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { isBusinessEmail } from '@/lib/email-validation';
-import { createGHLContact } from '@/lib/ghl';
+import { createGHLContact, sendGHLEmail } from '@/lib/ghl';
 import { sendEmail } from '@/lib/email';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -185,21 +185,55 @@ export async function POST(request: NextRequest) {
       </div>
     `;
 
+    // Email delivery strategy (try in order, first success wins):
+    //   1. GHL via createGHLContact + sendGHLEmail — primary, works when GHL_API_TOKEN is set (prod)
+    //   2. SMTP via sendEmail() — fallback, works when EMAIL_PROVIDER=smtp and SMTP_* vars are set
     let emailSent = false;
-    try {
-      emailSent = await sendEmail({
-        to: email,
-        subject: 'Confirm your email - Launch OS',
-        html: htmlBody,
-        fromName: 'Launch OS',
-      });
-      if (emailSent) {
-        console.log('[register] Confirmation email sent to', email);
-      } else {
-        console.error('[register] Email send failed');
+
+    // Strategy 1: GHL (primary) — subtenant credentials for transactional email
+    const ghlToken = process.env.GHL_API_TOKEN || process.env.GHL_MASTER_API_TOKEN;
+    if (ghlToken) {
+      try {
+        const contactResult = await createGHLContact(email);
+        if (contactResult?.contactId) {
+          const emailResult = await sendGHLEmail(
+            contactResult.contactId,
+            'Confirm your email - Launch OS',
+            htmlBody,
+          );
+          if (emailResult?.success) {
+            emailSent = true;
+            console.log('[register] Confirmation email sent via GHL to', email);
+          } else {
+            console.error('[register] GHL email send returned unsuccessful for', email);
+          }
+        } else {
+          console.error('[register] GHL returned no contactId for', email);
+        }
+      } catch (ghlErr: any) {
+        console.error('[register] GHL email send error:', ghlErr?.message);
       }
-    } catch (emailErr: any) {
-      console.error('[register] Email send error:', emailErr?.message);
+    } else {
+      console.warn('[register] No GHL token configured — skipping GHL, trying SMTP');
+    }
+
+    // Strategy 2: SMTP fallback
+    if (!emailSent) {
+      try {
+        emailSent = await sendEmail({
+          to: email,
+          subject: 'Confirm your email - Launch OS',
+          html: htmlBody,
+          fromName: 'Launch OS',
+        });
+        if (emailSent) {
+          console.log('[register] Confirmation email sent via SMTP to', email);
+        } else {
+          console.error('[register] Email send failed (GHL + SMTP both unavailable)');
+        }
+      } catch (emailErr: any) {
+        console.error('[register] SMTP email send error:', emailErr?.message);
+      }
     }
 
     return NextResponse.json({
