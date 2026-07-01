@@ -25,7 +25,7 @@ services:
       - key: TOMBSTONE_API_URL
         sync: false  # https://tombstone-api-xjc4.onrender.com
       - key: WEBSITE_RENDER_SERVICE_TOKEN
-        value: "0644122e6b8f06f169b0d427a6b5558cd74cce06dbb28c6db0f0515c948bb03c"
+        sync: false  # dashboard-managed; set the SAME value on tombstone-api
 
       # ── API Keys ──────────────────────────────────────────
       - key: ABACUSAI_API_KEY
