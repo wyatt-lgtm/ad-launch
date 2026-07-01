@@ -186,13 +186,49 @@ export async function POST(request: NextRequest) {
     `;
 
     // Email delivery strategy (try in order, first success wins):
-    //   1. GHL via createGHLContact + sendGHLEmail — primary, works when GHL_API_TOKEN is set (prod)
-    //   2. SMTP via sendEmail() — fallback, works when EMAIL_PROVIDER=smtp and SMTP_* vars are set
+    //   1. Abacus notification email API — primary, reliable (env vars configured in prod)
+    //   2. GHL via createGHLContact + sendGHLEmail — fallback (when GHL_API_TOKEN is set)
+    //   3. SMTP via sendEmail() — final fallback (when EMAIL_PROVIDER=smtp + SMTP_* set)
     let emailSent = false;
 
-    // Strategy 1: GHL (primary) — subtenant credentials for transactional email
+    // Strategy 1: Abacus notification email (primary)
+    if (process.env.ABACUSAI_API_KEY && process.env.WEB_APP_ID && process.env.NOTIF_ID_EMAIL_CONFIRMATION) {
+      try {
+        const appUrl = process.env.NEXTAUTH_URL || baseUrl;
+        let senderEmail = 'noreply@launchmarketing.com';
+        try { senderEmail = `noreply@${new URL(appUrl).hostname}`; } catch {}
+        const notifRes = await fetch('https://apps.abacus.ai/api/sendNotificationEmail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deployment_token: process.env.ABACUSAI_API_KEY,
+            app_id: process.env.WEB_APP_ID,
+            notification_id: process.env.NOTIF_ID_EMAIL_CONFIRMATION,
+            subject: 'Confirm your email - Launch OS',
+            body: htmlBody,
+            is_html: true,
+            recipient_email: email,
+            sender_email: senderEmail,
+            sender_alias: 'Launch OS',
+          }),
+        });
+        const notifJson = await notifRes.json().catch(() => ({} as any));
+        if (notifRes.ok && notifJson?.success) {
+          emailSent = true;
+          console.log('[register] Confirmation email sent via Abacus notification to', email);
+        } else {
+          console.error('[register] Abacus notification send failed:', JSON.stringify(notifJson)?.slice(0, 300));
+        }
+      } catch (notifErr: any) {
+        console.error('[register] Abacus notification error:', notifErr?.message);
+      }
+    } else {
+      console.warn('[register] Abacus notification env not configured — trying GHL/SMTP');
+    }
+
+    // Strategy 2: GHL (fallback) — subtenant credentials for transactional email
     const ghlToken = process.env.GHL_API_TOKEN || process.env.GHL_MASTER_API_TOKEN;
-    if (ghlToken) {
+    if (!emailSent && ghlToken) {
       try {
         const contactResult = await createGHLContact(email);
         if (contactResult?.contactId) {
@@ -213,11 +249,11 @@ export async function POST(request: NextRequest) {
       } catch (ghlErr: any) {
         console.error('[register] GHL email send error:', ghlErr?.message);
       }
-    } else {
-      console.warn('[register] No GHL token configured — skipping GHL, trying SMTP');
+    } else if (!emailSent) {
+      console.warn('[register] No GHL token configured — trying SMTP');
     }
 
-    // Strategy 2: SMTP fallback
+    // Strategy 3: SMTP fallback
     if (!emailSent) {
       try {
         emailSent = await sendEmail({
