@@ -133,6 +133,7 @@ model Business {
   websiteSitemaps           WebsiteSitemap[]
   websiteSitemapRevisions   WebsiteSitemapRevision[]
   websitePageCopies         WebsitePageCopy[]
+  websiteImageBriefs        WebsiteImageBrief[]
   websiteQaResults   WebsiteQaResult[]
 
   // ── Static-first site generation: deployment targets / builds / env ─
@@ -2765,6 +2766,7 @@ model WebsiteProject {
   serviceDiscoveries WebsiteServiceDiscovery[]
   sitemaps          WebsiteSitemap[]
   pageCopies        WebsitePageCopy[]
+  imageBriefs       WebsiteImageBrief[]
   pages             WebsitePage[]
   sections          WebsiteSection[]
   assets            WebsiteAsset[]
@@ -3324,4 +3326,40 @@ model WebsitePageCopy {
   @@index([websiteProjectId])
   @@index([sitemapId])
   @@index([businessId, slug])
+}
+
+/// Milestone 4: durable, reviewable image BRIEFS (specifications only — never
+/// generated images) derived from the approved sitemap + website copy artifact.
+/// Strictly gated: requires an approved sitemap AND an existing copy artifact.
+model WebsiteImageBrief {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+  sitemapId        String
+  // Stable pointer to the copy artifact the briefs were derived from.
+  copyArtifactId   String
+
+  // status: draft | ready_for_review | approved | revision_requested |
+  //         failed | archived
+  status String @default("draft")
+
+  // Full WebsiteImageBriefArtifact JSON (per-page hero + section briefs).
+  imageBriefJson Json
+
+  pageCount  Int @default(0)
+  briefCount Int @default(0)
+
+  generatedByUserId String?
+  // source: copy_gate (default generation path) | manual | diagnostic
+  source String @default("copy_gate")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project  WebsiteProject? @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([sitemapId])
 }

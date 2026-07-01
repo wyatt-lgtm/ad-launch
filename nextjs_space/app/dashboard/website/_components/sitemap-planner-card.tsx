@@ -5,6 +5,7 @@ import {
   Map as MapIcon, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
   Plus, Trash2, Lock, ListTree, ShieldCheck, FileText, Sparkles,
   ChevronDown, ChevronRight, Image as ImageIcon,
+  Palette, Crop, Eye, ThumbsUp, Ban, Shield,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
@@ -131,7 +132,69 @@ const GATE_LABEL: Record<string, string> = {
   blocked_invalid_sitemap: 'Blocked — sitemap has issues',
 };
 
-type TabKey = 'services' | 'sitemap' | 'copy';
+// ── Image brief (Milestone 4) shapes ──────────────────────────────────────
+interface ImageBriefGate {
+  allowed: boolean;
+  code: string;
+  reason: string;
+}
+
+interface ImageBriefItem {
+  briefId: string;
+  sectionName: string;
+  sectionType: 'hero' | 'section';
+  visualObjective: string;
+  messageSupported: string;
+  businessSpecificDirection: string;
+  industryDetails: string[];
+  localDetails: string[];
+  forbiddenVisuals: string[];
+  textSafeZone: string;
+  mobileCropNotes: string;
+  aspectRatio: string;
+  assetSourcePreference: string;
+  allowTextInImage: boolean;
+  donContractReady: boolean;
+  andyRenderReady: boolean;
+}
+
+interface PageImageBriefsItem {
+  slug: string;
+  pageType: string;
+  h1: string;
+  briefs: ImageBriefItem[];
+}
+
+interface ImageBriefArtifact {
+  sitemapId: string | null;
+  copyArtifactId: string | null;
+  status: string;
+  pages: PageImageBriefsItem[];
+  summary: { pageCount: number; briefCount: number; heroBriefCount: number; generatedAt: string };
+}
+
+interface ImageBriefSet {
+  id: string;
+  status: string;
+  sitemapId: string;
+  copyArtifactId: string;
+  pageCount: number;
+  briefCount: number;
+  createdAt: string;
+  updatedAt: string;
+  artifact: ImageBriefArtifact;
+}
+
+const BRIEF_STATUS_BADGE: Record<string, string> = {
+  draft: 'bg-gray-100 text-gray-600 border-gray-200',
+  ready_for_review: 'bg-blue-100 text-blue-700 border-blue-200',
+  approved: 'bg-green-100 text-green-700 border-green-200',
+  revision_requested: 'bg-amber-100 text-amber-700 border-amber-200',
+  failed: 'bg-red-100 text-red-700 border-red-200',
+  archived: 'bg-gray-100 text-gray-400 border-gray-200',
+};
+
+type TabKey = 'services' | 'sitemap' | 'copy' | 'imageBriefs';
 
 export default function SitemapPlannerCard() {
   const bizCtx = useActiveBusiness();
@@ -152,6 +215,15 @@ export default function SitemapPlannerCard() {
   const [pageIssues, setPageIssues] = useState<any[]>([]);
   const [uniquenessIssues, setUniquenessIssues] = useState<any[]>([]);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+
+  // Image briefs (Milestone 4)
+  const [briefGate, setBriefGate] = useState<ImageBriefGate | null>(null);
+  const [briefSet, setBriefSet] = useState<ImageBriefSet | null>(null);
+  const [copyPresent, setCopyPresent] = useState(false);
+  const [briefLlmConfigured, setBriefLlmConfigured] = useState(true);
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [briefIssues, setBriefIssues] = useState<any[]>([]);
+  const [openBriefSlug, setOpenBriefSlug] = useState<string | null>(null);
 
   const [newServiceName, setNewServiceName] = useState('');
   const [newPageTitle, setNewPageTitle] = useState('');
@@ -201,7 +273,19 @@ export default function SitemapPlannerCard() {
     }
   }, [businessId]);
 
-  useEffect(() => { loadServices(); loadSitemap(); loadGate(); loadCopy(); }, [loadServices, loadSitemap, loadGate, loadCopy]);
+  const loadImageBriefs = useCallback(async () => {
+    if (!businessId) return;
+    const res = await fetch(`/api/businesses/${businessId}/website/image-briefs`);
+    if (res.ok) {
+      const data = await res.json();
+      setBriefGate(data.briefGate || null);
+      setBriefSet(data.latest || null);
+      setCopyPresent(Boolean(data.copyPresent));
+      setBriefLlmConfigured(data.llmConfigured !== false);
+    }
+  }, [businessId]);
+
+  useEffect(() => { loadServices(); loadSitemap(); loadGate(); loadCopy(); loadImageBriefs(); }, [loadServices, loadSitemap, loadGate, loadCopy, loadImageBriefs]);
   useEffect(() => { loadRevisions(); }, [loadRevisions]);
 
   // ── Copy actions ─────────────────────────────────────────────────────────
@@ -231,6 +315,55 @@ export default function SitemapPlannerCard() {
         notify(data.error || 'Could not generate copy.');
       }
     } finally { setCopyLoading(false); }
+  };
+
+  // ── Image brief actions (Milestone 4) ────────────────────────────────────
+  const generateImageBriefs = async () => {
+    if (!businessId) return;
+    setBriefLoading(true);
+    setBriefIssues([]);
+    try {
+      const res = await fetch(`/api/businesses/${businessId}/website/image-briefs`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setBriefSet(data.briefSet || null);
+        setBriefIssues(data.issues || []);
+        const bc = data.briefSet?.briefCount ?? 0;
+        notify(`Draft image briefs generated (${bc} brief${bc === 1 ? '' : 's'}). No images were generated.`);
+      } else if (res.status === 422 && data.briefGate) {
+        setBriefGate(data.briefGate);
+        notify(data.error || 'Image briefs are blocked until an approved sitemap and website copy exist.');
+      } else if (res.status === 503) {
+        notify(data.error || 'Image brief generation is not configured.');
+      } else {
+        notify(data.error || 'Could not generate image briefs.');
+      }
+    } finally { setBriefLoading(false); }
+  };
+
+  const approveBriefs = async () => {
+    if (!businessId || !briefSet) return;
+    setBriefLoading(true);
+    try {
+      const res = await fetch(`/api/businesses/${businessId}/website/image-briefs/${briefSet.id}/approve`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { setBriefSet(data.briefSet || briefSet); notify('Image briefs approved. No images were generated.'); }
+      else notify(data.error || 'Could not approve image briefs.');
+    } finally { setBriefLoading(false); }
+  };
+
+  const requestBriefRevision = async () => {
+    if (!businessId || !briefSet) return;
+    setBriefLoading(true);
+    try {
+      const res = await fetch(`/api/businesses/${businessId}/website/image-briefs/${briefSet.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'revision_requested' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { setBriefSet(data.briefSet || briefSet); notify('Revision requested for the image briefs.'); }
+      else notify(data.error || 'Could not request revision.');
+    } finally { setBriefLoading(false); }
   };
 
   // ── Service actions ──────────────────────────────────────────────────────
@@ -393,6 +526,7 @@ export default function SitemapPlannerCard() {
           ['services', 'Service Discovery'],
           ['sitemap', 'Sitemap Review'],
           ['copy', 'Copy Review'],
+          ['imageBriefs', 'Image Briefs'],
         ] as [TabKey, string][]).map(([key, label]) => (
           <button
             key={key}
@@ -745,6 +879,191 @@ export default function SitemapPlannerCard() {
           ) : (
             <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
               No copy generated yet.{gate?.allowed ? ' Use the button above to generate draft copy.' : ''}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Image Briefs tab (Milestone 4) ── */}
+      {tab === 'imageBriefs' && (
+        <div className="p-5 space-y-4">
+          {/* Gate status */}
+          <div className="rounded-lg border border-gray-100 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-900">
+                <Palette className="h-4 w-4 text-indigo-600" /> Image brief gate
+              </div>
+              <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                briefGate?.allowed ? 'bg-green-100 text-green-700 border-green-200'
+                  : copyPresent ? 'bg-amber-100 text-amber-700 border-amber-200'
+                  : 'bg-gray-100 text-gray-600 border-gray-200'
+              }`}>
+                {briefGate?.allowed ? <ShieldCheck className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                {briefGate?.allowed ? 'Allowed — sitemap + copy ready' : copyPresent ? 'Blocked — review requirements' : 'Blocked — website copy required'}
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-gray-600">{briefGate?.reason || 'Loading gate status…'}</p>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500">
+              <span className="inline-flex items-center gap-1">
+                {sitemapId ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <XCircle className="h-3.5 w-3.5 text-gray-400" />}
+                Approved sitemap {sitemapId ? 'present' : 'missing'}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                {copyPresent ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <XCircle className="h-3.5 w-3.5 text-gray-400" />}
+                Website copy {copyPresent ? 'present' : 'missing'}
+              </span>
+            </div>
+          </div>
+
+          {/* Generate action */}
+          <div className="flex flex-col gap-3 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-gray-600">
+              {briefGate?.allowed
+                ? 'Generate durable image briefs from your approved copy. These are written specifications for review only — no images are generated, uploaded, built, or published.'
+                : copyPresent
+                  ? 'Resolve the gate requirements above before generating image briefs.'
+                  : 'Generate website copy first. Image briefs stay locked until website copy exists.'}
+            </div>
+            {briefGate?.allowed && briefLlmConfigured ? (
+              <button
+                onClick={generateImageBriefs}
+                disabled={briefLoading}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {briefLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Palette className="h-4 w-4" />}
+                {briefLoading ? 'Generating briefs…' : briefSet ? 'Regenerate image briefs' : 'Generate from Copy'}
+              </button>
+            ) : (
+              <button disabled title="Blocked until website copy exists"
+                className="inline-flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-400">
+                <Lock className="h-4 w-4" /> Generate Image Briefs — blocked until website copy exists
+              </button>
+            )}
+          </div>
+
+          {/* Brief set summary + review actions */}
+          {briefSet ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-medium text-gray-900">
+                  Image briefs · {briefSet.pageCount} page{briefSet.pageCount === 1 ? '' : 's'} · {briefSet.briefCount} brief{briefSet.briefCount === 1 ? '' : 's'}
+                  <span className={`ml-2 rounded-full border px-2 py-0.5 text-[11px] font-medium ${BRIEF_STATUS_BADGE[briefSet.status] || BRIEF_STATUS_BADGE.draft}`}>
+                    {briefSet.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <span className="text-xs text-gray-400">Generated {new Date(briefSet.artifact?.summary?.generatedAt || briefSet.createdAt).toLocaleString('en-US')}</span>
+              </div>
+
+              {/* Review actions (low-risk only) */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={approveBriefs}
+                  disabled={briefLoading || briefSet.status === 'approved'}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  <ThumbsUp className="h-4 w-4" /> {briefSet.status === 'approved' ? 'Approved' : 'Approve'}
+                </button>
+                <button
+                  onClick={requestBriefRevision}
+                  disabled={briefLoading || briefSet.status === 'revision_requested'}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                >
+                  <RefreshCw className="h-4 w-4" /> Request revision
+                </button>
+              </div>
+
+              {briefIssues.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                    <AlertTriangle className="h-4 w-4" /> Image brief validation issues
+                  </div>
+                  <ul className="mt-2 space-y-1 text-xs text-amber-700">
+                    {briefIssues.map((b: any, i: number) => (<li key={i}>• {b.slug}: {b.reason}</li>))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Per-page briefs */}
+              <div className="space-y-2">
+                {(briefSet.artifact?.pages || []).map((p) => {
+                  const open = openBriefSlug === p.slug;
+                  const heroCount = p.briefs.filter((b) => b.sectionType === 'hero').length;
+                  return (
+                    <div key={p.slug} className="rounded-lg border border-gray-100">
+                      <button
+                        onClick={() => setOpenBriefSlug(open ? null : p.slug)}
+                        className="flex w-full items-start justify-between gap-3 p-3 text-left"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">{p.pageType}</span>
+                            <span className="truncate text-sm font-medium text-gray-900">{p.h1}</span>
+                          </div>
+                          <div className="mt-1 truncate text-xs text-gray-500">{p.slug}</div>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
+                            <span className="inline-flex items-center gap-1"><Palette className="h-3 w-3" /> {p.briefs.length} brief{p.briefs.length === 1 ? '' : 's'}</span>
+                            <span className={`inline-flex items-center gap-1 ${heroCount ? 'text-green-600' : 'text-red-600'}`}>
+                              {heroCount ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />} hero {heroCount ? 'present' : 'missing'}
+                            </span>
+                          </div>
+                        </div>
+                        {open ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                      </button>
+                      {open && (
+                        <div className="space-y-3 border-t border-gray-100 p-3">
+                          {p.briefs.map((b) => (
+                            <div key={b.briefId} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3 text-sm">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${b.sectionType === 'hero' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'}`}>{b.sectionType}</span>
+                                <span className="font-medium text-gray-800">{b.sectionName}</span>
+                                <span className="ml-auto rounded bg-white px-1.5 py-0.5 text-[10px] text-gray-500 border border-gray-200">{b.aspectRatio}</span>
+                              </div>
+                              <div className="mt-2 text-gray-700">{b.visualObjective}</div>
+                              {b.messageSupported && <div className="mt-1 text-xs text-gray-500">Supports: {b.messageSupported}</div>}
+                              {b.businessSpecificDirection && <div className="mt-1 text-xs text-gray-600">{b.businessSpecificDirection}</div>}
+                              {b.industryDetails.length > 0 && (
+                                <div className="mt-1 text-[11px] text-gray-500">Industry: {b.industryDetails.join(', ')}</div>
+                              )}
+                              {b.localDetails.length > 0 && (
+                                <div className="mt-1 text-[11px] text-gray-500">Local: {b.localDetails.join(', ')}</div>
+                              )}
+                              <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                                <span className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-gray-600 border border-gray-200"><Crop className="h-3 w-3" /> {b.mobileCropNotes}</span>
+                                <span className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-gray-600 border border-gray-200"><Shield className="h-3 w-3" /> text-safe: {b.textSafeZone}</span>
+                                <span className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-gray-600 border border-gray-200"><Eye className="h-3 w-3" /> {b.assetSourcePreference}</span>
+                              </div>
+                              {b.forbiddenVisuals.length > 0 && (
+                                <div className="mt-2 rounded border border-red-100 bg-red-50 p-2">
+                                  <div className="flex items-center gap-1 text-[11px] font-medium text-red-700"><Ban className="h-3 w-3" /> Forbidden visuals</div>
+                                  <ul className="mt-1 space-y-0.5 text-[11px] text-red-600">
+                                    {b.forbiddenVisuals.map((f, i) => (<li key={i}>• {f}</li>))}
+                                  </ul>
+                                </div>
+                              )}
+                              <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
+                                <span className={`inline-flex items-center gap-1 ${b.donContractReady ? 'text-green-600' : 'text-gray-400'}`}>
+                                  {b.donContractReady ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />} Don contract ready
+                                </span>
+                                <span className={`inline-flex items-center gap-1 ${b.andyRenderReady ? 'text-green-600' : 'text-gray-400'}`}>
+                                  {b.andyRenderReady ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />} Andy render ready
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
+                These are written image briefs only. No images were generated, uploaded, built, or published. Image generation is available in a later milestone.
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
+              No image briefs yet.{briefGate?.allowed ? ' Use “Generate from Copy” above to create draft briefs.' : ' Generate website copy first.'}
             </div>
           )}
         </div>
