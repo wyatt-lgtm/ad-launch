@@ -288,7 +288,10 @@ export function pageRoute(page: BlueprintPage): string {
   const sectionsJson = JSON.stringify(page.sections, null, 2);
   const metaTitle = page.metaTitle || page.title || '';
   const metaDescription = page.metaDescription || '';
+  const links = (page.internalLinks || []).filter((l) => l && l.path && l.label);
+  const linksJson = JSON.stringify(links, null, 2);
   return `import type { Metadata } from 'next';
+import Link from 'next/link';
 import Section, { type SectionData } from '@/components/Section';
 
 export const metadata: Metadata = {
@@ -297,6 +300,7 @@ export const metadata: Metadata = {
 };
 
 const sections: SectionData[] = ${sectionsJson};
+const relatedLinks: { label: string; path: string }[] = ${linksJson};
 
 export default function Page() {
   return (
@@ -305,6 +309,17 @@ export default function Page() {
       {sections.map((s) => (
         <Section key={s.id} section={s} />
       ))}
+      {relatedLinks.length ? (
+        <nav aria-label="Related pages" data-related-links>
+          <ul>
+            {relatedLinks.map((l) => (
+              <li key={l.path}>
+                <Link href={l.path}>{l.label}</Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ) : null}
     </article>
   );
 }

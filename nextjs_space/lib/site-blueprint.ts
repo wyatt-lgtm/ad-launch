@@ -91,6 +91,8 @@ export interface BlueprintPage {
   targetKeywords?: string[];
   sortOrder: number;
   sections: BlueprintSection[];
+  /** In-page related links (e.g. services hub -> each service page). */
+  internalLinks?: BlueprintNavItem[];
 }
 
 export interface BlueprintNavItem {
