@@ -47,7 +47,7 @@ export function packageJson(bp: SiteBlueprint): string {
 export function nextConfig(): string {
   return `/** @type {import('next').NextConfig} */
 // Static export: produces a fully static \`out/\` directory deployable to any
-// static host (HostGator, Cloudflare Pages, Vercel, manual upload).
+// standard static host or CDN.
 const nextConfig = {
   output: 'export',
   // Static export cannot use the Next.js image optimizer.
