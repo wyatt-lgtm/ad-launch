@@ -85,10 +85,21 @@ async function callCopyLlm(system: string, user: string, maxTokens = 2600): Prom
 async function loadBusinessSummary(businessId: string): Promise<string | undefined> {
   const business = await prisma.business.findUnique({
     where: { id: businessId },
-    select: { name: true, description: true, valueProposition: true },
+    select: {
+      businessName: true,
+      businessCity: true,
+      businessState: true,
+      contentProfile: { select: { industry: true, brandVoiceSummary: true } },
+    },
   }).catch(() => null);
   if (!business) return undefined;
-  return [business.description, business.valueProposition].filter(Boolean).join(' — ') || undefined;
+  const parts = [
+    business.businessName,
+    business.contentProfile?.industry,
+    [business.businessCity, business.businessState].filter(Boolean).join(', '),
+    business.contentProfile?.brandVoiceSummary,
+  ].filter(Boolean);
+  return parts.join(' — ') || undefined;
 }
 
 /**
@@ -101,7 +112,7 @@ async function loadSeoBriefContext(
 ): Promise<PageCopyContext['seoBrief']> {
   const brief = await prisma.seoPageBrief
     .findFirst({
-      where: { businessId, recommendedSlug: slug },
+      where: { businessId, recommendedSlug: slug, status: { in: ['approved', 'used_in_page'] } },
       orderBy: { createdAt: 'desc' },
     })
     .catch(() => null);
@@ -110,6 +121,7 @@ async function loadSeoBriefContext(
     ? ((brief.recommendedFaqsJson as any[]).map((f) => (typeof f === 'string' ? f : f?.question)).filter(Boolean) as string[])
     : undefined;
   return {
+    id: brief.id,
     metaTitle: brief.recommendedMetaTitle || undefined,
     metaDescription: brief.recommendedMetaDescription || undefined,
     differentiationAngle: brief.differentiationAngle || undefined,
@@ -221,7 +233,7 @@ export async function generateWebsiteCopy(params: {
       failedSlugs.push(page.slug);
       continue;
     }
-    const copy = parsePageCopyResponse(raw, page, sitemap);
+    const copy = parsePageCopyResponse(raw, page, sitemap, { seoBrief, businessSummary });
     generated.push(copy);
     await savePageCopy({ businessId, websiteProjectId, sitemapId: row.id, copy, generatedByUserId });
   }

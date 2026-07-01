@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Map as MapIcon, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
   Plus, Trash2, Lock, ListTree, ShieldCheck, FileText, Sparkles,
+  ChevronDown, ChevronRight, Image as ImageIcon,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
@@ -75,6 +76,33 @@ interface CopyGate {
   copyGenerationAvailable?: boolean;
 }
 
+interface CopyPage {
+  slug: string;
+  pageType: string;
+  h1: string;
+  metaTitle: string;
+  metaDescription: string;
+  heroHeadline: string;
+  heroSubheadline?: string;
+  primaryCta: string;
+  secondaryCta?: string;
+  sections: { name: string; heading?: string; body: string }[];
+  faqs: { question: string; answer: string }[];
+  internalLinks: { slug: string; label: string }[];
+  imageNeeds: { section: string; note: string }[];
+  seoBriefId?: string;
+  seoBriefStatus?: string;
+  stage: string;
+}
+
+interface CopyArtifact {
+  sitemapId?: string;
+  generatedAt: string | null;
+  pageCount: number;
+  pages: CopyPage[];
+  stage: string;
+}
+
 const CONFIRM_BADGE: Record<ConfirmationStatus, string> = {
   confirmed: 'bg-green-100 text-green-700 border-green-200',
   likely: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -103,7 +131,7 @@ const GATE_LABEL: Record<string, string> = {
   blocked_invalid_sitemap: 'Blocked — sitemap has issues',
 };
 
-type TabKey = 'services' | 'sitemap' | 'gate';
+type TabKey = 'services' | 'sitemap' | 'copy';
 
 export default function SitemapPlannerCard() {
   const bizCtx = useActiveBusiness();
@@ -119,6 +147,11 @@ export default function SitemapPlannerCard() {
   const [issues, setIssues] = useState<SitemapIssue[]>([]);
   const [gate, setGate] = useState<CopyGate | null>(null);
   const [revisions, setRevisions] = useState<any[]>([]);
+  const [copy, setCopy] = useState<CopyArtifact | null>(null);
+  const [copyLoading, setCopyLoading] = useState(false);
+  const [pageIssues, setPageIssues] = useState<any[]>([]);
+  const [uniquenessIssues, setUniquenessIssues] = useState<any[]>([]);
+  const [openSlug, setOpenSlug] = useState<string | null>(null);
 
   const [newServiceName, setNewServiceName] = useState('');
   const [newPageTitle, setNewPageTitle] = useState('');
@@ -158,8 +191,47 @@ export default function SitemapPlannerCard() {
     if (res.ok) setRevisions((await res.json()).revisions || []);
   }, [businessId, sitemapId]);
 
-  useEffect(() => { loadServices(); loadSitemap(); loadGate(); }, [loadServices, loadSitemap, loadGate]);
+  const loadCopy = useCallback(async () => {
+    if (!businessId) return;
+    const res = await fetch(`/api/businesses/${businessId}/website/copy`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.copyGate) setGate(data.copyGate);
+      setCopy(data.copy || null);
+    }
+  }, [businessId]);
+
+  useEffect(() => { loadServices(); loadSitemap(); loadGate(); loadCopy(); }, [loadServices, loadSitemap, loadGate, loadCopy]);
   useEffect(() => { loadRevisions(); }, [loadRevisions]);
+
+  // ── Copy actions ─────────────────────────────────────────────────────────
+  const generateCopy = async () => {
+    if (!businessId) return;
+    setCopyLoading(true);
+    setPageIssues([]); setUniquenessIssues([]);
+    try {
+      const res = await fetch(`/api/businesses/${businessId}/website/copy`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const pages = data.copy?.pages || [];
+        setCopy({
+          sitemapId: data.sitemapId,
+          generatedAt: data.copy?.generatedAt || new Date().toISOString(),
+          pageCount: pages.length,
+          pages,
+          stage: data.stage || 'draft',
+        });
+        setPageIssues(data.pageIssues || []);
+        setUniquenessIssues(data.uniquenessIssues || []);
+        notify(`Draft copy generated for ${pages.length} page${pages.length === 1 ? '' : 's'}. Review before the next milestone.`);
+      } else if (res.status === 422 && data.copyGate) {
+        setGate(data.copyGate);
+        notify(data.error || 'Copy generation is blocked until the sitemap is approved.');
+      } else {
+        notify(data.error || 'Could not generate copy.');
+      }
+    } finally { setCopyLoading(false); }
+  };
 
   // ── Service actions ──────────────────────────────────────────────────────
   const seedServices = async () => {
@@ -273,8 +345,8 @@ export default function SitemapPlannerCard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setSitemap(data.sitemap); setIssues([]);
-        notify('Sitemap approved. Copy generation unlocks in the next milestone.');
-        loadGate();
+        notify('Sitemap approved. You can now generate draft copy from the Copy Review tab.');
+        loadGate(); loadCopy();
       } else {
         setIssues(data.issues || []);
         notify(data.error || 'Sitemap cannot be approved yet.');
@@ -320,7 +392,7 @@ export default function SitemapPlannerCard() {
         {([
           ['services', 'Service Discovery'],
           ['sitemap', 'Sitemap Review'],
-          ['gate', 'Copy Gate'],
+          ['copy', 'Copy Review'],
         ] as [TabKey, string][]).map(([key, label]) => (
           <button
             key={key}
@@ -515,11 +587,12 @@ export default function SitemapPlannerCard() {
         </div>
       )}
 
-      {/* ── Copy Gate tab ── */}
-      {tab === 'gate' && (
+      {/* ── Copy Review tab ── */}
+      {tab === 'copy' && (
         <div className="p-5 space-y-4">
+          {/* Gate status */}
           <div className="rounded-lg border border-gray-100 p-4">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <FileText className="h-5 w-5 text-gray-500" />
               <span className="text-sm font-medium text-gray-900">Copy generation gate</span>
               {gate && (
@@ -536,13 +609,144 @@ export default function SitemapPlannerCard() {
             )}
           </div>
 
-          <div className="flex items-center justify-between rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4">
-            <div className="text-sm text-gray-500">Copy generation is not part of this milestone.</div>
-            <button disabled
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-400">
-              <Lock className="h-4 w-4" /> Generate copy — available in next milestone
-            </button>
+          {/* Generate action */}
+          <div className="flex flex-col gap-3 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-gray-600">
+              {gate?.allowed
+                ? 'Generate page-by-page draft copy from your approved sitemap. Copy is a draft for your review — nothing is published or deployed.'
+                : 'Approve your sitemap first. Copy generation stays locked until the sitemap is approved and all H1s are valid.'}
+            </div>
+            {gate?.allowed ? (
+              <button
+                onClick={generateCopy}
+                disabled={copyLoading}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {copyLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                {copyLoading ? 'Generating copy…' : copy ? 'Regenerate copy' : 'Generate copy from approved sitemap'}
+              </button>
+            ) : (
+              <button disabled title="Blocked until sitemap approval"
+                className="inline-flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-400">
+                <Lock className="h-4 w-4" /> Generate Copy — blocked until sitemap approval
+              </button>
+            )}
           </div>
+
+          {/* Validation issues */}
+          {(pageIssues.length > 0 || uniquenessIssues.length > 0) && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                <AlertTriangle className="h-4 w-4" /> Copy validation issues
+              </div>
+              <ul className="mt-2 space-y-1 text-xs text-amber-700">
+                {uniquenessIssues.map((u: any, i: number) => (
+                  <li key={`u${i}`}>• Duplicate copy between {u.slugA} and {u.slugB}: {u.reason}</li>
+                ))}
+                {pageIssues.map((p: any, i: number) => (
+                  <li key={`p${i}`}>• {p.slug}: {p.reason}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Copy artifact */}
+          {copy && copy.pages.length > 0 ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-medium text-gray-900">
+                  Draft copy · {copy.pageCount} page{copy.pageCount === 1 ? '' : 's'}
+                  <span className="ml-2 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">draft</span>
+                </div>
+                {copy.generatedAt && (
+                  <span className="text-xs text-gray-400">Generated {new Date(copy.generatedAt).toLocaleString('en-US')}</span>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                {copy.pages.map((p) => {
+                  const open = openSlug === p.slug;
+                  const hasIssues = pageIssues.some((pi: any) => pi.slug === p.slug);
+                  return (
+                    <div key={p.slug} className="rounded-lg border border-gray-100">
+                      <button
+                        onClick={() => setOpenSlug(open ? null : p.slug)}
+                        className="flex w-full items-start justify-between gap-3 p-3 text-left"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">{p.pageType}</span>
+                            <span className="truncate text-sm font-medium text-gray-900">{p.h1}</span>
+                          </div>
+                          <div className="mt-1 truncate text-xs text-gray-500">{p.slug}</div>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
+                            <span>{p.sections.length} sections</span>
+                            <span>{p.faqs.length} FAQs</span>
+                            <span className="inline-flex items-center gap-1"><ImageIcon className="h-3 w-3" /> {p.imageNeeds.length} image needs</span>
+                            {p.seoBriefStatus === 'approved' && <span className="text-indigo-600">SEO brief linked</span>}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {hasIssues
+                            ? <span className="inline-flex items-center gap-1 text-[11px] text-amber-600"><AlertTriangle className="h-3.5 w-3.5" /> needs review</span>
+                            : <span className="inline-flex items-center gap-1 text-[11px] text-green-600"><CheckCircle2 className="h-3.5 w-3.5" /> valid</span>}
+                          {open ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                        </div>
+                      </button>
+                      {open && (
+                        <div className="space-y-3 border-t border-gray-100 p-3 text-sm">
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Meta title</div>
+                            <div className="text-gray-700">{p.metaTitle}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Meta description</div>
+                            <div className="text-gray-700">{p.metaDescription}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Hero</div>
+                            <div className="font-medium text-gray-800">{p.heroHeadline}</div>
+                            {p.heroSubheadline && <div className="text-gray-600">{p.heroSubheadline}</div>}
+                            <div className="mt-1 flex flex-wrap gap-2 text-[11px]">
+                              <span className="rounded bg-indigo-50 px-2 py-0.5 text-indigo-700">{p.primaryCta}</span>
+                              {p.secondaryCta && <span className="rounded bg-gray-100 px-2 py-0.5 text-gray-600">{p.secondaryCta}</span>}
+                            </div>
+                          </div>
+                          {p.sections.map((s, i) => (
+                            <div key={i}>
+                              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{s.heading || s.name}</div>
+                              <div className="whitespace-pre-line text-gray-700">{s.body}</div>
+                            </div>
+                          ))}
+                          {p.faqs.length > 0 && (
+                            <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">FAQs</div>
+                              <ul className="mt-1 space-y-1">
+                                {p.faqs.map((f, i) => (
+                                  <li key={i}><span className="font-medium text-gray-800">{f.question}</span> <span className="text-gray-600">{f.answer}</span></li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {p.internalLinks.length > 0 && (
+                            <div className="text-[11px] text-gray-500">Internal links: {p.internalLinks.map((l) => l.label).join(', ')}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
+                Image briefs and website build are available in a later milestone. No images were generated and nothing was published or deployed.
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
+              No copy generated yet.{gate?.allowed ? ' Use the button above to generate draft copy.' : ''}
+            </div>
+          )}
         </div>
       )}
     </div>

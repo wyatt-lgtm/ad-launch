@@ -85,6 +85,10 @@ export interface PageCopy {
   serviceAreaLine: string;
   /** Text-only image needs by section (no image generation). */
   imageNeeds: PageCopyImageNeed[];
+  /** Read-only linkage to an approved SEO page brief (WF3), if one existed. */
+  seoBriefId?: string;
+  /** 'approved' when an approved brief informed this page; otherwise 'missing'. */
+  seoBriefStatus: 'approved' | 'missing';
   /** Always 'draft' in this milestone — copy is for review, not published. */
   stage: CopyStage;
 }
@@ -197,6 +201,7 @@ export function imageNeedsFor(page: SitemapPage): PageCopyImageNeed[] {
 export interface PageCopyContext {
   /** Optional approved SEO page-brief context (read-only), if one exists. */
   seoBrief?: {
+    id?: string;
     targetKeyword?: string;
     metaTitle?: string;
     metaDescription?: string;
@@ -299,6 +304,7 @@ export function parsePageCopyResponse(
   raw: any,
   page: SitemapPage,
   sitemap: WebsiteSitemapArtifact,
+  context?: PageCopyContext,
 ): PageCopy {
   const obj = raw && typeof raw === 'object' ? raw : {};
   const rawSections: any[] = Array.isArray(obj.sections) ? obj.sections : [];
@@ -336,6 +342,8 @@ export function parsePageCopyResponse(
     internalLinks: internalLinkTargetsFor(page, sitemap),
     serviceAreaLine: serviceAreaLineFor(sitemap.primaryServiceArea, sitemap.serviceAreaMode),
     imageNeeds: imageNeedsFor(page),
+    seoBriefId: context?.seoBrief?.id,
+    seoBriefStatus: context?.seoBrief ? 'approved' : 'missing',
     stage: 'draft',
   };
 }
