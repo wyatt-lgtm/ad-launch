@@ -13,10 +13,12 @@ import {
   WebsiteSitemapArtifact,
   DiscoveredService,
   SitemapRevisionRecord,
+  ServiceCandidate,
   serviceDiscoveryCounts,
   canGenerateCopy,
   CopyGateResult,
 } from '@/lib/website-sitemap';
+import { offeringDisplayName } from '@/lib/industry-services';
 
 // ── Service discovery ──────────────────────────────────────────────────────
 export async function saveServiceDiscovery(params: {
@@ -37,6 +39,39 @@ export async function saveServiceDiscovery(params: {
       rejectedCount: counts.rejectedCount,
       source: params.source || 'agent_research',
     },
+  });
+}
+
+/**
+ * Seed service CANDIDATES (pre-classification) from the business's existing
+ * confirmed/suggested service offerings. READ-ONLY: this never mutates the
+ * BusinessServiceOffering records or any other system. Confirmed/owner-confirmed
+ * offerings map to explicit positive signals; suggested/needs_review map to
+ * industry inference (so they classify as likely/needs_user_confirmation).
+ */
+export async function seedServiceCandidatesFromOfferings(
+  businessId: string,
+): Promise<ServiceCandidate[]> {
+  const offerings = await prisma.businessServiceOffering.findMany({
+    where: { businessId, status: { in: ['confirmed', 'suggested', 'needs_review'] } },
+    include: { industryService: true },
+    orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+  });
+  return offerings.map((o) => {
+    const name = offeringDisplayName(o as any);
+    const isConfirmed = o.status === 'confirmed' || o.ownerConfirmed === true;
+    const fromWebsite = o.source === 'website' || o.source === 'owner_confirmed';
+    return {
+      serviceName: name,
+      source: fromWebsite ? 'website' : 'industry_knowledge',
+      evidence: `From service settings (status: ${o.status}, source: ${o.source}).`,
+      confidence: o.confidence === 'high' ? 0.9 : o.confidence === 'medium' ? 0.6 : 0.4,
+      previouslyApproved: isConfirmed,
+      listedOnWebsite: fromWebsite ? true : undefined,
+      storedInBusinessSettings: isConfirmed,
+      commonForIndustry: !isConfirmed,
+      ambiguous: o.status === 'needs_review',
+    } as ServiceCandidate;
   });
 }
 
@@ -133,6 +168,41 @@ export async function listSitemapRevisions(businessId: string, sitemapId: string
   });
 }
 
+/**
+ * Generic, business-scoped revision recorder for actions beyond `add_page`
+ * (rename_page, remove_page, reorder_page, add_section, remove_section,
+ * confirm_services, approve, other). Guards ownership before writing so a
+ * revision can never be attached to another business's sitemap.
+ */
+export async function recordRevision(params: {
+  businessId: string;
+  sitemapId: string;
+  action: string;
+  detail?: any;
+  page?: { title?: string; slug?: string; pageType?: string; source?: string | null };
+  requestedByUserId?: string | null;
+}) {
+  const { businessId, sitemapId, action, detail, page, requestedByUserId } = params;
+  const owned = await prisma.websiteSitemap.findFirst({
+    where: { id: sitemapId, businessId },
+    select: { id: true },
+  });
+  if (!owned) return null;
+  return prisma.websiteSitemapRevision.create({
+    data: {
+      businessId,
+      sitemapId,
+      action,
+      detailJson: (detail ?? null) as any,
+      pageTitle: page?.title ?? null,
+      pageSlug: page?.slug ?? null,
+      pageType: page?.pageType ?? null,
+      pageSource: page?.source ?? null,
+      requestedByUserId: requestedByUserId ?? null,
+    },
+  });
+}
+
 // ── Copy gate (persistence-aware) ────────────────────────────────────────
 /**
  * Resolve the copy gate from stored state for a business/project. Loads the
@@ -146,4 +216,53 @@ export async function resolveCopyGate(
   if (!row) return canGenerateCopy(null);
   const artifact = row.sitemapJson as unknown as WebsiteSitemapArtifact;
   return canGenerateCopy(artifact);
+}
+
+// ── Sitemap generation input (business-scoped, read-only) ────────────────
+/**
+ * Assemble a SitemapGenerationInput from stored business identity + the latest
+ * service discovery. READ-ONLY: reads Business, Industry, and the latest
+ * WebsiteServiceDiscovery. Performs NO network calls, NO copy/image work.
+ *
+ * Returns null when the business does not exist.
+ */
+export async function buildSitemapGenerationInput(
+  businessId: string,
+): Promise<import('@/lib/website-sitemap').SitemapGenerationInput | null> {
+  const business = await prisma.business.findUnique({ where: { id: businessId } });
+  if (!business) return null;
+
+  let industryName = '';
+  if (business.matchedIndustryId) {
+    const ind = await prisma.industry.findUnique({ where: { id: business.matchedIndustryId } });
+    industryName = ind?.name || '';
+  }
+
+  const city =
+    business.businessCity || business.primaryMarketCity || business.hqCity || '';
+  const state =
+    business.businessState || business.primaryMarketState || business.hqState || '';
+
+  const mode = (['local', 'regional', 'national', 'multi_location'].includes(
+    business.serviceAreaMode || '',
+  )
+    ? business.serviceAreaMode
+    : 'local') as WebsiteSitemapArtifact['serviceAreaMode'];
+
+  const discovery = await loadLatestServiceDiscovery(businessId);
+  const services: DiscoveredService[] =
+    (discovery?.discoveryJson as any)?.services ?? [];
+
+  return {
+    businessName: business.businessName || 'Your Business',
+    industry: industryName || 'Local Business',
+    primaryServiceArea: { city, state },
+    serviceAreaMode: mode,
+    services,
+    sourceSummary: {
+      website: Boolean(business.websiteUrl),
+      businessSettings: true,
+      agentResearch: Boolean(discovery),
+    },
+  };
 }
