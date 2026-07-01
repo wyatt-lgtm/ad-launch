@@ -30,6 +30,8 @@ export interface RenderProviderResult {
   r2Key?: string;
   bucket?: string;
   key?: string;
+  /** Backend status; `validated` indicates a dry-run (no image generated). */
+  status?: string;
   mimeType?: string;
   width?: number;
   height?: number;
@@ -50,6 +52,8 @@ export interface RenderProviderResponse {
   retryable?: boolean;
   /** True when the prompt was blocked by moderation — MUST NOT retry unchanged. */
   moderationBlocked?: boolean;
+  /** True when this response is a dry-run validation (no image generated). */
+  dryRun?: boolean;
 }
 
 /**
@@ -59,6 +63,13 @@ export interface RenderProviderResponse {
  */
 export interface RenderProviderContext {
   businessId?: string | number;
+  /**
+   * When true, the backend VALIDATES the contract and returns the durable
+   * expected R2 key WITHOUT generating an image or uploading any R2 object.
+   * Used by the dry-run gate check so callers can preview the contract and
+   * expected key at zero cost. No asset row is persisted for dry-run results.
+   */
+  dryRun?: boolean;
 }
 
 /**
@@ -93,7 +104,11 @@ export async function renderWebsiteImageViaTombstone(
     res = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ contract, businessId: ctx?.businessId }),
+      body: JSON.stringify({
+        contract,
+        businessId: ctx?.businessId,
+        dry_run: ctx?.dryRun === true,
+      }),
       // Keep a bounded wait so a cold backend does not hang the request.
       signal: AbortSignal.timeout ? AbortSignal.timeout(120_000) : undefined,
     });
@@ -145,5 +160,6 @@ export async function renderWebsiteImageViaTombstone(
     return { ok: false, error: 'Render provider returned a malformed response.', retryable: false };
   }
   const result: RenderProviderResult = body?.result && typeof body.result === 'object' ? body.result : body;
-  return { ok: true, result };
+  const dryRun = ctx?.dryRun === true || /^validated$/i.test(String(result?.status ?? ''));
+  return { ok: true, result, dryRun };
 }

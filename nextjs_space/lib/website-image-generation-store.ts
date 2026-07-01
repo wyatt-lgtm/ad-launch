@@ -278,6 +278,25 @@ export async function getGeneratedImageAsset(
 }
 
 // ── Gated generation ────────────────────────────────────────────────
+/**
+ * A single validated dry-run item. Dry-run NEVER persists an asset row, uploads
+ * an R2 object, or generates an image — it only confirms the contract is valid
+ * and reports the durable R2 key the live render WOULD write to.
+ */
+export interface DryRunValidatedItem {
+  briefId: string;
+  pageSlug: string;
+  sectionName: string;
+  sectionType: 'hero' | 'section';
+  assetRole: string;
+  status: 'validated';
+  expectedR2Key: string;
+  r2Bucket: string;
+  promptSummary?: string | null;
+  /** Populated when the backend could not validate this contract. */
+  error?: string;
+}
+
 export interface GenerateImagesResult {
   ok: boolean;
   /** Set when the gate blocks generation (no assets written). */
@@ -286,6 +305,10 @@ export interface GenerateImagesResult {
   /** Brief ids that produced a diagnostic `failed` asset. */
   failedBriefIds?: string[];
   error?: string;
+  /** True when this was a dry-run (validation only, no assets persisted). */
+  dryRun?: boolean;
+  /** Validated dry-run previews (present only when dryRun is true). */
+  validated?: DryRunValidatedItem[];
   /** Explicit boundary flags — Milestone 5 never crosses these. */
   staticBuildRun: false;
   mobileQaRun: false;
@@ -386,6 +409,12 @@ export async function generateWebsiteImages(params: {
   provider?: WebsiteImageRenderProvider;
   /** Safety cap for how many assets to render in one call. */
   limit?: number;
+  /**
+   * When true, validate the contract(s) and return the durable expected R2
+   * key(s) WITHOUT generating an image, uploading to R2, or persisting any
+   * asset row. Used by the cost-free dry-run gate check.
+   */
+  dryRun?: boolean;
 }): Promise<GenerateImagesResult> {
   const boundaries = {
     staticBuildRun: false as const,
@@ -401,6 +430,7 @@ export async function generateWebsiteImages(params: {
     generatedByUserId = null,
     provider = renderWebsiteImageViaTombstone,
     limit,
+    dryRun = false,
   } = params;
 
   // Load inputs.
@@ -446,6 +476,37 @@ export async function generateWebsiteImages(params: {
     }
   }
   const capped = typeof limit === 'number' && limit > 0 ? jobs.slice(0, limit) : jobs;
+
+  // ── DRY RUN ──────────────────────────────────────────────────────
+  // Validate contracts and report the durable expected R2 key. NEVER
+  // persist an asset row, upload to R2, generate an image, or retry.
+  if (dryRun) {
+    const validated: DryRunValidatedItem[] = [];
+    for (const { page, brief } of capped) {
+      const contract = buildDonRenderContract(brief, page, sitemap, ctx);
+      const expectedR2Key = buildWebsiteAssetR2Key({
+        businessId,
+        imageBriefId: brief.briefId,
+        sectionName: brief.sectionName,
+        assetRole: contract.assetRole,
+      });
+      const resp = await provider(contract, { businessId, dryRun: true });
+      const backendKey = resp.ok ? String(resp.result?.r2Key || resp.result?.key || '') : '';
+      validated.push({
+        briefId: brief.briefId,
+        pageSlug: page.slug,
+        sectionName: brief.sectionName,
+        sectionType: brief.sectionType,
+        assetRole: contract.assetRole,
+        status: 'validated',
+        expectedR2Key: backendKey || expectedR2Key,
+        r2Bucket: (resp.ok && String(resp.result?.r2Bucket || resp.result?.bucket || '')) || GENERATED_IMAGE_BUCKET,
+        promptSummary: contract.visualConcept ?? null,
+        error: resp.ok ? undefined : resp.error,
+      });
+    }
+    return { ok: true, dryRun: true, validated, ...boundaries };
+  }
 
   const persisted: AssetRow[] = [];
   const failedBriefIds: string[] = [];

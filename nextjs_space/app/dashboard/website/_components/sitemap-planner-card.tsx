@@ -6,8 +6,9 @@ import {
   Plus, Trash2, Lock, ListTree, ShieldCheck, FileText, Sparkles,
   ChevronDown, ChevronRight, Image as ImageIcon,
   Palette, Crop, Eye, ThumbsUp, ThumbsDown, Ban, Shield,
-  Wand2, Gauge,
+  Wand2, Gauge, FlaskConical, CheckSquare, Square,
 } from 'lucide-react';
+import { useSession } from 'next-auth/react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
 /**
@@ -202,6 +203,19 @@ interface ImageGenGate {
   blockingBriefIds?: string[];
 }
 
+interface DryRunValidatedItem {
+  briefId: string;
+  pageSlug: string;
+  sectionName: string;
+  sectionType: string;
+  assetRole: string;
+  status: string;
+  expectedR2Key: string;
+  r2Bucket: string;
+  promptSummary?: string | null;
+  error?: string;
+}
+
 interface GeneratedImageAsset {
   id: string;
   imageBriefSetId: string;
@@ -248,6 +262,8 @@ type TabKey = 'services' | 'sitemap' | 'copy' | 'imageBriefs' | 'generatedImages
 export default function SitemapPlannerCard() {
   const bizCtx = useActiveBusiness();
   const businessId = bizCtx.activeBusiness?.id || null;
+  const { data: session } = useSession() || {};
+  const isAdmin = ((session?.user as any)?.role || '') === 'admin';
 
   const [tab, setTab] = useState<TabKey>('services');
   const [busy, setBusy] = useState(false);
@@ -282,6 +298,10 @@ export default function SitemapPlannerCard() {
   const [providerConfigured, setProviderConfigured] = useState(true);
   const [genLoading, setGenLoading] = useState(false);
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
+  // Cost-control: explicit brief selection + dry-run preview. The UI never
+  // defaults to generating the whole batch.
+  const [selectedBriefIds, setSelectedBriefIds] = useState<string[]>([]);
+  const [dryRunResult, setDryRunResult] = useState<DryRunValidatedItem[] | null>(null);
 
   const [newServiceName, setNewServiceName] = useState('');
   const [newPageTitle, setNewPageTitle] = useState('');
@@ -376,21 +396,56 @@ export default function SitemapPlannerCard() {
   useEffect(() => { loadServices(); loadSitemap(); loadGate(); loadCopy(); loadImageBriefs(); loadGeneratedImages(); }, [loadServices, loadSitemap, loadGate, loadCopy, loadImageBriefs, loadGeneratedImages]);
   useEffect(() => { loadRevisions(); }, [loadRevisions]);
 
-  // ── Generated image actions (Milestone 5) ──
-  const generateImages = async () => {
+  // ── Generated image actions (Milestone 5C) ──
+  // Flat list of briefs from the approved brief set for explicit selection.
+  const allBriefs = (briefSet?.artifact.pages || []).flatMap((p) =>
+    (p.briefs || []).map((b) => ({
+      briefId: b.briefId,
+      sectionName: b.sectionName,
+      sectionType: b.sectionType,
+      pageSlug: p.slug,
+      isHero: b.sectionType === 'hero',
+    })),
+  );
+  const firstHeroBriefId = allBriefs.find((b) => b.isHero)?.briefId || allBriefs[0]?.briefId || null;
+
+  const toggleBriefSelected = (briefId: string) => {
+    setSelectedBriefIds((prev) =>
+      prev.includes(briefId) ? prev.filter((x) => x !== briefId) : [...prev, briefId],
+    );
+  };
+
+  /**
+   * Cost-controlled generate. Always sends the dedicated /generate route with an
+   * explicit, bounded payload. Never triggers a full unbounded batch.
+   */
+  const runGenerate = async (opts: { briefIds: string[]; maxImages: number; dryRun: boolean }) => {
     if (!businessId) return;
+    if (!opts.briefIds.length) { notify('Select at least one image brief first.'); return; }
     setGenLoading(true);
+    if (opts.dryRun) setDryRunResult(null);
     try {
-      const res = await fetch(`/api/businesses/${businessId}/website/generated-images`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      const res = await fetch(`/api/businesses/${businessId}/website/generated-images/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBriefSetId: genBriefSetId,
+          imageBriefIds: opts.briefIds,
+          maxImages: opts.maxImages,
+          dryRun: opts.dryRun,
+        }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setGenAssets(data.assets || []);
-        resolveAssetUrls(data.assets || []);
+      if (res.ok && data.dryRun) {
+        setDryRunResult(data.validated || []);
+        const okCount = (data.validated || []).filter((v: DryRunValidatedItem) => !v.error).length;
+        notify(`Dry-run validated ${okCount} contract${okCount === 1 ? '' : 's'}. No image was generated and nothing was stored.`);
+      } else if (res.ok) {
+        setDryRunResult(null);
+        await loadGeneratedImages();
         const n = (data.assets || []).length;
         const f = (data.failedBriefIds || []).length;
-        notify(`Generated ${n} asset${n === 1 ? '' : 's'}${f ? ` (${f} failed QA/render)` : ''}. No static build, publish, or deploy was run.`);
+        notify(`Generated ${n} image${n === 1 ? '' : 's'}${f ? ` (${f} failed QA/render)` : ''}. No static build, publish, or deploy was run.`);
       } else if (res.status === 422 && data.imageGate) {
         setImageGate(data.imageGate);
         notify(data.error || 'Image generation is blocked until the image briefs are approved.');
@@ -400,6 +455,25 @@ export default function SitemapPlannerCard() {
         notify(data.error || 'Could not generate images.');
       }
     } finally { setGenLoading(false); }
+  };
+
+  const generateOneTest = () => {
+    if (!firstHeroBriefId) { notify('No image briefs available to generate.'); return; }
+    runGenerate({ briefIds: [firstHeroBriefId], maxImages: 1, dryRun: false });
+  };
+  const generateSelected = () => {
+    runGenerate({ briefIds: selectedBriefIds, maxImages: Math.max(1, selectedBriefIds.length), dryRun: false });
+  };
+  const dryRunSelected = () => {
+    const ids = selectedBriefIds.length ? selectedBriefIds : (firstHeroBriefId ? [firstHeroBriefId] : []);
+    runGenerate({ briefIds: ids, maxImages: Math.max(1, ids.length), dryRun: true });
+  };
+  const generateFullBatch = () => {
+    if (!isAdmin) return;
+    const ids = allBriefs.map((b) => b.briefId);
+    if (!ids.length) { notify('No image briefs available.'); return; }
+    if (!window.confirm(`Generate ALL ${ids.length} images? This runs a full live render batch and consumes generation budget. This is an admin-only action.`)) return;
+    runGenerate({ briefIds: ids, maxImages: ids.length, dryRun: false });
   };
 
   const approveAsset = async (assetId: string) => {
@@ -1236,29 +1310,114 @@ export default function SitemapPlannerCard() {
             </div>
           </div>
 
-          {/* Generate action */}
-          <div className="flex flex-col gap-3 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-gray-600">
-              {imageGate?.allowed
-                ? 'Generate website image assets from your approved image briefs. Each render is validated by Don, produced or selected by Andy, stored durably, and hero images pass QA before they can be approved.'
-                : 'Approve your image briefs first. Image generation stays locked until the briefs are approved.'}
+          {/* Generate action — cost-controlled (never defaults to full batch) */}
+          {imageGate?.allowed && providerConfigured ? (
+            <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="text-sm text-gray-600">
+                Generate website image assets one at a time from your approved briefs. Each render is validated by Don, produced or selected by Andy, stored durably, and hero images pass QA before approval. Start with a single test image to control cost.
+              </div>
+
+              {/* Brief selection */}
+              {allBriefs.length > 0 && (
+                <div className="rounded-md border border-gray-200 bg-white p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-xs font-medium text-gray-700">Select image(s) to generate ({selectedBriefIds.length} selected)</span>
+                    {selectedBriefIds.length > 0 && (
+                      <button onClick={() => setSelectedBriefIds([])} className="text-[11px] text-gray-400 hover:text-gray-600">Clear</button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    {allBriefs.map((b) => {
+                      const checked = selectedBriefIds.includes(b.briefId);
+                      return (
+                        <button
+                          key={b.briefId}
+                          onClick={() => toggleBriefSelected(b.briefId)}
+                          className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs ${checked ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}
+                        >
+                          {checked ? <CheckSquare className="h-3.5 w-3.5 shrink-0 text-indigo-600" /> : <Square className="h-3.5 w-3.5 shrink-0 text-gray-300" />}
+                          <span className={`rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${b.isHero ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'}`}>{b.sectionType}</span>
+                          <span className="truncate font-medium text-gray-800">{b.sectionName}</span>
+                          <span className="ml-auto shrink-0 text-[10px] text-gray-400">{b.pageSlug}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={generateOneTest}
+                  disabled={genLoading || !firstHeroBriefId}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  {genLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                  Generate 1 test image
+                </button>
+                <button
+                  onClick={generateSelected}
+                  disabled={genLoading || selectedBriefIds.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                >
+                  <Wand2 className="h-4 w-4" /> Generate selected image{selectedBriefIds.length > 1 ? `s (${selectedBriefIds.length})` : ''}
+                </button>
+                <button
+                  onClick={dryRunSelected}
+                  disabled={genLoading}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <FlaskConical className="h-4 w-4" /> Dry-run check
+                </button>
+                {isAdmin && (
+                  <button
+                    onClick={generateFullBatch}
+                    disabled={genLoading || allBriefs.length === 0}
+                    title="Admin only — runs a full live render batch"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <Shield className="h-4 w-4" /> Generate all ({allBriefs.length}) — admin
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-400">A dry-run check validates the render contract and shows the durable storage key without generating an image or storing anything.</p>
             </div>
-            {imageGate?.allowed && providerConfigured ? (
-              <button
-                onClick={generateImages}
-                disabled={genLoading}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-              >
-                {genLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-                {genLoading ? 'Generating images...' : genAssets.length ? 'Regenerate images' : 'Generate Images'}
-              </button>
-            ) : (
+          ) : (
+            <div className="flex flex-col gap-3 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm text-gray-600">Approve your image briefs first. Image generation stays locked until the briefs are approved.</div>
               <button disabled title="Blocked until image briefs are approved"
                 className="inline-flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-400">
-                <Lock className="h-4 w-4" /> Generate Images - blocked until image briefs are approved
+                <Lock className="h-4 w-4" /> Generate — blocked until image briefs are approved
               </button>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* Dry-run validated preview */}
+          {dryRunResult && (
+            <div className="rounded-lg border border-gray-200 bg-white p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-gray-800">
+                <FlaskConical className="h-4 w-4 text-gray-500" /> Dry-run validation — no image generated, nothing stored
+              </div>
+              <div className="space-y-2">
+                {dryRunResult.map((v) => (
+                  <div key={v.briefId} className={`rounded-md border p-2.5 text-xs ${v.error ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${v.sectionType === 'hero' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'}`}>{v.assetRole.replace(/_/g, ' ')}</span>
+                      <span className="font-medium text-gray-800">{v.sectionName}</span>
+                      <span className="text-gray-500">{v.pageSlug}</span>
+                      <span className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-medium ${v.error ? 'border-red-200 bg-white text-red-600' : 'border-green-200 bg-white text-green-700'}`}>{v.error ? 'invalid' : 'validated'}</span>
+                    </div>
+                    {v.error ? (
+                      <div className="mt-1 text-red-600">{v.error}</div>
+                    ) : (
+                      <div className="mt-1 font-mono text-[10px] text-gray-500">expected key: {v.r2Bucket}/{v.expectedR2Key}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Assets */}
           {genAssets.length ? (
@@ -1305,10 +1464,12 @@ export default function SitemapPlannerCard() {
                             <ul className="mt-1 space-y-0.5 text-[11px] text-amber-700">{a.requiredFixes.map((f, i) => (<li key={i}>- {f}</li>))}</ul>
                           </div>
                         )}
-                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-400">
-                          {a.r2Key && <span>key: {a.r2Bucket}/{a.r2Key}</span>}
-                          {a.provider && <span>provider: {a.provider}{a.model ? ` - ${a.model}` : ''}</span>}
-                        </div>
+                        {isAdmin && (a.r2Key || a.provider) && (
+                          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-400">
+                            {a.r2Key && <span>key: {a.r2Bucket}/{a.r2Key}</span>}
+                            {a.provider && <span>provider: {a.provider}{a.model ? ` - ${a.model}` : ''}</span>}
+                          </div>
+                        )}
                         <div className="mt-2 flex flex-wrap gap-2">
                           <button onClick={() => approveAsset(a.id)} disabled={genLoading || !canApprove}
                             className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
@@ -1330,7 +1491,7 @@ export default function SitemapPlannerCard() {
             </div>
           ) : (
             <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
-              No generated images yet.{imageGate?.allowed ? ' Use Generate Images above once your briefs are approved.' : ' Approve your image briefs first.'}
+              No generated images yet.{imageGate?.allowed ? ' Use "Generate 1 test image" above once your briefs are approved.' : ' Approve your image briefs first.'}
             </div>
           )}
         </div>
