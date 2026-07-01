@@ -498,6 +498,32 @@ export function buildWebsiteAssetR2Key(params: {
   return `website-assets/${params.businessId}/${month}/brief_${params.imageBriefId}/${file}`;
 }
 
+/**
+ * Stable idempotency key for a single image render request. Two requests for the
+ * SAME logical asset (business + brief set + brief + page + section) share a key
+ * so the backend can dedupe an in-flight render and the store can reuse an
+ * already-successful asset instead of rendering again. `attempt` lets a caller
+ * intentionally force a fresh render (e.g. after a non-moderation failure).
+ */
+export function buildImageAssetIdempotencyKey(params: {
+  businessId: string;
+  imageBriefSetId: string;
+  imageBriefId: string;
+  pageSlug: string;
+  sectionName: string;
+  attempt?: number | string;
+}): string {
+  const parts = [
+    params.businessId,
+    params.imageBriefSetId,
+    params.imageBriefId,
+    params.pageSlug,
+    slugifyForKey(params.sectionName),
+    `v${params.attempt ?? 1}`,
+  ];
+  return parts.map((p) => String(p).trim()).join('::');
+}
+
 // ── Andy metadata normalization ─────────────────────────────────────────────
 
 export interface NormalizedAndyResult {
@@ -679,11 +705,17 @@ export function canApproveAsset(record: {
   qaStatus: string | null;
   status: string;
 }): { allowed: boolean; reason: string } {
+  // Allow-list: approval is ONLY possible for a successfully generated asset that
+  // is awaiting review. Every other state (failed render, qa_failed, queued,
+  // generating, already approved/rejected, archived) is blocked.
   if (record.status === 'failed') {
     return { allowed: false, reason: 'A failed asset cannot be approved.' };
   }
-  if (record.assetRole === 'hero_image' && record.qaStatus === 'failed') {
-    return { allowed: false, reason: 'A hero image that failed QA cannot be approved.' };
+  if (record.status === 'qa_failed' || record.qaStatus === 'failed') {
+    return { allowed: false, reason: 'An asset that failed QA cannot be approved. Retry or request a revision.' };
+  }
+  if (record.status !== 'generated' && record.status !== 'ready_for_review') {
+    return { allowed: false, reason: `An asset in "${record.status}" state cannot be approved.` };
   }
   return { allowed: true, reason: 'Approval allowed.' };
 }

@@ -19,11 +19,13 @@ jest.mock('@/lib/website-workflow', () => ({
 
 const store = {
   generateWebsiteImages: jest.fn(),
+  approveGeneratedImageAsset: jest.fn(),
   isImageRenderProviderConfigured: jest.fn(() => true),
 };
 jest.mock('@/lib/website-image-generation-store', () => store);
 
 import { POST as generatePOST } from '@/app/api/businesses/[id]/website/generated-images/generate/route';
+import { POST as approvePOST } from '@/app/api/businesses/[id]/website/generated-images/[assetId]/approve/route';
 
 function req(body?: any): any {
   return { json: async () => body ?? {} };
@@ -150,5 +152,44 @@ describe('token safety', () => {
     const call = store.generateWebsiteImages.mock.calls[0][0];
     expect(JSON.stringify(call)).not.toContain('SEKRET');
     expect(JSON.stringify(call)).not.toContain('evil.example');
+  });
+});
+
+// ── M5C hardening: approve route rejects non-approvable assets ──────────────
+const PA = (id: string, assetId: string) => ({ params: { id, assetId } });
+
+describe('approve route — failed / qa_failed assets cannot be approved', () => {
+  it('returns 422 when the store blocks approval of a failed asset', async () => {
+    store.approveGeneratedImageAsset.mockResolvedValue({ ok: false, error: 'A failed asset cannot be approved.' });
+    const res: any = await approvePOST(req(), PA('biz-A', 'asset-failed'));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/failed asset cannot be approved/i);
+  });
+
+  it('returns 422 when the store blocks approval of a qa_failed asset', async () => {
+    store.approveGeneratedImageAsset.mockResolvedValue({ ok: false, error: 'An asset that failed QA cannot be approved. Retry or request a revision.' });
+    const res: any = await approvePOST(req(), PA('biz-A', 'asset-qa-failed'));
+    expect(res.status).toBe(422);
+  });
+
+  it('returns 404 when the asset does not exist', async () => {
+    store.approveGeneratedImageAsset.mockResolvedValue({ ok: false, error: 'not_found' });
+    const res: any = await approvePOST(req(), PA('biz-A', 'nope'));
+    expect(res.status).toBe(404);
+  });
+
+  it('approves a reviewable asset (200)', async () => {
+    store.approveGeneratedImageAsset.mockResolvedValue({ ok: true, asset: { ...LIVE_ASSET, status: 'approved' } });
+    const res: any = await approvePOST(req(), PA('biz-A', 'asset-1'));
+    expect(res.status ?? 200).toBe(200);
+    const body = await res.json();
+    expect(body.asset.status).toBe('approved');
+  });
+
+  it('rejects unauthenticated approval (401)', async () => {
+    mockGetServerSession.mockResolvedValue(null);
+    const res: any = await approvePOST(req(), PA('biz-A', 'asset-1'));
+    expect(res.status).toBe(401);
   });
 });

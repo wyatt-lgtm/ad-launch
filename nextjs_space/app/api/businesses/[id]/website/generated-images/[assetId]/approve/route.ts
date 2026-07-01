@@ -30,7 +30,9 @@ export async function POST(
     if (result.error === 'not_found') {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    return NextResponse.json({ error: result.error }, { status: 409 });
+    // Approval blocked because the asset is in a non-approvable state
+    // (failed / qa_failed / not yet reviewable). 422 = unprocessable.
+    return NextResponse.json({ error: result.error }, { status: 422 });
   }
   return NextResponse.json({ asset: result.asset });
 }

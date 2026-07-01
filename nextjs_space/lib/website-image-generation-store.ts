@@ -39,6 +39,7 @@ import {
   canGenerateImages,
   buildDonRenderContract,
   buildWebsiteAssetR2Key,
+  buildImageAssetIdempotencyKey,
   normalizeAndyRenderMetadata,
   evaluateHeroQa,
   evaluateNonHeroQa,
@@ -50,7 +51,24 @@ import {
   type WebsiteImageRenderProvider,
   isImageRenderProviderConfigured,
   renderWebsiteImageViaTombstone,
+  warmUpRenderProvider,
 } from '@/lib/website-image-render-provider';
+
+/**
+ * A reused asset is one already successfully produced for the same logical
+ * request (durable R2 key present + in a success/review state). Reusing it makes
+ * generation idempotent: a retry never creates a duplicate successful asset.
+ */
+function isReusableSuccessfulRow(row: { status?: string | null; r2Key?: string | null }): boolean {
+  const ok = ['generated', 'ready_for_review', 'approved'];
+  return Boolean(row?.r2Key) && ok.includes(String(row?.status ?? ''));
+}
+
+/** Moderation-blocked failures must NOT be re-rendered unchanged. */
+function isModerationBlockedRow(row: { requiredFixesJson?: unknown }): boolean {
+  const fixes = Array.isArray(row?.requiredFixesJson) ? (row!.requiredFixesJson as unknown[]) : [];
+  return fixes.some((f) => /moderat|safety|blocked|policy/i.test(String(f)));
+}
 
 export { isImageRenderProviderConfigured };
 
@@ -304,6 +322,8 @@ export interface GenerateImagesResult {
   assets?: GeneratedImageAsset[];
   /** Brief ids that produced a diagnostic `failed` asset. */
   failedBriefIds?: string[];
+  /** Brief ids whose prior successful asset was reused (idempotency). */
+  reusedBriefIds?: string[];
   error?: string;
   /** True when this was a dry-run (validation only, no assets persisted). */
   dryRun?: boolean;
@@ -510,9 +530,50 @@ export async function generateWebsiteImages(params: {
 
   const persisted: AssetRow[] = [];
   const failedBriefIds: string[] = [];
+  const reusedBriefIds: string[] = [];
+
+  // Best-effort warm-up so the first live render does not eat the full cold
+  // start inside the (now longer) render timeout. Never generates an image.
+  await warmUpRenderProvider();
 
   for (const { page, brief } of capped) {
     const contract = buildDonRenderContract(brief, page, sitemap, ctx);
+
+    // ── IDEMPOTENCY ────────────────────────────────────────────────
+    // Reuse an already-successful asset for the same logical request instead of
+    // rendering again. This makes a retry safe: if the first render eventually
+    // succeeded, we return that asset rather than producing a duplicate. A prior
+    // attempt that FAILED before R2 upload does NOT block a fresh render, EXCEPT
+    // a moderation-blocked prompt which must not be re-rendered unchanged.
+    const idempotencyKey = buildImageAssetIdempotencyKey({
+      businessId,
+      imageBriefSetId: briefSetRecord.id,
+      imageBriefId: brief.briefId,
+      pageSlug: page.slug,
+      sectionName: brief.sectionName,
+    });
+    const priorRow = (await prisma.websiteGeneratedImageAsset.findFirst({
+      where: {
+        businessId,
+        imageBriefSetId: briefSetRecord.id,
+        imageBriefId: brief.briefId,
+        pageSlug: page.slug,
+        sectionName: brief.sectionName,
+      },
+      orderBy: { createdAt: 'desc' },
+    })) as unknown as AssetRow | null;
+    if (priorRow && isReusableSuccessfulRow(priorRow)) {
+      persisted.push(priorRow);
+      reusedBriefIds.push(brief.briefId);
+      continue;
+    }
+    if (priorRow && priorRow.status === 'failed' && isModerationBlockedRow(priorRow as any)) {
+      // Do not retry a moderation-blocked prompt unchanged; surface the prior row.
+      persisted.push(priorRow);
+      failedBriefIds.push(brief.briefId);
+      continue;
+    }
+
     const record = buildRecord({
       businessId,
       websiteProjectId,
@@ -526,13 +587,13 @@ export async function generateWebsiteImages(params: {
       assetRole: contract.assetRole,
     });
 
-    // Call the render provider (delegated to Tombstone). One safe retry only.
-    // The contract has no businessId field, so pass it via context — the
-    // backend needs it to build the durable, business-scoped R2 key.
-    let resp = await provider(contract, { businessId });
-    if (!resp.ok && resp.retryable && !resp.moderationBlocked) {
-      resp = await provider(contract, { businessId });
-    }
+    // Single render attempt — NO automatic in-call retry. A timeout may leave the
+    // backend render in-flight; auto-retrying would risk a duplicate render. The
+    // longer render timeout + idempotent reuse above cover the transient case; a
+    // user-triggered retry runs once and reuses any successful result.
+    // The contract has no businessId field, so pass it via context — the backend
+    // needs it to build the durable, business-scoped R2 key.
+    const resp = await provider(contract, { businessId, idempotencyKey });
 
     if (!resp.ok || !resp.result) {
       record.status = 'failed';
@@ -592,6 +653,7 @@ export async function generateWebsiteImages(params: {
     ok: true,
     assets: persisted.map(rowToAsset),
     failedBriefIds: failedBriefIds.length ? failedBriefIds : undefined,
+    reusedBriefIds: reusedBriefIds.length ? reusedBriefIds : undefined,
     ...boundaries,
   };
 }

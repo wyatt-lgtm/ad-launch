@@ -1425,8 +1425,13 @@ export default function SitemapPlannerCard() {
               {genAssets.map((a) => {
                 const url = assetUrls[a.id];
                 const isHero = a.assetRole === 'hero_image';
-                const failed = a.status === 'failed' || a.qaStatus === 'failed';
-                const canApprove = a.status !== 'failed' && !(isHero && a.qaStatus === 'failed') && a.status !== 'approved';
+                const failed = a.status === 'failed' || a.status === 'qa_failed' || a.qaStatus === 'failed';
+                // Allow-list: approval is ONLY possible for a successfully generated
+                // asset awaiting review whose QA did not fail. Failed / qa_failed /
+                // queued / generating / already-approved assets are NOT approvable.
+                const canApprove =
+                  (a.status === 'generated' || a.status === 'ready_for_review') &&
+                  a.qaStatus !== 'failed';
                 return (
                   <div key={a.id} className="rounded-lg border border-gray-100 bg-white p-3">
                     <div className="flex flex-col gap-3 sm:flex-row">
@@ -1471,13 +1476,21 @@ export default function SitemapPlannerCard() {
                           </div>
                         )}
                         <div className="mt-2 flex flex-wrap gap-2">
-                          <button onClick={() => approveAsset(a.id)} disabled={genLoading || !canApprove}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
-                            <ThumbsUp className="h-3.5 w-3.5" /> {a.status === 'approved' ? 'Approved' : 'Approve'}
-                          </button>
+                          {failed ? (
+                            // Failed / qa_failed: NO Approve action. Offer Retry + Reject only.
+                            <button onClick={() => runGenerate({ briefIds: [a.imageBriefId], maxImages: 1, dryRun: false })} disabled={genLoading}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
+                              <RefreshCw className="h-3.5 w-3.5" /> Retry
+                            </button>
+                          ) : (
+                            <button onClick={() => approveAsset(a.id)} disabled={genLoading || !canApprove}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                              <ThumbsUp className="h-3.5 w-3.5" /> {a.status === 'approved' ? 'Approved' : 'Approve'}
+                            </button>
+                          )}
                           <button onClick={() => rejectAsset(a.id)} disabled={genLoading || a.status === 'rejected'}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">
-                            <ThumbsDown className="h-3.5 w-3.5" /> Reject / revise
+                            <ThumbsDown className="h-3.5 w-3.5" /> {failed ? 'Request revision / reject' : 'Reject / revise'}
                           </button>
                         </div>
                       </div>

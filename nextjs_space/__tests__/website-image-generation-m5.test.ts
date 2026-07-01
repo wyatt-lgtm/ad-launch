@@ -14,6 +14,7 @@ import {
   deriveStatusFromQa,
   validateGeneratedAssets,
   canApproveAsset,
+  buildImageAssetIdempotencyKey,
   isSignedUrl,
   isDurableR2Reference,
   briefRequestsLogoAsHero,
@@ -296,5 +297,50 @@ describe('safety source scan', () => {
     const code = readCode('lib/website-image-generation.ts');
     expect(code).toContain("GENERATED_IMAGE_BUCKET = 'tombstoner2'");
     expect(code).toContain("CUSTOMER_ASSETS_BUCKET = 'tombstoner2customerassets'");
+  });
+});
+
+// ── M5C hardening: approval allow-list + idempotency key ────────────────────
+describe('canApproveAsset — approval allow-list', () => {
+  it('allows a generated asset awaiting review', () => {
+    expect(canApproveAsset({ assetRole: 'hero_image', qaStatus: 'passed', status: 'generated' }).allowed).toBe(true);
+    expect(canApproveAsset({ assetRole: 'hero_image', qaStatus: 'passed', status: 'ready_for_review' }).allowed).toBe(true);
+  });
+  it('blocks a failed render', () => {
+    const r = canApproveAsset({ assetRole: 'hero_image', qaStatus: 'failed', status: 'failed' });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/failed asset cannot be approved/i);
+  });
+  it('blocks a qa_failed asset', () => {
+    const r = canApproveAsset({ assetRole: 'hero_image', qaStatus: 'failed', status: 'qa_failed' });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/failed QA/i);
+  });
+  it('blocks non-reviewable states (queued / generating / approved)', () => {
+    expect(canApproveAsset({ assetRole: 'hero_image', qaStatus: null, status: 'queued' }).allowed).toBe(false);
+    expect(canApproveAsset({ assetRole: 'hero_image', qaStatus: null, status: 'generating' }).allowed).toBe(false);
+    expect(canApproveAsset({ assetRole: 'hero_image', qaStatus: 'passed', status: 'approved' }).allowed).toBe(false);
+  });
+});
+
+describe('buildImageAssetIdempotencyKey', () => {
+  const base = { businessId: 'biz1', imageBriefSetId: 'set1', imageBriefId: 'b1', pageSlug: '/', sectionName: 'Hero Section' };
+  it('is stable for identical inputs', () => {
+    expect(buildImageAssetIdempotencyKey(base)).toBe(buildImageAssetIdempotencyKey(base));
+  });
+  it('includes every identifying part and defaults version to v1', () => {
+    const key = buildImageAssetIdempotencyKey(base);
+    expect(key).toContain('biz1');
+    expect(key).toContain('set1');
+    expect(key).toContain('b1');
+    expect(key).toContain('hero-section');
+    expect(key.endsWith('::v1')).toBe(true);
+  });
+  it('changes when the attempt/version changes', () => {
+    expect(buildImageAssetIdempotencyKey({ ...base, attempt: 2 })).not.toBe(buildImageAssetIdempotencyKey(base));
+  });
+  it('differs across briefs and sections', () => {
+    expect(buildImageAssetIdempotencyKey({ ...base, imageBriefId: 'b2' })).not.toBe(buildImageAssetIdempotencyKey(base));
+    expect(buildImageAssetIdempotencyKey({ ...base, sectionName: 'Other' })).not.toBe(buildImageAssetIdempotencyKey(base));
   });
 });

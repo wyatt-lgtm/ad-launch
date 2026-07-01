@@ -91,10 +91,21 @@ function passingProvider(scores?: Record<string, number>): WebsiteImageRenderPro
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // By default there is NO prior asset for the request (idempotency lookup).
+  prisma.websiteGeneratedImageAsset.findFirst.mockResolvedValue(null);
   prisma.websiteGeneratedImageAsset.create.mockImplementation(async ({ data }: any) => ({
     ...data, id: `row_${Math.random().toString(36).slice(2, 8)}`, createdAt: new Date(), updatedAt: new Date(),
   }));
 });
+
+// A provider that fails cleanly (e.g. a render timeout) and reports it as retryable.
+function timingOutProvider(): WebsiteImageRenderProvider {
+  return jest.fn(async () => ({
+    ok: false,
+    error: 'Render provider unreachable: The operation was aborted due to timeout',
+    retryable: true,
+  }));
+}
 
 describe('hard gate blocks with no rows written', () => {
   it('blocks when the brief set is not approved and writes nothing', async () => {
@@ -173,5 +184,81 @@ describe('live result persistence', () => {
     expect(res.ok).toBe(true);
     expect(res.assets![0].qaStatus).toBe('failed');
     expect(res.assets![0].status).toBe('qa_failed');
+  });
+});
+
+describe('M5C hardening — timeout, idempotency, no auto-retry', () => {
+  it('stores a clean failed asset when the render times out (no r2Key, fixes recorded)', async () => {
+    setupGatePasses([page('/', [heroBrief({ briefId: 'b1' })])]);
+    const provider = timingOutProvider();
+    const res = await generateWebsiteImages({ businessId: 'biz1', briefSetId: 'set1', provider, limit: 1 });
+    expect(res.ok).toBe(true);
+    const a = res.assets![0];
+    expect(a.status).toBe('failed');
+    expect(a.qaStatus).toBe('failed');
+    expect(a.r2Key).toBeFalsy();
+    expect(a.requiredFixes.join(' ')).toMatch(/timeout/i);
+    expect(res.failedBriefIds).toContain('b1');
+  });
+
+  it('does NOT auto-retry — the provider is called exactly once on a retryable failure', async () => {
+    setupGatePasses([page('/', [heroBrief({ briefId: 'b1' })])]);
+    const provider = timingOutProvider();
+    await generateWebsiteImages({ businessId: 'biz1', briefSetId: 'set1', provider, limit: 1 });
+    expect(provider).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses a prior successful asset instead of rendering again (idempotency)', async () => {
+    setupGatePasses([page('/', [heroBrief({ briefId: 'b1' })])]);
+    const priorSuccess = {
+      id: 'existing_row', businessId: 'biz1', imageBriefSetId: 'set1', imageBriefId: 'b1',
+      pageSlug: '/', sectionName: 'Hero', assetRole: 'hero_image',
+      status: 'ready_for_review', qaStatus: 'passed',
+      r2Bucket: GENERATED_IMAGE_BUCKET, r2Key: durableKey('b1', 'Hero'),
+      requiredFixesJson: [], createdAt: new Date(), updatedAt: new Date(),
+    };
+    prisma.websiteGeneratedImageAsset.findFirst.mockResolvedValue(priorSuccess);
+    const provider = passingProvider();
+    const res = await generateWebsiteImages({ businessId: 'biz1', briefSetId: 'set1', provider, limit: 1 });
+    expect(res.ok).toBe(true);
+    expect(provider).not.toHaveBeenCalled();
+    expect(prisma.websiteGeneratedImageAsset.create).not.toHaveBeenCalled();
+    expect(res.reusedBriefIds).toContain('b1');
+    expect(res.assets![0].r2Key).toBe(durableKey('b1', 'Hero'));
+  });
+
+  it('does not re-render a moderation-blocked prior failure unchanged', async () => {
+    setupGatePasses([page('/', [heroBrief({ briefId: 'b1' })])]);
+    const priorBlocked = {
+      id: 'blocked_row', businessId: 'biz1', imageBriefSetId: 'set1', imageBriefId: 'b1',
+      pageSlug: '/', sectionName: 'Hero', assetRole: 'hero_image',
+      status: 'failed', qaStatus: 'failed', r2Bucket: null, r2Key: null,
+      requiredFixesJson: ['Prompt blocked by safety moderation policy'],
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    prisma.websiteGeneratedImageAsset.findFirst.mockResolvedValue(priorBlocked);
+    const provider = passingProvider();
+    const res = await generateWebsiteImages({ businessId: 'biz1', briefSetId: 'set1', provider, limit: 1 });
+    expect(res.ok).toBe(true);
+    expect(provider).not.toHaveBeenCalled();
+    expect(prisma.websiteGeneratedImageAsset.create).not.toHaveBeenCalled();
+    expect(res.failedBriefIds).toContain('b1');
+  });
+
+  it('DOES re-render a prior non-moderation failure (transient timeout is retryable)', async () => {
+    setupGatePasses([page('/', [heroBrief({ briefId: 'b1' })])]);
+    const priorTransient = {
+      id: 'transient_row', businessId: 'biz1', imageBriefSetId: 'set1', imageBriefId: 'b1',
+      pageSlug: '/', sectionName: 'Hero', assetRole: 'hero_image',
+      status: 'failed', qaStatus: 'failed', r2Bucket: null, r2Key: null,
+      requiredFixesJson: ['Render provider unreachable: The operation was aborted due to timeout'],
+      createdAt: new Date(), updatedAt: new Date(),
+    };
+    prisma.websiteGeneratedImageAsset.findFirst.mockResolvedValue(priorTransient);
+    const provider = passingProvider();
+    const res = await generateWebsiteImages({ businessId: 'biz1', briefSetId: 'set1', provider, limit: 1 });
+    expect(res.ok).toBe(true);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(res.assets![0].r2Key).toBe(durableKey('b1', 'Hero'));
   });
 });

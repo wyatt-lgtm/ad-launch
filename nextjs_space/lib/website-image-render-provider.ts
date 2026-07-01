@@ -22,6 +22,22 @@ import type { DonRenderContract } from '@/lib/website-image-generation';
 const TOMBSTONE_URL =
   process.env.TOMBSTONE_API_URL ?? 'https://tombstone-api-xjc4.onrender.com';
 
+/**
+ * Client-side timeout for the website image render call ONLY (this seam). A
+ * live hero render on a cold backend can take multiple minutes, so the default
+ * is generous (240s) and is configurable via WEBSITE_RENDER_TIMEOUT_MS. It is
+ * clamped to a sane band and is NOT applied to any other API. Unrelated
+ * network calls elsewhere keep their own timeouts.
+ */
+const RENDER_TIMEOUT_MIN_MS = 30_000;
+const RENDER_TIMEOUT_MAX_MS = 300_000;
+const RENDER_TIMEOUT_DEFAULT_MS = 240_000;
+export function websiteRenderTimeoutMs(): number {
+  const raw = Number(process.env.WEBSITE_RENDER_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return RENDER_TIMEOUT_DEFAULT_MS;
+  return Math.min(Math.max(Math.floor(raw), RENDER_TIMEOUT_MIN_MS), RENDER_TIMEOUT_MAX_MS);
+}
+
 /** Raw render result returned by the Tombstone backend (validated downstream). */
 export interface RenderProviderResult {
   provider?: string;
@@ -70,6 +86,14 @@ export interface RenderProviderContext {
    * expected key at zero cost. No asset row is persisted for dry-run results.
    */
   dryRun?: boolean;
+  /**
+   * Stable per-request idempotency key (businessId + brief set + brief + page +
+   * section + attempt). Sent to the backend so a backend that supports it can
+   * dedupe an in-flight render and avoid producing a duplicate R2 object if a
+   * retry arrives while the first render is still running. Harmless if the
+   * backend ignores it.
+   */
+  idempotencyKey?: string;
 }
 
 /**
@@ -85,6 +109,28 @@ export type WebsiteImageRenderProvider = (
 /** True when the render provider (Tombstone backend) is reachable/configured. */
 export function isImageRenderProviderConfigured(): boolean {
   return Boolean(TOMBSTONE_URL);
+}
+
+/**
+ * Best-effort warm-up ping so the first live render does not pay the full cold
+ * start inside the render call. Hits a cheap GET on the backend root with a
+ * short timeout and NEVER triggers image generation. All errors are swallowed;
+ * warm-up must never block or fail a render.
+ */
+export async function warmUpRenderProvider(): Promise<boolean> {
+  const base = TOMBSTONE_URL.replace(/\/+$/, '');
+  for (const path of ['/health', '/']) {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'GET',
+        signal: AbortSignal.timeout ? AbortSignal.timeout(20_000) : undefined,
+      });
+      if (res.ok) return true;
+    } catch {
+      /* ignore — warm-up is best-effort only */
+    }
+  }
+  return false;
 }
 
 /**
@@ -108,9 +154,10 @@ export async function renderWebsiteImageViaTombstone(
         contract,
         businessId: ctx?.businessId,
         dry_run: ctx?.dryRun === true,
+        idempotency_key: ctx?.idempotencyKey,
       }),
-      // Keep a bounded wait so a cold backend does not hang the request.
-      signal: AbortSignal.timeout ? AbortSignal.timeout(120_000) : undefined,
+      // Bounded wait scoped to THIS render call only (see websiteRenderTimeoutMs).
+      signal: AbortSignal.timeout ? AbortSignal.timeout(websiteRenderTimeoutMs()) : undefined,
     });
   } catch (err: any) {
     return {
