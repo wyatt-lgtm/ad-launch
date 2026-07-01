@@ -134,6 +134,7 @@ model Business {
   websiteSitemapRevisions   WebsiteSitemapRevision[]
   websitePageCopies         WebsitePageCopy[]
   websiteImageBriefs        WebsiteImageBrief[]
+  websiteGeneratedImages    WebsiteGeneratedImageAsset[]
   websiteQaResults   WebsiteQaResult[]
 
   // ── Static-first site generation: deployment targets / builds / env ─
@@ -2767,6 +2768,7 @@ model WebsiteProject {
   sitemaps          WebsiteSitemap[]
   pageCopies        WebsitePageCopy[]
   imageBriefs       WebsiteImageBrief[]
+  generatedImages   WebsiteGeneratedImageAsset[]
   pages             WebsitePage[]
   sections          WebsiteSection[]
   assets            WebsiteAsset[]
@@ -3362,4 +3364,71 @@ model WebsiteImageBrief {
   @@index([businessId])
   @@index([websiteProjectId])
   @@index([sitemapId])
+}
+
+// ── Milestone 5 — Generated website image assets (behind approved briefs) ──
+// One row per generated (or diagnostic/failed) image asset produced from an
+// APPROVED image brief. Durable R2 bucket/key are stored (never a signed URL);
+// display URLs are resolved on demand from the R2 key. Hero assets carry QA
+// scores. NO static build / publish / deploy is ever performed by this model.
+model WebsiteGeneratedImageAsset {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+  sitemapId        String
+  copyArtifactId   String
+  // The brief SET this asset was generated from + the individual brief.
+  imageBriefSetId  String
+  imageBriefId     String
+
+  pageSlug    String
+  sectionName String
+  // sectionType: hero | section
+  sectionType String
+  // assetRole: hero_image | section_image | supporting_image
+  assetRole   String @default("hero_image")
+
+  // status: queued | generating | generated | qa_failed | ready_for_review |
+  //         approved | rejected | failed | archived
+  status String @default("queued")
+
+  // Provenance of the render (delegated to Tombstone Don/Andy pipeline).
+  provider String?
+  model    String?
+
+  // Durable R2 reference (NEVER a signed URL). Display URLs resolve from key.
+  r2Bucket String?
+  r2Key    String?
+  mimeType String?
+  width    Int?
+  height   Int?
+
+  altText        String?
+  promptSummary  String?
+  visualRationale String?
+
+  // Hero QA scores (0-100). Null for non-hero unless scored.
+  qualityScore        Int?
+  brandFitScore       Int?
+  mobileSafeScore     Int?
+  textReadabilityScore Int?
+  focalPointScore     Int?
+  // qaStatus: pending | passed | failed | skipped
+  qaStatus        String?
+  requiredFixesJson Json?
+
+  generatedByUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project  WebsiteProject? @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([sitemapId])
+  @@index([imageBriefSetId])
+  @@index([imageBriefId])
+  @@index([businessId, pageSlug])
 }

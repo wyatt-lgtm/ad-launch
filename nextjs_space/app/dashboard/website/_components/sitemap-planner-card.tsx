@@ -5,7 +5,8 @@ import {
   Map as MapIcon, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
   Plus, Trash2, Lock, ListTree, ShieldCheck, FileText, Sparkles,
   ChevronDown, ChevronRight, Image as ImageIcon,
-  Palette, Crop, Eye, ThumbsUp, Ban, Shield,
+  Palette, Crop, Eye, ThumbsUp, ThumbsDown, Ban, Shield,
+  Wand2, Gauge,
 } from 'lucide-react';
 import { useActiveBusiness } from '@/hooks/use-active-business';
 
@@ -194,7 +195,55 @@ const BRIEF_STATUS_BADGE: Record<string, string> = {
   archived: 'bg-gray-100 text-gray-400 border-gray-200',
 };
 
-type TabKey = 'services' | 'sitemap' | 'copy' | 'imageBriefs';
+interface ImageGenGate {
+  allowed: boolean;
+  code: string;
+  reason: string;
+  blockingBriefIds?: string[];
+}
+
+interface GeneratedImageAsset {
+  id: string;
+  imageBriefSetId: string;
+  imageBriefId: string;
+  pageSlug: string;
+  sectionName: string;
+  sectionType: string;
+  assetRole: string;
+  status: string;
+  provider: string | null;
+  model: string | null;
+  r2Bucket: string | null;
+  r2Key: string | null;
+  mimeType: string | null;
+  width: number | null;
+  height: number | null;
+  altText: string | null;
+  promptSummary: string | null;
+  visualRationale: string | null;
+  qualityScore: number | null;
+  brandFitScore: number | null;
+  mobileSafeScore: number | null;
+  textReadabilityScore: number | null;
+  focalPointScore: number | null;
+  qaStatus: string | null;
+  requiredFixes: string[];
+  createdAt: string;
+}
+
+const ASSET_STATUS_BADGE: Record<string, string> = {
+  queued: 'bg-gray-100 text-gray-600 border-gray-200',
+  generating: 'bg-blue-100 text-blue-700 border-blue-200',
+  generated: 'bg-blue-100 text-blue-700 border-blue-200',
+  ready_for_review: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+  qa_failed: 'bg-red-100 text-red-700 border-red-200',
+  approved: 'bg-green-100 text-green-700 border-green-200',
+  rejected: 'bg-amber-100 text-amber-700 border-amber-200',
+  failed: 'bg-red-100 text-red-700 border-red-200',
+  archived: 'bg-gray-100 text-gray-400 border-gray-200',
+};
+
+type TabKey = 'services' | 'sitemap' | 'copy' | 'imageBriefs' | 'generatedImages';
 
 export default function SitemapPlannerCard() {
   const bizCtx = useActiveBusiness();
@@ -224,6 +273,15 @@ export default function SitemapPlannerCard() {
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefIssues, setBriefIssues] = useState<any[]>([]);
   const [openBriefSlug, setOpenBriefSlug] = useState<string | null>(null);
+
+  // ── Generated images (Milestone 5) ──
+  const [imageGate, setImageGate] = useState<ImageGenGate | null>(null);
+  const [genAssets, setGenAssets] = useState<GeneratedImageAsset[]>([]);
+  const [genBriefSetId, setGenBriefSetId] = useState<string | null>(null);
+  const [genBriefSetStatus, setGenBriefSetStatus] = useState<string | null>(null);
+  const [providerConfigured, setProviderConfigured] = useState(true);
+  const [genLoading, setGenLoading] = useState(false);
+  const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
 
   const [newServiceName, setNewServiceName] = useState('');
   const [newPageTitle, setNewPageTitle] = useState('');
@@ -285,8 +343,88 @@ export default function SitemapPlannerCard() {
     }
   }, [businessId]);
 
-  useEffect(() => { loadServices(); loadSitemap(); loadGate(); loadCopy(); loadImageBriefs(); }, [loadServices, loadSitemap, loadGate, loadCopy, loadImageBriefs]);
+  const resolveAssetUrls = useCallback(async (assets: GeneratedImageAsset[]) => {
+    const pending = assets.filter((a) => a.r2Key && !assetUrls[a.id]);
+    if (!pending.length) return;
+    const entries = await Promise.all(pending.map(async (a) => {
+      try {
+        const r = await fetch(`/api/resolve-image?key=${encodeURIComponent(a.r2Key as string)}`);
+        if (!r.ok) return null;
+        const d = await r.json();
+        return d?.url ? ([a.id, d.url] as [string, string]) : null;
+      } catch { return null; }
+    }));
+    const next: Record<string, string> = {};
+    for (const e of entries) { if (e) next[e[0]] = e[1]; }
+    if (Object.keys(next).length) setAssetUrls((prev) => ({ ...prev, ...next }));
+  }, [assetUrls]);
+
+  const loadGeneratedImages = useCallback(async () => {
+    if (!businessId) return;
+    const res = await fetch(`/api/businesses/${businessId}/website/generated-images`);
+    if (res.ok) {
+      const data = await res.json();
+      setImageGate(data.imageGate || null);
+      setGenAssets(data.assets || []);
+      setGenBriefSetId(data.briefSetId || null);
+      setGenBriefSetStatus(data.briefSetStatus || null);
+      setProviderConfigured(data.providerConfigured !== false);
+      resolveAssetUrls(data.assets || []);
+    }
+  }, [businessId, resolveAssetUrls]);
+
+  useEffect(() => { loadServices(); loadSitemap(); loadGate(); loadCopy(); loadImageBriefs(); loadGeneratedImages(); }, [loadServices, loadSitemap, loadGate, loadCopy, loadImageBriefs, loadGeneratedImages]);
   useEffect(() => { loadRevisions(); }, [loadRevisions]);
+
+  // ── Generated image actions (Milestone 5) ──
+  const generateImages = async () => {
+    if (!businessId) return;
+    setGenLoading(true);
+    try {
+      const res = await fetch(`/api/businesses/${businessId}/website/generated-images`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setGenAssets(data.assets || []);
+        resolveAssetUrls(data.assets || []);
+        const n = (data.assets || []).length;
+        const f = (data.failedBriefIds || []).length;
+        notify(`Generated ${n} asset${n === 1 ? '' : 's'}${f ? ` (${f} failed QA/render)` : ''}. No static build, publish, or deploy was run.`);
+      } else if (res.status === 422 && data.imageGate) {
+        setImageGate(data.imageGate);
+        notify(data.error || 'Image generation is blocked until the image briefs are approved.');
+      } else if (res.status === 503) {
+        notify(data.error || 'Image generation is not configured.');
+      } else {
+        notify(data.error || 'Could not generate images.');
+      }
+    } finally { setGenLoading(false); }
+  };
+
+  const approveAsset = async (assetId: string) => {
+    if (!businessId) return;
+    setGenLoading(true);
+    try {
+      const res = await fetch(`/api/businesses/${businessId}/website/generated-images/${assetId}/approve`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { await loadGeneratedImages(); notify('Asset approved.'); }
+      else notify(data.error || 'Could not approve asset.');
+    } finally { setGenLoading(false); }
+  };
+
+  const rejectAsset = async (assetId: string) => {
+    if (!businessId) return;
+    setGenLoading(true);
+    try {
+      const res = await fetch(`/api/businesses/${businessId}/website/generated-images/${assetId}/reject`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'Revision requested from review.' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { await loadGeneratedImages(); notify('Asset rejected / revision requested.'); }
+      else notify(data.error || 'Could not reject asset.');
+    } finally { setGenLoading(false); }
+  };
 
   // ── Copy actions ─────────────────────────────────────────────────────────
   const generateCopy = async () => {
@@ -527,6 +665,7 @@ export default function SitemapPlannerCard() {
           ['sitemap', 'Sitemap Review'],
           ['copy', 'Copy Review'],
           ['imageBriefs', 'Image Briefs'],
+          ['generatedImages', 'Generated Images'],
         ] as [TabKey, string][]).map(([key, label]) => (
           <button
             key={key}
@@ -1068,6 +1207,135 @@ export default function SitemapPlannerCard() {
           )}
         </div>
       )}
+
+      {tab === 'generatedImages' && (
+        <div className="p-5 space-y-4">
+          {/* Gate status */}
+          <div className="rounded-lg border border-gray-100 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-900">
+                <ImageIcon className="h-4 w-4 text-indigo-600" /> Image generation gate
+              </div>
+              <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                imageGate?.allowed ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200'
+              }`}>
+                {imageGate?.allowed ? <ShieldCheck className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                {imageGate?.allowed ? 'Allowed - approved briefs present' : 'Blocked - approve image briefs first'}
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-gray-600">{imageGate?.reason || 'Loading gate status...'}</p>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500">
+              <span className="inline-flex items-center gap-1">
+                {sitemapId ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <XCircle className="h-3.5 w-3.5 text-gray-400" />}
+                Approved sitemap {sitemapId ? 'present' : 'missing'}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                {genBriefSetId ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : <XCircle className="h-3.5 w-3.5 text-gray-400" />}
+                Image brief set {genBriefSetId ? `present (${(genBriefSetStatus || '').replace(/_/g, ' ') || 'draft'})` : 'missing'}
+              </span>
+            </div>
+          </div>
+
+          {/* Generate action */}
+          <div className="flex flex-col gap-3 rounded-lg border border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-gray-600">
+              {imageGate?.allowed
+                ? 'Generate website image assets from your approved image briefs. Each render is validated by Don, produced or selected by Andy, stored durably, and hero images pass QA before they can be approved.'
+                : 'Approve your image briefs first. Image generation stays locked until the briefs are approved.'}
+            </div>
+            {imageGate?.allowed && providerConfigured ? (
+              <button
+                onClick={generateImages}
+                disabled={genLoading}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {genLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                {genLoading ? 'Generating images...' : genAssets.length ? 'Regenerate images' : 'Generate Images'}
+              </button>
+            ) : (
+              <button disabled title="Blocked until image briefs are approved"
+                className="inline-flex shrink-0 cursor-not-allowed items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-400">
+                <Lock className="h-4 w-4" /> Generate Images - blocked until image briefs are approved
+              </button>
+            )}
+          </div>
+
+          {/* Assets */}
+          {genAssets.length ? (
+            <div className="space-y-3">
+              {genAssets.map((a) => {
+                const url = assetUrls[a.id];
+                const isHero = a.assetRole === 'hero_image';
+                const failed = a.status === 'failed' || a.qaStatus === 'failed';
+                const canApprove = a.status !== 'failed' && !(isHero && a.qaStatus === 'failed') && a.status !== 'approved';
+                return (
+                  <div key={a.id} className="rounded-lg border border-gray-100 bg-white p-3">
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                      <div className="relative h-32 w-full shrink-0 overflow-hidden rounded-md bg-gray-100 sm:w-48">
+                        {url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={url} alt={a.altText || `${a.sectionName} image`} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[11px] text-gray-400">
+                            {failed ? 'No asset (failed)' : 'Preview unavailable'}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${isHero ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'}`}>{a.assetRole.replace(/_/g, ' ')}</span>
+                          <span className="font-medium text-gray-800">{a.sectionName}</span>
+                          <span className="text-xs text-gray-500">{a.pageSlug}</span>
+                          <span className={`ml-auto rounded-full border px-2 py-0.5 text-[11px] font-medium ${ASSET_STATUS_BADGE[a.status] || ASSET_STATUS_BADGE.queued}`}>{a.status.replace(/_/g, ' ')}</span>
+                        </div>
+                        {a.visualRationale && <div className="mt-1 text-xs text-gray-600">{a.visualRationale}</div>}
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                          {isHero && a.qualityScore != null && (
+                            <span className="inline-flex items-center gap-1 rounded bg-gray-50 px-2 py-0.5 text-gray-600 border border-gray-200"><Gauge className="h-3 w-3" /> hero {a.qualityScore}</span>
+                          )}
+                          {a.mobileSafeScore != null && <span className="rounded bg-gray-50 px-2 py-0.5 text-gray-600 border border-gray-200">mobile {a.mobileSafeScore}</span>}
+                          {a.brandFitScore != null && <span className="rounded bg-gray-50 px-2 py-0.5 text-gray-600 border border-gray-200">brand {a.brandFitScore}</span>}
+                          {a.textReadabilityScore != null && <span className="rounded bg-gray-50 px-2 py-0.5 text-gray-600 border border-gray-200">text {a.textReadabilityScore}</span>}
+                          {a.focalPointScore != null && <span className="rounded bg-gray-50 px-2 py-0.5 text-gray-600 border border-gray-200">focal {a.focalPointScore}</span>}
+                          {a.qaStatus && <span className={`rounded px-2 py-0.5 border ${a.qaStatus === 'passed' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>QA {a.qaStatus}</span>}
+                        </div>
+                        {a.requiredFixes.length > 0 && (
+                          <div className="mt-2 rounded border border-amber-100 bg-amber-50 p-2">
+                            <div className="flex items-center gap-1 text-[11px] font-medium text-amber-700"><AlertTriangle className="h-3 w-3" /> Required fixes</div>
+                            <ul className="mt-1 space-y-0.5 text-[11px] text-amber-700">{a.requiredFixes.map((f, i) => (<li key={i}>- {f}</li>))}</ul>
+                          </div>
+                        )}
+                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-400">
+                          {a.r2Key && <span>key: {a.r2Bucket}/{a.r2Key}</span>}
+                          {a.provider && <span>provider: {a.provider}{a.model ? ` - ${a.model}` : ''}</span>}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button onClick={() => approveAsset(a.id)} disabled={genLoading || !canApprove}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                            <ThumbsUp className="h-3.5 w-3.5" /> {a.status === 'approved' ? 'Approved' : 'Approve'}
+                          </button>
+                          <button onClick={() => rejectAsset(a.id)} disabled={genLoading || a.status === 'rejected'}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">
+                            <ThumbsDown className="h-3.5 w-3.5" /> Reject / revise
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
+                Generated assets link back to their source brief, page, and section. Static build and mobile QA are available in a later milestone - no build, publish, or deploy is run here.
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
+              No generated images yet.{imageGate?.allowed ? ' Use Generate Images above once your briefs are approved.' : ' Approve your image briefs first.'}
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }
