@@ -101,7 +101,10 @@ export default function DashboardContent() {
   const openSlpModal = (biz: BusinessItem) => {
     setSlpModalBizId(biz.id);
     setSlpUrl(biz.defaultSocialLandingPageUrl || '');
-    setSlpEnabled(biz.defaultSocialLandingPageEnabled || false);
+    // Default the "add to posts" toggle ON when configuring a brand-new link so a
+    // saved URL is actually used. For an already-configured business, respect its
+    // stored preference.
+    setSlpEnabled(biz.defaultSocialLandingPageUrl ? biz.defaultSocialLandingPageEnabled : true);
     setSlpCtaText(biz.defaultSocialCtaText || 'Learn more here:');
     setSlpSaving(false);
     setSlpError(null);
@@ -710,7 +713,7 @@ export default function DashboardContent() {
                   <input
                     type="url"
                     value={slpUrl}
-                    onChange={e => { setSlpUrl(e.target.value); setSlpUrlError(null); }}
+                    onChange={e => { const v = e.target.value; setSlpUrl(v); setSlpUrlError(null); if (v.trim() && !slpEnabled) setSlpEnabled(true); }}
                     onBlur={() => slpUrl.trim() && validateSlpUrl(slpUrl)}
                     placeholder="https://example.com/offer"
                     className={`w-full border rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none ${
