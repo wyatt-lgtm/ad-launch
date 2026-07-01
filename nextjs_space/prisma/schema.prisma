@@ -127,6 +127,11 @@ model Business {
   websitePages       WebsitePage[]
   websiteSections    WebsiteSection[]
   websiteAssets      WebsiteAsset[]
+
+  // ── Sitemap-first website generation (Milestone 1) ─────────────────
+  websiteServiceDiscoveries WebsiteServiceDiscovery[]
+  websiteSitemaps           WebsiteSitemap[]
+  websiteSitemapRevisions   WebsiteSitemapRevision[]
   websiteQaResults   WebsiteQaResult[]
 
   // ── Static-first site generation: deployment targets / builds / env ─
@@ -2756,6 +2761,8 @@ model WebsiteProject {
   business          Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
   concepts          WebsiteConcept[]
   productions       WebsiteProduction[]
+  serviceDiscoveries WebsiteServiceDiscovery[]
+  sitemaps          WebsiteSitemap[]
   pages             WebsitePage[]
   sections          WebsiteSection[]
   assets            WebsiteAsset[]
@@ -3182,4 +3189,99 @@ model ProviderUsageEvent {
   @@index([businessId])
   @@index([businessId, provider])
   @@index([businessId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Sitemap-first Website Generation (Milestone 1)
+// Additive, business-scoped artifact storage for the sitemap-first workflow:
+//   Service Discovery → Sitemap Proposal → User Revisions → Approval.
+// No page copy, no image generation, no publishing, no deployment here.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Classified service-discovery snapshot for a business (website_service_discovery.json).
+model WebsiteServiceDiscovery {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+
+  // Full classified discovery artifact (services with confirmationStatus/source/evidence/confidence).
+  discoveryJson          Json
+  // Denormalized counts for quick UI/gates.
+  confirmedCount         Int @default(0)
+  likelyCount            Int @default(0)
+  needsConfirmationCount Int @default(0)
+  rejectedCount          Int @default(0)
+
+  source  String @default("agent_research")
+  version Int    @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project  WebsiteProject? @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+}
+
+/// The website_sitemap.json artifact for a business (hub-and-spoke plan + approval state).
+model WebsiteSitemap {
+  id               String @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+
+  // approval_status: draft | pending_user_review | approved | rejected
+  approvalStatus String @default("pending_user_review")
+
+  businessName String?
+  industry     String?
+  websiteGoal  String?
+
+  // Full sitemap artifact JSON (schema per Milestone 1 spec).
+  sitemapJson Json
+
+  version          Int       @default(1)
+  approvedByUserId String?
+  approvedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project   WebsiteProject?          @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  revisions WebsiteSitemapRevision[]
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([approvalStatus])
+}
+
+/// Audit record of a user revision to a sitemap (add/remove/rename/reorder page,
+/// add/remove section, confirm services, approve). User-added pages record source=user_requested.
+model WebsiteSitemapRevision {
+  id         String @id @default(cuid())
+  businessId String
+  sitemapId  String
+
+  // action: add_page | remove_page | rename_page | reorder_page |
+  //         add_section | remove_section | confirm_services | approve | other
+  action String
+
+  detailJson Json?
+
+  // For user-added pages.
+  pageTitle         String?
+  pageSlug          String?
+  pageType          String?
+  pageSource        String? // user_requested for user-added pages
+  requestedByUserId String?
+
+  createdAt DateTime @default(now())
+
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sitemap  WebsiteSitemap @relation(fields: [sitemapId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([sitemapId])
 }
