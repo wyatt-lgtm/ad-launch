@@ -141,6 +141,7 @@ model Business {
   siteDeploymentTargets    SiteDeploymentTarget[]
   siteBuilds               SiteBuild[]
   siteEnvironmentVariables SiteEnvironmentVariable[]
+  websiteMobileQas         WebsiteMobileQa[]
 
   // ── Industry match (from Jim Bridger / owner-confirmed) ────────────
   matchedIndustryId         String?
@@ -2775,6 +2776,7 @@ model WebsiteProject {
   qaResults         WebsiteQaResult[]
   deploymentTargets SiteDeploymentTarget[]
   builds            SiteBuild[]
+  mobileQas         WebsiteMobileQa[]
 
   @@index([businessId])
   @@index([conceptStatus])
@@ -3125,12 +3127,51 @@ model SiteBuild {
   project          WebsiteProject        @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
   production       WebsiteProduction?    @relation(fields: [websiteProductionId], references: [id], onDelete: SetNull)
   deploymentTarget SiteDeploymentTarget? @relation(fields: [deploymentTargetId], references: [id], onDelete: SetNull)
+  mobileQas        WebsiteMobileQa[]
 
   @@index([businessId])
   @@index([websiteProjectId])
   @@index([websiteProductionId])
   @@index([deploymentTargetId])
   @@index([buildStatus])
+}
+
+
+/// Milestone 7 — Mobile / responsive QA result for a generated static preview
+/// package. Read-only inspection of the M6 static build (re-rendered from the
+/// approved sitemap-first blueprint). NEVER deploys, publishes, generates
+/// images/copy, or advances the SiteBuild status. Durable + auditable copy of
+/// the QA report lives in `qaJson`; artifacts never contain secrets/signed URLs.
+model WebsiteMobileQa {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+  siteBuildId      String
+
+  // status: pending | running | passed | failed | blocked | error | archived
+  status String @default("pending")
+
+  qaJson Json?
+
+  score              Int?
+  passed             Boolean @default(false)
+  checkedRoutesCount Int     @default(0)
+  failedRoutesCount  Int     @default(0)
+  warningCount       Int     @default(0)
+
+  createdByUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project   WebsiteProject? @relation(fields: [websiteProjectId], references: [id], onDelete: SetNull)
+  siteBuild SiteBuild       @relation(fields: [siteBuildId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([siteBuildId])
+  @@index([status])
 }
 
 /// An environment variable associated with a deployment target. Public
