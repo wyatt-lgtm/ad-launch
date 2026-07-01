@@ -466,9 +466,11 @@ export async function generateWebsiteImages(params: {
     });
 
     // Call the render provider (delegated to Tombstone). One safe retry only.
-    let resp = await provider(contract);
+    // The contract has no businessId field, so pass it via context — the
+    // backend needs it to build the durable, business-scoped R2 key.
+    let resp = await provider(contract, { businessId });
     if (!resp.ok && resp.retryable && !resp.moderationBlocked) {
-      resp = await provider(contract);
+      resp = await provider(contract, { businessId });
     }
 
     if (!resp.ok || !resp.result) {

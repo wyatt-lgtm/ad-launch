@@ -53,12 +53,22 @@ export interface RenderProviderResponse {
 }
 
 /**
- * A render provider takes a Don contract and returns a structured render result.
- * The default implementation delegates to the Tombstone backend; tests inject a
- * mock.
+ * Extra per-call context the provider needs but that is not part of the Don
+ * render contract itself (the contract has no businessId field). The backend
+ * uses `businessId` to build the durable, business-scoped R2 key.
+ */
+export interface RenderProviderContext {
+  businessId?: string | number;
+}
+
+/**
+ * A render provider takes a Don contract (+ optional context) and returns a
+ * structured render result. The default implementation delegates to the
+ * Tombstone backend; tests inject a mock.
  */
 export type WebsiteImageRenderProvider = (
   contract: DonRenderContract,
+  ctx?: RenderProviderContext,
 ) => Promise<RenderProviderResponse>;
 
 /** True when the render provider (Tombstone backend) is reachable/configured. */
@@ -72,14 +82,18 @@ export function isImageRenderProviderConfigured(): boolean {
  */
 export async function renderWebsiteImageViaTombstone(
   contract: DonRenderContract,
+  ctx?: RenderProviderContext,
 ): Promise<RenderProviderResponse> {
   const url = `${TOMBSTONE_URL.replace(/\/+$/, '')}/website-images/render`;
+  const serviceToken = process.env.WEBSITE_RENDER_SERVICE_TOKEN ?? '';
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (serviceToken) headers['X-Service-Token'] = serviceToken;
   let res: Response;
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contract }),
+      headers,
+      body: JSON.stringify({ contract, businessId: ctx?.businessId }),
       // Keep a bounded wait so a cold backend does not hang the request.
       signal: AbortSignal.timeout ? AbortSignal.timeout(120_000) : undefined,
     });
