@@ -71,6 +71,20 @@ export interface ArtifactManifest {
     result: 'artifact_only' | 'success' | 'failed';
   };
 
+  /**
+   * Backlink-preservation redirect artifact (Milestone 10). Records how many
+   * 301 redirects were emitted to preserve inbound-link equity and the adapter
+   * artifact path. Never contains secrets or signed URLs — only paths.
+   */
+  redirects?: {
+    count: number;
+    artifactPath: string | null;
+    format: string;
+    preservedSameUrl: number;
+    supported: boolean;
+    note?: string;
+  };
+
   warnings: string[];
 }
 
@@ -91,6 +105,7 @@ export function buildArtifactManifest(args: {
   buildExecuted: boolean;
   buildResult: ArtifactManifest['build']['result'];
   extraWarnings?: string[];
+  redirects?: ArtifactManifest['redirects'];
 }): ArtifactManifest {
   const { blueprint, renderManifest, materialization } = args;
 
@@ -165,6 +180,7 @@ export function buildArtifactManifest(args: {
       executed: args.buildExecuted,
       result: args.buildResult,
     },
+    redirects: args.redirects,
     warnings: [
       ...renderManifest.warnings,
       ...materialization.warnings,

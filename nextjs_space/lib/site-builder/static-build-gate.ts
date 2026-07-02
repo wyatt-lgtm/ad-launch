@@ -20,6 +20,8 @@ import {
   type ResolvedBuildInputs,
 } from '@/lib/site-builder/sitemap-build-inputs';
 import { isSignedUrl } from '@/lib/website-image-generation';
+import type { PreservationMapping } from '@/lib/site-backlinks/types';
+import { unmappedHighValue, needsReviewMedium } from '@/lib/site-backlinks/redirect-plan';
 
 export type StaticBuildGateCode =
   | 'business_missing'
@@ -38,6 +40,7 @@ export type StaticBuildGateCode =
   | 'duplicate_routes'
   | 'rejected_service_page'
   | 'invalid_h1'
+  | 'backlink_url_would_404'
   | 'deploy_requested'
   | 'ok';
 
@@ -84,6 +87,13 @@ export interface EvaluateGateOptions {
   deployRequested?: boolean;
   /** Pre-resolved inputs (avoids a second DB round-trip). */
   inputs?: ResolvedBuildInputs;
+  /**
+   * Milestone 10 — backlink preservation mappings for this sitemap. When
+   * provided, the gate BLOCKS the build if any critical/high-value backlinked
+   * URL would become a 404 (no preserved page + no redirect), and WARNS for
+   * medium-value URLs still needing review. Absent = backlink layer not run.
+   */
+  backlink?: { mappings: PreservationMapping[] };
 }
 
 export async function evaluateStaticBuildGate(
@@ -267,6 +277,30 @@ export function evaluateGateFromInputs(
           .join(', ')}.`,
         slugs: h1Issues.map((i) => i.slug),
       });
+    }
+  }
+
+  // 11) Backlink preservation (Milestone 10) — never let a critical/high-value
+  //     backlinked URL become a 404. Safe = preserved page path OR redirect.
+  //     Unmapped/needs-review high-value URLs BLOCK; medium WARN.
+  if (opts?.backlink?.mappings) {
+    const highUnmapped = unmappedHighValue(opts.backlink.mappings);
+    if (highUnmapped.length) {
+      blocking.push({
+        code: 'backlink_url_would_404',
+        message: `High-value backlinked URL(s) would become a 404 (no preserved page + no redirect): ${highUnmapped
+          .map((m) => m.oldPath)
+          .join(', ')}. Map or redirect them before building.`,
+        slugs: highUnmapped.map((m) => m.oldPath),
+      });
+    }
+    const medReview = needsReviewMedium(opts.backlink.mappings);
+    if (medReview.length) {
+      warnings.push(
+        `${medReview.length} medium-value backlinked URL(s) need review before build: ${medReview
+          .map((m) => m.oldPath)
+          .join(', ')}.`,
+      );
     }
   }
 

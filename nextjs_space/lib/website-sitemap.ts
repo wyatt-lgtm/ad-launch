@@ -115,6 +115,25 @@ export interface SitemapPage {
   requestedAt?: string;
   approvalStatus: ApprovalStatus;
   sortOrder: number;
+  /**
+   * Milestone 10 — backlink-preservation metadata attached when the existing
+   * site's backlinked URLs are mapped against this sitemap. Additive/optional;
+   * absent for sitemaps generated before backlink mapping runs.
+   */
+  backlinkPreservation?: {
+    oldUrls: string[];
+    backlinkPriority: 'critical' | 'high' | 'medium' | 'low' | null;
+    preservationAction:
+      | 'preserve_same_url'
+      | 'redirect_301'
+      | 'rebuild_page'
+      | 'ignore_no_value'
+      | 'needs_review'
+      | null;
+    redirectTarget: string | null;
+    needsReview: boolean;
+    reason: string | null;
+  };
 }
 
 export interface UserRequestedPage {

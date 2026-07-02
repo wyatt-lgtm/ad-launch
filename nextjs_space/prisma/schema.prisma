@@ -144,6 +144,11 @@ model Business {
   websiteMobileQas         WebsiteMobileQa[]
   websitePreviewApprovals  WebsitePreviewApproval[]
 
+  // ── Backlink preservation (Milestone 10) ──────────────────────────
+  websiteBacklinkInventories WebsiteBacklinkInventory[]
+  websiteBacklinkUrls        WebsiteBacklinkUrl[]
+  websiteUrlPreservationMaps WebsiteUrlPreservationMap[]
+
   // ── Industry match (from Jim Bridger / owner-confirmed) ────────────
   matchedIndustryId         String?
   matchedIndustryConfidence String? // high | medium | low
@@ -2779,6 +2784,8 @@ model WebsiteProject {
   builds             SiteBuild[]
   mobileQas          WebsiteMobileQa[]
   previewApprovals   WebsitePreviewApproval[]
+  backlinkInventories WebsiteBacklinkInventory[]
+  urlPreservationMaps WebsiteUrlPreservationMap[]
 
   @@index([businessId])
   @@index([conceptStatus])
@@ -3546,4 +3553,123 @@ model WebsiteGeneratedImageAsset {
   @@index([imageBriefSetId])
   @@index([imageBriefId])
   @@index([businessId, pageSlug])
+}
+
+/// Milestone 10 — Backlink preservation layer.
+///
+/// Durable, business-scoped inventory of the customer's EXISTING live-site URLs
+/// that carry backlinks / SEO equity, so a newly generated sitemap can preserve
+/// that equity (keep the same URL, or 301-redirect the old URL to the closest
+/// new page). No Google scraping; provider calls only when configured. These
+/// models never store secrets, tokens, or signed URLs. Additive/nullable only.
+model WebsiteBacklinkInventory {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+
+  // source: gsc | provider | seo_research | site_crawl | uploaded_file | manual
+  source String
+
+  // status: pending | complete | incomplete_provider_missing | failed | stale
+  status String @default("pending")
+
+  liveDomain        String?
+  crawledAt         DateTime?
+  providerCheckedAt DateTime?
+
+  totalBacklinkUrls Int @default(0)
+  highValueUrlCount Int @default(0)
+
+  // Full inventory snapshot (safe metadata only — never secrets/signed URLs).
+  inventoryJson Json?
+  warningsJson  Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project  WebsiteProject? @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  urls     WebsiteBacklinkUrl[]
+  maps     WebsiteUrlPreservationMap[]
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([businessId, status])
+}
+
+/// One inventoried URL on the customer's existing live site that (may) carry
+/// backlink value. Business-scoped; part of exactly one inventory snapshot.
+model WebsiteBacklinkUrl {
+  id          String @id @default(cuid())
+  businessId  String
+  inventoryId String
+
+  sourceUrl          String  // full URL as discovered (referring page or live URL)
+  targetUrl          String  // the customer's own page URL that receives the link
+  normalizedTargetPath String // normalized path used for matching (e.g. /services/brake-repair)
+
+  referringDomain String?
+  anchorText      String?
+  linkType        String? // dofollow | nofollow | unknown
+  authorityScore  Int?
+  backlinkCount   Int?
+  firstSeenAt     DateTime?
+  lastSeenAt      DateTime?
+
+  // status: active | stale | unknown | ignored
+  status String @default("unknown")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  inventory WebsiteBacklinkInventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([inventoryId])
+  @@index([businessId, normalizedTargetPath])
+}
+
+/// Mapping decision that preserves an old backlinked URL against the newly
+/// proposed sitemap (preserve same URL / 301 redirect / rebuild / ignore).
+/// Business-scoped. Approval here is a READINESS decision only — it never
+/// deploys redirects or mutates live DNS/hosting.
+model WebsiteUrlPreservationMap {
+  id               String  @id @default(cuid())
+  businessId       String
+  websiteProjectId String?
+  sitemapId        String?
+  inventoryId      String?
+
+  oldUrl  String
+  oldPath String
+  newUrl  String?
+  newPath String?
+
+  // action: preserve_same_url | redirect_301 | rebuild_page | ignore_no_value | needs_review
+  action String
+
+  confidence      Float   @default(0)
+  reason          String?
+  contentIntent   String? // short summary of intended content match
+  matchedPageType String?
+  matchedServiceName String?
+
+  // status: proposed | approved | rejected | needs_review
+  status String @default("proposed")
+
+  approvedByUserId String?
+  approvedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business  Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project   WebsiteProject?           @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  inventory WebsiteBacklinkInventory? @relation(fields: [inventoryId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([sitemapId])
+  @@index([businessId, status])
 }

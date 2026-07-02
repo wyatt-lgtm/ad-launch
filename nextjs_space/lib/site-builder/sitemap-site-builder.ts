@@ -45,6 +45,11 @@ import { assembleSitemapBlueprint } from '@/lib/site-builder/sitemap-blueprint';
 import { createGeneratedAssetFetcher } from '@/lib/site-builder/generated-asset-fetcher';
 import { validateStaticPackage } from '@/lib/site-builder/post-build-validation';
 import { BUILD_STATUS, STATIC_BUILD_COMMAND } from '@/lib/site-builder';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
+import { loadEnrichedMappings, loadRedirectPlan } from '@/lib/site-backlinks/store';
+import { emitRedirectsFile } from '@/lib/site-backlinks/redirect-plan';
+import type { PreservationMapping } from '@/lib/site-backlinks/types';
 
 export interface BuildFromSitemapOptions {
   businessId: string;
@@ -101,9 +106,22 @@ export async function buildStaticSiteFromSitemap(
     opts.websiteProjectId,
   );
 
-  // 2) Gate — no SiteBuild row is created if this does not pass.
+  // 2) Gate — no SiteBuild row is created if this does not pass. Load the
+  //    backlink preservation mappings (Milestone 10) so the gate can block
+  //    builds that would 404 a high-value backlinked URL.
+  let backlinkMappings: PreservationMapping[] = [];
+  try {
+    backlinkMappings = await loadEnrichedMappings(
+      businessId,
+      inputs.websiteProjectId,
+      inputs.sitemapId,
+    );
+  } catch {
+    backlinkMappings = [];
+  }
   const gate = evaluateGateFromInputs(businessId, inputs, {
     deployRequested: opts.deployRequested === true,
+    backlink: backlinkMappings.length ? { mappings: backlinkMappings } : undefined,
   });
   if (!gate.ok) {
     return { ok: false, gate };
@@ -140,6 +158,32 @@ export async function buildStaticSiteFromSitemap(
     const outputDir = pkg.outputDir;
     if (writeFiles) writeSitePackage(pkg);
     const sourceRef = outputDir;
+
+    // 5b) Backlink preservation (Milestone 10): emit a `_redirects` artifact so
+    //     inbound-link equity is preserved. This writes an artifact ONLY — it
+    //     never deploys redirects or mutates live DNS.
+    let redirectManifest: ArtifactManifest['redirects'];
+    try {
+      const plan = await loadRedirectPlan(businessId, websiteProjectId, inputs.sitemapId);
+      if (plan) {
+        const body = emitRedirectsFile(plan);
+        const artifactPath = writeFiles ? join(outputDir, '_redirects') : null;
+        if (writeFiles) writeFileSync(artifactPath as string, body, 'utf8');
+        redirectManifest = {
+          count: plan.redirects.length,
+          artifactPath,
+          format: 'cloudflare_redirects',
+          preservedSameUrl: plan.preservedUrls.length,
+          supported: true,
+          note:
+            plan.unmappedUrls.length > 0
+              ? `${plan.unmappedUrls.length} backlinked URL(s) still unmapped/need review.`
+              : undefined,
+        };
+      }
+    } catch {
+      redirectManifest = undefined;
+    }
 
     // 6) Materialize approved/generated images from durable R2 keys.
     const fetcher = opts.fetcher || createGeneratedAssetFetcher(assetSources);
@@ -183,6 +227,7 @@ export async function buildStaticSiteFromSitemap(
       buildExecuted,
       buildResult: 'artifact_only',
       extraWarnings,
+      redirects: redirectManifest,
     });
 
     await prisma.siteBuild.update({
