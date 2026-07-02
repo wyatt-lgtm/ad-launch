@@ -19,7 +19,7 @@
 import { DEPLOYMENT_TARGET_TYPES } from './targets';
 import { looksLikeSecretValue } from '@/lib/site-builder/env-validation';
 
-export const TARGET_STATUSES = ['draft', 'configured', 'disabled', 'archived'] as const;
+export const TARGET_STATUSES = ['draft', 'configured', 'verified', 'disabled', 'archived'] as const;
 export type TargetStatus = (typeof TARGET_STATUSES)[number];
 
 /** Plain text fields the operator may freely set (never secret VALUES). */
@@ -37,6 +37,16 @@ const TEXT_FIELDS = [
   'vercelProjectId',
   'wordpressSiteUrl',
   'credentialsRef',
+  // Cloudflare Pages (Milestone 9) — references / plain config only.
+  'cloudflareAccountId',
+  'cloudflareProjectName',
+  'cloudflareProjectRef',
+  'githubRepoUrl',
+  'githubBranch',
+  'productionBranch',
+  'previewBranch',
+  'customDomain',
+  'dnsMode',
 ] as const;
 
 type TextField = (typeof TEXT_FIELDS)[number];
@@ -63,6 +73,16 @@ export interface TargetInput {
   vercelProjectId?: string | null;
   wordpressSiteUrl?: string | null;
   credentialsRef?: string | null;
+  // Cloudflare Pages (Milestone 9).
+  cloudflareAccountId?: string | null;
+  cloudflareProjectName?: string | null;
+  cloudflareProjectRef?: string | null;
+  githubRepoUrl?: string | null;
+  githubBranch?: string | null;
+  productionBranch?: string | null;
+  previewBranch?: string | null;
+  customDomain?: string | null;
+  dnsMode?: string | null;
   /** Optional operator-recorded credential verification time (ISO string). */
   lastVerifiedAt?: string | null;
 }
@@ -166,6 +186,15 @@ export interface TargetRow {
   vercelProjectId: string | null;
   wordpressSiteUrl: string | null;
   credentialsRef: string | null;
+  cloudflareAccountId: string | null;
+  cloudflareProjectName: string | null;
+  cloudflareProjectRef: string | null;
+  githubRepoUrl: string | null;
+  githubBranch: string | null;
+  productionBranch: string | null;
+  previewBranch: string | null;
+  customDomain: string | null;
+  dnsMode: string | null;
   configJson: any;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -195,6 +224,19 @@ export function serializeTarget(t: TargetRow) {
     hostgatorHostRef: t.hostgatorHostRef,
     vercelProjectId: t.vercelProjectId,
     wordpressSiteUrl: t.wordpressSiteUrl,
+    // Cloudflare Pages (Milestone 9) — plain config / references only.
+    cloudflareAccountId: t.cloudflareAccountId,
+    cloudflareProjectName: t.cloudflareProjectName,
+    cloudflareProjectRef: t.cloudflareProjectRef,
+    githubRepoUrl: t.githubRepoUrl,
+    githubBranch: t.githubBranch,
+    productionBranch: t.productionBranch,
+    previewBranch: t.previewBranch,
+    customDomain: t.customDomain,
+    dnsMode: t.dnsMode,
+    cloudflareAccountConfigured: Boolean(t.cloudflareAccountId),
+    cloudflareProjectConfigured: Boolean(t.cloudflareProjectName),
+    githubRepoConfigured: Boolean(t.githubRepoUrl),
     // Credential REFERENCE (name only) + presence flag. Never a secret value.
     credentialsRef: t.credentialsRef,
     credentialConfigured: Boolean(t.credentialsRef),
@@ -224,6 +266,15 @@ export const TARGET_SELECT = {
   vercelProjectId: true,
   wordpressSiteUrl: true,
   credentialsRef: true,
+  cloudflareAccountId: true,
+  cloudflareProjectName: true,
+  cloudflareProjectRef: true,
+  githubRepoUrl: true,
+  githubBranch: true,
+  productionBranch: true,
+  previewBranch: true,
+  customDomain: true,
+  dnsMode: true,
   configJson: true,
   createdAt: true,
   updatedAt: true,

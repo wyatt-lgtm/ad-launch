@@ -1,12 +1,12 @@
 generator client {
-    provider = "prisma-client-js"
-    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
-    output = "/home/ubuntu/ad_launch/nextjs_space/node_modules/.prisma/client"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+  output        = "/home/ubuntu/ad_launch/nextjs_space/node_modules/.prisma/client"
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -3073,6 +3073,19 @@ model SiteDeploymentTarget {
   hostgatorHostRef String?
   vercelProjectId  String?
   wordpressSiteUrl String?
+
+  // Cloudflare Pages readiness fields (Milestone 9). References only;
+  // no secret token values are ever stored here.
+  cloudflareAccountId   String?
+  cloudflareProjectName String?
+  cloudflareProjectRef  String?
+  githubRepoUrl         String?
+  githubBranch          String?
+  productionBranch      String?
+  previewBranch         String?
+  customDomain          String?
+  // dns_mode: subdomain | apex | none
+  dnsMode               String?
 
   // Reference (NOT the value) to externally-stored deploy credentials.
   credentialsRef String?
