@@ -1,12 +1,12 @@
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
-  output        = "/home/ubuntu/ad_launch/nextjs_space/node_modules/.prisma/client"
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/ad_launch/nextjs_space/node_modules/.prisma/client"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
 }
 
 model User {
@@ -3083,7 +3083,16 @@ model SiteDeploymentTarget {
   githubBranch          String?
   productionBranch      String?
   previewBranch         String?
+  // Per-site branded preview subdomain (e.g. preview-rjs-auto.launchmarketing.com).
+  previewSubdomain      String?
   customDomain          String?
+  // CNAME modeling (references / plan only — no DNS is ever mutated here).
+  cnameName             String?
+  cnameTarget           String?
+  // customDomainStatus: pending | would_add | added | verified | none
+  customDomainStatus    String?
+  // dnsRecordStatus: pending | would_create | created | verified | none
+  dnsRecordStatus       String?
   // dns_mode: subdomain | apex | none
   dnsMode               String?
 

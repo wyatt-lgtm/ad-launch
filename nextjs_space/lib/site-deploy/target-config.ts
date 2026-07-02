@@ -45,7 +45,12 @@ const TEXT_FIELDS = [
   'githubBranch',
   'productionBranch',
   'previewBranch',
+  'previewSubdomain',
   'customDomain',
+  'cnameName',
+  'cnameTarget',
+  'customDomainStatus',
+  'dnsRecordStatus',
   'dnsMode',
 ] as const;
 
@@ -81,7 +86,12 @@ export interface TargetInput {
   githubBranch?: string | null;
   productionBranch?: string | null;
   previewBranch?: string | null;
+  previewSubdomain?: string | null;
   customDomain?: string | null;
+  cnameName?: string | null;
+  cnameTarget?: string | null;
+  customDomainStatus?: string | null;
+  dnsRecordStatus?: string | null;
   dnsMode?: string | null;
   /** Optional operator-recorded credential verification time (ISO string). */
   lastVerifiedAt?: string | null;
@@ -193,7 +203,12 @@ export interface TargetRow {
   githubBranch: string | null;
   productionBranch: string | null;
   previewBranch: string | null;
+  previewSubdomain: string | null;
   customDomain: string | null;
+  cnameName: string | null;
+  cnameTarget: string | null;
+  customDomainStatus: string | null;
+  dnsRecordStatus: string | null;
   dnsMode: string | null;
   configJson: any;
   createdAt: Date | string;
@@ -232,11 +247,21 @@ export function serializeTarget(t: TargetRow) {
     githubBranch: t.githubBranch,
     productionBranch: t.productionBranch,
     previewBranch: t.previewBranch,
+    previewSubdomain: t.previewSubdomain,
     customDomain: t.customDomain,
+    cnameName: t.cnameName,
+    cnameTarget: t.cnameTarget,
+    customDomainStatus: t.customDomainStatus,
+    dnsRecordStatus: t.dnsRecordStatus,
     dnsMode: t.dnsMode,
+    // Alias names matching the Milestone 9 field contract.
+    cloudflarePagesProjectName: t.cloudflareProjectName,
+    cloudflarePagesProjectRef: t.cloudflareProjectRef,
     cloudflareAccountConfigured: Boolean(t.cloudflareAccountId),
     cloudflareProjectConfigured: Boolean(t.cloudflareProjectName),
     githubRepoConfigured: Boolean(t.githubRepoUrl),
+    // DNS mutation is NEVER enabled in this milestone.
+    liveDnsMutationEnabled: false,
     // Credential REFERENCE (name only) + presence flag. Never a secret value.
     credentialsRef: t.credentialsRef,
     credentialConfigured: Boolean(t.credentialsRef),
@@ -273,7 +298,12 @@ export const TARGET_SELECT = {
   githubBranch: true,
   productionBranch: true,
   previewBranch: true,
+  previewSubdomain: true,
   customDomain: true,
+  cnameName: true,
+  cnameTarget: true,
+  customDomainStatus: true,
+  dnsRecordStatus: true,
   dnsMode: true,
   configJson: true,
   createdAt: true,

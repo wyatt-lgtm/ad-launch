@@ -18,17 +18,18 @@ import { useActiveBusiness } from '@/hooks/use-active-business';
  * only — never secret values.
  */
 
-// Ordered by product priority: HostGator (default) -> Cloudflare (strategic)
-// -> WordPress export (optional) -> Manual export (fallback) -> Vercel (future,
-// de-emphasized; kept in the model but not a focus this phase).
+// Ordered by product priority: Cloudflare Pages is now the STRATEGIC / primary
+// target -> HostGator (transitional) -> WordPress export (optional) -> Manual
+// export (fallback) -> Vercel (future, de-emphasized; kept in the model only).
 const TARGET_TYPES = [
-  { value: 'hostgator_static', label: 'HostGator Static (default)' },
-  { value: 'cloudflare_pages', label: 'Cloudflare Pages (strategic)' },
+  { value: 'cloudflare_pages', label: 'Cloudflare Pages (strategic — recommended)' },
+  { value: 'hostgator_static', label: 'HostGator Static (transitional)' },
   { value: 'wordpress_export', label: 'WordPress Export (optional)' },
   { value: 'manual_export', label: 'Manual Export (fallback)' },
   { value: 'vercel', label: 'Vercel (future)' },
 ];
-const STATUSES = ['draft', 'configured', 'disabled', 'archived'];
+const STATUSES = ['draft', 'configured', 'verified', 'disabled', 'archived'];
+const DNS_MODES = ['none', 'subdomain', 'apex'];
 const ENVIRONMENTS = ['production', 'preview', 'development', 'all'];
 
 interface DeployTarget {
@@ -51,6 +52,21 @@ interface DeployTarget {
   credentialConfigured: boolean;
   lastVerifiedAt: string | null;
   liveDeployEnabled: boolean;
+  // Cloudflare Pages (Milestone 9)
+  cloudflareAccountId: string | null;
+  cloudflareProjectName: string | null;
+  cloudflareProjectRef: string | null;
+  githubRepoUrl: string | null;
+  githubBranch: string | null;
+  productionBranch: string | null;
+  previewBranch: string | null;
+  previewSubdomain: string | null;
+  customDomain: string | null;
+  cnameName: string | null;
+  cnameTarget: string | null;
+  customDomainStatus: string | null;
+  dnsRecordStatus: string | null;
+  dnsMode: string | null;
 }
 interface EnvVar {
   id: string;
@@ -76,6 +92,15 @@ interface CloudflareReadiness {
   defaultZoneId: { configured: boolean };
   ready: boolean;
   missing: string[];
+}
+
+interface CfReadinessBundle {
+  ok: boolean;
+  notFound: boolean;
+  readiness: any | null;
+  dryRunPlan: any | null;
+  checklist: { step: number; title: string; detail: string }[];
+  liveDeployEnabled: boolean;
 }
 
 /** A single yes/no readiness row. Shows presence only — never a secret value. */
@@ -134,6 +159,8 @@ export default function DeploymentSettingsCard() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [assetStores, setAssetStores] = useState<AssetStores | null>(null);
   const [cloudflare, setCloudflare] = useState<CloudflareReadiness | null>(null);
+  const [cfBundle, setCfBundle] = useState<CfReadinessBundle | null>(null);
+  const [cfLoading, setCfLoading] = useState(false);
 
   // New env var inputs
   const [newKey, setNewKey] = useState('');
@@ -173,6 +200,32 @@ export default function DeploymentSettingsCard() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Load the Cloudflare Pages readiness bundle (readiness + dry-run + checklist)
+  // for the saved target whenever it is a cloudflare_pages target.
+  const loadCfBundle = useCallback(async () => {
+    if (!businessId || !target || target.targetType !== 'cloudflare_pages') {
+      setCfBundle(null);
+      return;
+    }
+    setCfLoading(true);
+    try {
+      const res = await fetch(
+        `/api/businesses/${encodeURIComponent(businessId)}/site-deployment-targets/${target.id}/cloudflare-readiness`,
+      );
+      if (res.ok) {
+        setCfBundle(await res.json());
+      } else {
+        setCfBundle(null);
+      }
+    } catch {
+      setCfBundle(null);
+    } finally {
+      setCfLoading(false);
+    }
+  }, [businessId, target]);
+
+  useEffect(() => { loadCfBundle(); }, [loadCfBundle]);
+
   const set = (k: keyof DeployTarget, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const saveTarget = async () => {
@@ -197,6 +250,21 @@ export default function DeploymentSettingsCard() {
         vercelProjectId: form.vercelProjectId ?? null,
         wordpressSiteUrl: form.wordpressSiteUrl ?? null,
         credentialsRef: form.credentialsRef ?? null,
+        // Cloudflare Pages (Milestone 9)
+        cloudflareAccountId: form.cloudflareAccountId ?? null,
+        cloudflareProjectName: form.cloudflareProjectName ?? null,
+        cloudflareProjectRef: form.cloudflareProjectRef ?? null,
+        githubRepoUrl: form.githubRepoUrl ?? null,
+        githubBranch: form.githubBranch ?? null,
+        productionBranch: form.productionBranch ?? null,
+        previewBranch: form.previewBranch ?? null,
+        previewSubdomain: form.previewSubdomain ?? null,
+        customDomain: form.customDomain ?? null,
+        cnameName: form.cnameName ?? null,
+        cnameTarget: form.cnameTarget ?? null,
+        customDomainStatus: form.customDomainStatus ?? null,
+        dnsRecordStatus: form.dnsRecordStatus ?? null,
+        dnsMode: form.dnsMode ?? null,
       };
       const url = target
         ? `/api/businesses/${encodeURIComponent(businessId)}/site-deployment-targets/${target.id}`
@@ -326,10 +394,37 @@ export default function DeploymentSettingsCard() {
               <Field label="Build command" value={form.buildCommand || ''} onChange={(v) => set('buildCommand', v)} placeholder="npm run build" mono />
               <Field label="Output directory" value={form.outputDirectory || ''} onChange={(v) => set('outputDirectory', v)} placeholder="out" mono />
               {showCloudflare && (
-                <div className="lg:col-span-2 space-y-1">
-                  <Field label="Cloudflare zone id" value={form.cloudflareZoneId || ''} onChange={(v) => set('cloudflareZoneId', v)} placeholder="cf-zone-reference" mono />
-                  <p className="text-[11px] text-gray-400">Cloudflare Pages is the strategic long-term target. Capture the project/zone reference and build settings now; deployment stays dry-run only this phase.</p>
-                </div>
+                <>
+                  <div className="lg:col-span-2 rounded-lg border border-orange-100 bg-orange-50/50 p-2">
+                    <p className="text-[11px] text-gray-600">
+                      <strong>Cloudflare Pages</strong> is the strategic primary target. Capture the account, Pages project, GitHub repo, build settings and (optionally) one branded preview subdomain per site. Everything stays <strong>dry-run only</strong> — no Cloudflare API call and no DNS change happen in this milestone.
+                    </p>
+                  </div>
+                  <Field label="Cloudflare account id" value={form.cloudflareAccountId || ''} onChange={(v) => set('cloudflareAccountId', v)} placeholder="cf-account-id" mono />
+                  <Field label="Pages project name" value={form.cloudflareProjectName || ''} onChange={(v) => set('cloudflareProjectName', v)} placeholder="tombstone-m5c-validation" mono />
+                  <Field label="Pages project ref (optional)" value={form.cloudflareProjectRef || ''} onChange={(v) => set('cloudflareProjectRef', v)} placeholder="cf-pages-project-ref" mono />
+                  <Field label="GitHub repo URL" value={form.githubRepoUrl || ''} onChange={(v) => set('githubRepoUrl', v)} placeholder="github.com/org/repo" mono />
+                  <Field label="GitHub branch" value={form.githubBranch || ''} onChange={(v) => set('githubBranch', v)} placeholder="main" />
+                  <Field label="Production branch" value={form.productionBranch || ''} onChange={(v) => set('productionBranch', v)} placeholder="main" />
+                  <Field label="Preview branch (optional)" value={form.previewBranch || ''} onChange={(v) => set('previewBranch', v)} placeholder="preview" />
+                  <Field label="Preview subdomain (optional)" value={form.previewSubdomain || ''} onChange={(v) => set('previewSubdomain', v)} placeholder="preview-rjs-auto.launchmarketing.com" mono />
+                  <label className="block">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">DNS mode</span>
+                    <select
+                      value={form.dnsMode || 'none'}
+                      onChange={(e) => set('dnsMode', e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none"
+                    >
+                      {DNS_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </label>
+                  <Field label="Custom domain (branded preview)" value={form.customDomain || ''} onChange={(v) => set('customDomain', v)} placeholder="preview-rjs-auto.launchmarketing.com" mono />
+                  <Field label="CNAME name (optional)" value={form.cnameName || ''} onChange={(v) => set('cnameName', v)} placeholder="(defaults to custom domain)" mono />
+                  <Field label="CNAME target (optional)" value={form.cnameTarget || ''} onChange={(v) => set('cnameTarget', v)} placeholder="<project>.pages.dev" mono />
+                  <p className="lg:col-span-2 text-[11px] text-gray-400">
+                    Default early preview uses the Cloudflare Pages <code>.pages.dev</code> URL (no CNAME required). Each branded preview is its own subdomain + its own CNAME record — no wildcard DNS, no path-based routing.
+                  </p>
+                </>
               )}
               {showHostgator && (
                 <Field label="HostGator host ref" value={form.hostgatorHostRef || ''} onChange={(v) => set('hostgatorHostRef', v)} placeholder="vault://hostgator/host" mono />
@@ -422,6 +517,96 @@ export default function DeploymentSettingsCard() {
               </div>
             </div>
 
+            {/* Cloudflare Pages readiness report + dry-run plan + checklist */}
+            {showCloudflare && target?.targetType === 'cloudflare_pages' && (
+              <div className="rounded-xl border border-orange-100 bg-orange-50/30 p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                    <Cloud className="h-4 w-4 text-orange-500" /> Cloudflare Pages deploy readiness (dry run)
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {cfBundle?.readiness && (
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                        cfBundle.readiness.status === 'ready' ? 'bg-green-50 text-green-700'
+                          : cfBundle.readiness.status === 'blocked' ? 'bg-red-50 text-red-700'
+                          : 'bg-amber-50 text-amber-700'
+                      }`}>
+                        {cfBundle.readiness.status}
+                      </span>
+                    )}
+                    <button onClick={loadCfBundle} className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">
+                      <RefreshCw className={`h-3 w-3 ${cfLoading ? 'animate-spin' : ''}`} /> Refresh
+                    </button>
+                  </div>
+                </div>
+
+                {cfLoading && !cfBundle && <p className="text-[11px] text-gray-400">Evaluating readiness...</p>}
+
+                {cfBundle?.readiness && (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {/* Readiness checks */}
+                    <div className="rounded-lg border border-gray-100 bg-white p-3">
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Readiness checks</p>
+                      <ReadyRow label="Cloudflare target type" ok={!!cfBundle.readiness.checks.isCloudflareTarget} />
+                      <ReadyRow label="Account id present" ok={!!cfBundle.readiness.checks.accountIdPresent} />
+                      <ReadyRow label="Project name present" ok={!!cfBundle.readiness.checks.projectNamePresent} />
+                      <ReadyRow label="GitHub repo URL present" ok={!!cfBundle.readiness.checks.repoUrlPresent} />
+                      <ReadyRow label="Branch present" ok={!!cfBundle.readiness.checks.branchPresent} />
+                      <ReadyRow label="Build command present" ok={!!cfBundle.readiness.checks.buildCommandPresent} />
+                      <ReadyRow label='Output dir is "out"' ok={!!cfBundle.readiness.checks.outputDirectoryValid} />
+                      <ReadyRow label="Credential reference present" ok={!!cfBundle.readiness.checks.credentialRefPresent} />
+                      <ReadyRow label="Public env vars configured" ok={!!cfBundle.readiness.checks.envVarsConfigured} />
+                      <ReadyRow label="Package uses static export" ok={!!cfBundle.readiness.checks.packageIsStaticExport} />
+                      <ReadyRow label="No signed URLs embedded" ok={!!cfBundle.readiness.checks.noSignedUrls} />
+                      <ReadyRow label="No secrets embedded" ok={!!cfBundle.readiness.checks.noSecretsEmbedded} />
+                      <ReadyRow label="Images materialized locally" ok={!!cfBundle.readiness.checks.imagesLocal} />
+                      <ReadyRow label="Live deploy disabled" ok={!!cfBundle.readiness.checks.liveDeployDisabled} />
+                      {Array.isArray(cfBundle.readiness.missingFields) && cfBundle.readiness.missingFields.length > 0 && (
+                        <p className="mt-1 text-[11px] text-amber-700">Missing: {cfBundle.readiness.missingFields.join(', ')}</p>
+                      )}
+                    </div>
+
+                    {/* Dry-run plan */}
+                    <div className="rounded-lg border border-gray-100 bg-white p-3">
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Dry-run plan (what a future deploy WOULD do)</p>
+                      {cfBundle.dryRunPlan && (
+                        <div className="space-y-0.5 text-[11px] text-gray-600">
+                          <ReadyRow label="Would create Pages project" ok={!!cfBundle.dryRunPlan.wouldCreatePagesProject} />
+                          <ReadyRow label="Would connect Git repo" ok={!!cfBundle.dryRunPlan.wouldConnectGitRepo} />
+                          <ReadyRow label="Would add custom domain" ok={!!cfBundle.dryRunPlan.wouldAddCustomDomain} />
+                          <ReadyRow label="Would create CNAME record" ok={!!cfBundle.dryRunPlan.wouldCreateCnameRecord} />
+                          <div className="mt-1 border-t border-gray-50 pt-1">
+                            <p>Project: <code>{cfBundle.dryRunPlan.projectName || '(none)'}</code></p>
+                            <p>Branch: <code>{cfBundle.dryRunPlan.branch}</code> · Build: <code>{cfBundle.dryRunPlan.buildCommand}</code> · Out: <code>{cfBundle.dryRunPlan.outputDirectory}</code></p>
+                            <p>DNS mode: <code>{cfBundle.dryRunPlan.dnsMode}</code></p>
+                            {cfBundle.dryRunPlan.pagesDevHost && <p>Preview URL: <code>{cfBundle.dryRunPlan.pagesDevHost}</code></p>}
+                            {cfBundle.dryRunPlan.cnameName && <p>CNAME: <code>{cfBundle.dryRunPlan.cnameName}</code> → <code>{cfBundle.dryRunPlan.cnameTarget}</code></p>}
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">liveDeployEnabled: false</span>
+                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600">liveDnsMutationEnabled: false</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Manual setup checklist */}
+                    <div className="lg:col-span-2 rounded-lg border border-gray-100 bg-white p-3">
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Manual first-project setup checklist</p>
+                      <ol className="space-y-1">
+                        {(cfBundle.checklist || []).map((c) => (
+                          <li key={c.step} className="flex gap-2 text-[11px] text-gray-600">
+                            <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-orange-100 text-[9px] font-semibold text-orange-700">{c.step}</span>
+                            <span><strong className="text-gray-800">{c.title}.</strong> {c.detail}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={saveTarget}
@@ -438,10 +623,10 @@ export default function DeploymentSettingsCard() {
               </button>
               <button
                 disabled
-                title="Deployment is disabled in this phase"
+                title={showCloudflare ? 'Cloudflare deployment is disabled until a future milestone' : 'Deployment is disabled in this phase'}
                 className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-400"
               >
-                <Lock className="h-4 w-4" /> Deployment disabled — dry run only
+                <Lock className="h-4 w-4" /> {showCloudflare ? 'Cloudflare deployment disabled — future milestone' : 'Deployment disabled — dry run only'}
               </button>
               {msg && <span className="text-xs text-gray-500">{msg}</span>}
             </div>

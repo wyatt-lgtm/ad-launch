@@ -54,10 +54,15 @@ export interface CloudflareTargetConfig {
   gitBranch?: string | null;
   productionBranch?: string | null;
   previewBranch?: string | null;
+  previewSubdomain?: string | null;
   buildCommand?: string | null;
   outputDirectory?: string | null;
   customDomain?: string | null;
   domain?: string | null;
+  cnameName?: string | null;
+  cnameTarget?: string | null;
+  customDomainStatus?: string | null;
+  dnsRecordStatus?: string | null;
   dnsMode?: string | null;
   credentialsRef?: string | null;
 }
@@ -138,10 +143,20 @@ export type CustomDomainMode = 'subdomain' | 'apex' | 'none';
 
 export interface CustomDomainReadiness {
   customDomain: string | null;
+  previewSubdomain: string | null;
   mode: CustomDomainMode;
+  /** The default early-preview URL host (`<project>.pages.dev`). */
+  pagesDevHost: string | null;
+  /** CNAME record that WOULD be created/verified for a branded subdomain. */
+  cnameName: string | null;
+  cnameTarget: string | null;
+  customDomainStatus: string | null;
+  dnsRecordStatus: string | null;
   /** Requirements the operator must satisfy manually (no DNS changes here). */
   requirements: string[];
   notes: string[];
+  /** DNS mutation is NEVER performed in this milestone. */
+  liveDnsMutationEnabled: false;
 }
 
 export type CloudflareReadinessStatus = 'ready' | 'incomplete' | 'blocked';
@@ -175,6 +190,7 @@ export interface CloudflareReadinessResult {
     materializedImageCount: number;
   };
   liveDeployEnabled: false;
+  liveDnsMutationEnabled: false;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -213,6 +229,40 @@ export function resolveCustomDomain(t: CloudflareTargetConfig | null): string | 
   return (t.customDomain && t.customDomain.trim()) || (t.domain && t.domain.trim()) || null;
 }
 
+export function resolvePreviewSubdomain(t: CloudflareTargetConfig | null): string | null {
+  if (!t) return null;
+  return (t.previewSubdomain && t.previewSubdomain.trim()) || null;
+}
+
+/** The default early-preview URL host on Cloudflare Pages (`<project>.pages.dev`). */
+export function resolvePagesDevHost(t: CloudflareTargetConfig | null): string | null {
+  const project = (t?.cloudflareProjectName && t.cloudflareProjectName.trim()) || null;
+  return project ? `${project}.pages.dev` : null;
+}
+
+/**
+ * The CNAME record NAME for a branded preview subdomain. Prefers an explicit
+ * cnameName, else the custom domain / preview subdomain host.
+ */
+export function resolveCnameName(t: CloudflareTargetConfig | null): string | null {
+  if (!t) return null;
+  return (
+    (t.cnameName && t.cnameName.trim()) ||
+    resolveCustomDomain(t) ||
+    resolvePreviewSubdomain(t) ||
+    null
+  );
+}
+
+/**
+ * The CNAME record TARGET for a branded preview subdomain. Prefers an explicit
+ * cnameTarget, else the Cloudflare Pages project target (`<project>.pages.dev`).
+ */
+export function resolveCnameTarget(t: CloudflareTargetConfig | null): string | null {
+  if (!t) return null;
+  return (t.cnameTarget && t.cnameTarget.trim()) || resolvePagesDevHost(t) || null;
+}
+
 /**
  * Classify a custom domain as apex vs subdomain. Heuristic only (no network):
  * a bare `example.com` (or a public-suffix style `example.co.uk`) is apex;
@@ -238,28 +288,68 @@ function buildCustomDomainReadiness(
   t: CloudflareTargetConfig | null,
 ): CustomDomainReadiness {
   const customDomain = resolveCustomDomain(t);
+  const previewSubdomain = resolvePreviewSubdomain(t);
   const mode = classifyCustomDomain(customDomain, t?.dnsMode);
+  const pagesDevHost = resolvePagesDevHost(t);
+  const customDomainStatus = (t?.customDomainStatus && t.customDomainStatus.trim()) || null;
+  const dnsRecordStatus = (t?.dnsRecordStatus && t.dnsRecordStatus.trim()) || null;
   const requirements: string[] = [];
   const notes: string[] = [];
 
   if (!customDomain || mode === 'none') {
-    notes.push('No custom domain configured. Deploy to the Cloudflare Pages preview URL first.');
-    return { customDomain: customDomain || null, mode: 'none', requirements, notes };
+    notes.push(
+      `Default early preview uses the Cloudflare Pages URL${pagesDevHost ? ` (${pagesDevHost})` : ' (<project>.pages.dev)'}. No custom CNAME is required.`,
+    );
+    notes.push('No wildcard DNS / Pages routing is used. Each branded preview would be its own subdomain when configured later.');
+    return {
+      customDomain: customDomain || null,
+      previewSubdomain: previewSubdomain || null,
+      mode: 'none',
+      pagesDevHost,
+      cnameName: null,
+      cnameTarget: null,
+      customDomainStatus,
+      dnsRecordStatus,
+      requirements,
+      notes,
+      liveDnsMutationEnabled: false,
+    };
   }
+
+  const cnameName = resolveCnameName(t);
+  const cnameTarget = resolveCnameTarget(t);
 
   if (mode === 'subdomain') {
-    requirements.push('The parent zone exists in Cloudflare (or DNS for it is configurable).');
-    requirements.push('A CNAME record for the subdomain can point to the Cloudflare Pages project.');
-    requirements.push('The Cloudflare Pages project is created and connected to the GitHub repo.');
-    notes.push('Subdomain custom domains are added in the Pages project only AFTER the preview deploy passes. No DNS changes are made in this milestone.');
+    // The 5 explicit branded-subdomain readiness expectations.
+    requirements.push('1) A Cloudflare Pages project exists (or would be created) for this site.');
+    requirements.push(`2) The custom domain (${customDomain}) would be added to the Pages project.`);
+    requirements.push(`3) A DNS CNAME record (${cnameName || customDomain}) would be created or verified.`);
+    requirements.push(`4) The CNAME target points to the Pages project target (${cnameTarget || '<project>.pages.dev'}).`);
+    requirements.push('5) No DNS mutation occurs during this milestone unless separately approved.');
+    notes.push('Each branded preview subdomain is treated as its own Cloudflare Pages custom domain and its own DNS CNAME record.');
+    notes.push('No wildcard DNS / Pages routing. No testsite.launchmarketing.com/customer-slug path routing.');
   } else {
-    requirements.push('The apex domain is a zone in the SAME Cloudflare account as the Pages project.');
-    requirements.push('The apex zone is active in Cloudflare (nameservers delegated).');
-    requirements.push('The Cloudflare Pages project is created and connected to the GitHub repo.');
-    notes.push('Apex custom domains require the root domain to be a Cloudflare zone in the same account. No DNS changes are made in this milestone.');
+    requirements.push('1) A Cloudflare Pages project exists (or would be created) for this site.');
+    requirements.push('2) The apex domain is a zone in the SAME Cloudflare account as the Pages project.');
+    requirements.push('3) The apex zone is active in Cloudflare (nameservers delegated).');
+    requirements.push(`4) The apex domain (${customDomain}) would be added to the Pages project as a custom domain.`);
+    requirements.push('5) No DNS mutation occurs during this milestone unless separately approved.');
+    notes.push('Apex custom domains require the root domain to be a Cloudflare zone in the same account.');
   }
 
-  return { customDomain, mode, requirements, notes };
+  return {
+    customDomain,
+    previewSubdomain: previewSubdomain || null,
+    mode,
+    pagesDevHost,
+    cnameName,
+    cnameTarget,
+    customDomainStatus,
+    dnsRecordStatus,
+    requirements,
+    notes,
+    liveDnsMutationEnabled: false,
+  };
 }
 
 function findNextConfig(files: RenderedFile[]): RenderedFile | undefined {
@@ -527,6 +617,7 @@ export function evaluateCloudflareReadiness(
       materializedImageCount: copiedCount,
     },
     liveDeployEnabled: false,
+    liveDnsMutationEnabled: false,
   };
 }
 
@@ -536,18 +627,30 @@ export interface CloudflarePagesDryRunPlan {
   targetType: 'cloudflare_pages';
   mode: 'dry_run';
   liveDeployEnabled: false;
+  liveDnsMutationEnabled: false;
   projectName: string | null;
+  cloudflarePagesProjectName: string | null;
+  cloudflarePagesProjectRef: string | null;
   accountIdConfigured: boolean;
   repoUrl: string | null;
   branch: string | null;
   buildCommand: string | null;
   outputDirectory: string | null;
+  previewSubdomain: string | null;
   customDomain: string | null;
   dnsMode: CustomDomainMode;
+  pagesDevHost: string | null;
+  cnameName: string | null;
+  cnameTarget: string | null;
+  /** Preferred field names (clarification contract). */
+  wouldCreatePagesProject: boolean;
+  wouldConnectGitRepo: boolean;
+  wouldAddCustomDomain: boolean;
+  wouldCreateCnameRecord: boolean;
+  /** Back-compat aliases. */
   wouldCreateProject: boolean;
   wouldConnectRepo: boolean;
   wouldSetEnvVars: string[];
-  wouldAddCustomDomain: boolean;
   warnings: string[];
   blockingReasons: string[];
   note: string;
@@ -567,6 +670,9 @@ export function computeCloudflarePagesDryRun(args: {
   const readiness = args.readiness || null;
   const customDomain = resolveCustomDomain(t);
   const dnsMode = classifyCustomDomain(customDomain, t?.dnsMode);
+  const hasCustomDomain = Boolean(customDomain) && dnsMode !== 'none';
+  const cnameName = hasCustomDomain ? resolveCnameName(t) : null;
+  const cnameTarget = hasCustomDomain ? resolveCnameTarget(t) : null;
 
   const wouldSetEnvVars =
     args.configuredEnvVarNames && args.configuredEnvVarNames.length > 0
@@ -580,21 +686,31 @@ export function computeCloudflarePagesDryRun(args: {
     targetType: 'cloudflare_pages',
     mode: 'dry_run',
     liveDeployEnabled: false,
+    liveDnsMutationEnabled: false,
     projectName: t?.cloudflareProjectName || null,
+    cloudflarePagesProjectName: t?.cloudflareProjectName || null,
+    cloudflarePagesProjectRef: t?.cloudflareProjectRef || null,
     accountIdConfigured: present(t?.cloudflareAccountId),
     repoUrl: resolveRepoUrl(t),
     branch: resolveBranch(t) || DEFAULT_PRODUCTION_BRANCH,
     buildCommand: resolveBuildCommand(t) || DEFAULT_BUILD_COMMAND,
     outputDirectory: resolveOutputDirectory(t) || REQUIRED_OUTPUT_DIRECTORY,
+    previewSubdomain: resolvePreviewSubdomain(t),
     customDomain: customDomain || null,
     dnsMode,
+    pagesDevHost: resolvePagesDevHost(t),
+    cnameName,
+    cnameTarget,
+    wouldCreatePagesProject: true,
+    wouldConnectGitRepo: true,
+    wouldAddCustomDomain: hasCustomDomain,
+    wouldCreateCnameRecord: hasCustomDomain && dnsMode === 'subdomain',
     wouldCreateProject: true,
     wouldConnectRepo: true,
     wouldSetEnvVars,
-    wouldAddCustomDomain: Boolean(customDomain) && dnsMode !== 'none',
     warnings,
     blockingReasons,
-    note: 'Dry run only. No Cloudflare API call, no project created, no repo connected, no DNS change, no deployment. liveDeployEnabled is false.',
+    note: 'Dry run only. No Cloudflare API call, no project created, no repo connected, no custom domain added, no CNAME record created, no DNS change, no deployment. liveDeployEnabled and liveDnsMutationEnabled are false.',
   };
 }
 
@@ -619,7 +735,9 @@ export function getManualSetupChecklist(): ChecklistStep[] {
     { step: 8, title: 'Set the production branch', detail: `Set the production branch to "${DEFAULT_PRODUCTION_BRANCH}".` },
     { step: 9, title: 'Add public environment variables', detail: `Add the public env vars: ${EXPECTED_PUBLIC_ENV_VARS.join(', ')}.` },
     { step: 10, title: 'Never add secrets as NEXT_PUBLIC_* vars', detail: 'NEXT_PUBLIC_* values are embedded in the public client bundle — never put secrets there.' },
-    { step: 11, title: 'Deploy to the Cloudflare Pages preview URL first', detail: 'Trigger a preview build and verify the site on the Cloudflare Pages preview URL.' },
-    { step: 12, title: 'Add a custom test subdomain only after preview passes', detail: 'Only after the preview deploy passes, add a custom test subdomain to the Pages project.' },
+    { step: 11, title: 'Deploy to the Cloudflare Pages .pages.dev URL first', detail: 'The default early preview uses the Cloudflare Pages URL (<project>.pages.dev). No custom CNAME is required for this step.' },
+    { step: 12, title: 'Add ONE branded subdomain per test site (only after preview passes)', detail: 'For a branded preview, add one subdomain per site (e.g. preview-rjs-auto.launchmarketing.com) as its own Pages custom domain. Do NOT use path routing (testsite.launchmarketing.com/customer-slug) and do NOT rely on wildcard DNS.' },
+    { step: 13, title: 'Add the branded subdomain as a Pages custom domain', detail: 'In the Pages project, add the branded subdomain as a custom domain so Cloudflare can issue a certificate for it.' },
+    { step: 14, title: 'Create/verify a DNS CNAME for the branded subdomain', detail: 'Create or verify a CNAME record: name = the branded subdomain, target = the Pages project target (<project>.pages.dev). No DNS mutation is performed by this milestone.' },
   ];
 }
