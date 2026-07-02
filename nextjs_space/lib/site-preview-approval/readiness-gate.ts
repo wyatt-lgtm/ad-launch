@@ -21,6 +21,8 @@ import type { RenderedFile } from '@/lib/site-renderer';
 import type { ArtifactManifest } from '@/lib/site-builder/artifact-manifest';
 import type { DryRunPlan, DeployTargetConfig } from '@/lib/site-deploy/dry-run';
 import { containsSignedUrl, containsSecret } from '@/lib/site-qa/mobile-qa';
+import type { PreservationMapping } from '@/lib/site-backlinks/types';
+import { unmappedHighValue, needsReviewMedium } from '@/lib/site-backlinks/redirect-plan';
 
 const READY_FOR_PREVIEW = 'ready_for_preview';
 
@@ -63,7 +65,11 @@ export type PreviewReadinessCode =
   | 'hardcoded_host_path'
   | 'dry_run_plan_missing'
   | 'live_deploy_not_disabled'
-  | 'deploy_requested';
+  | 'deploy_requested'
+  | 'backlink_high_value_unmapped'
+  | 'backlink_low_value_missing_reason'
+  | 'backlink_redirect_plan_missing'
+  | 'backlink_redirects_artifact_missing';
 
 export interface PreviewReadinessIssue {
   code: PreviewReadinessCode;
@@ -102,6 +108,14 @@ export interface PreviewReadinessChecks {
   dryRunPlanAvailable: boolean;
   deploymentTargetConfigured: boolean;
   liveDeployDisabled: boolean;
+  /**
+   * Milestone 10 backlink-preservation readiness. These default to `true` when
+   * the backlink layer was not evaluated (backlink context absent) so existing
+   * M1–M9 flows are unaffected.
+   */
+  backlinkInventoryPresent: boolean;
+  backlinkHighValueMapped: boolean;
+  backlinkRedirectPlanReady: boolean;
 }
 
 export type PreviewStatus = 'preview_ready' | 'preview_blocked' | 'preview_rejected';
@@ -134,6 +148,30 @@ export interface PreviewReadinessContext {
   dryRunPlan: DryRunPlan | null;
   /** Caller must pass true only if a live deploy/publish was requested. */
   deployRequested?: boolean;
+  /**
+   * Milestone 10 backlink-preservation context. Absent/undefined = the backlink
+   * layer was not evaluated for this build (existing M1–M9 behaviour, no gating).
+   * When present, high/critical unmapped backlinked URLs BLOCK readiness so the
+   * site is never marked ready-for-future-deploy while high-value URLs would 404.
+   */
+  backlink?: BacklinkReadinessContext | null;
+}
+
+export interface BacklinkReadinessContext {
+  /** True when a backlink inventory row exists for the business/project. */
+  inventoryPresent: boolean;
+  /** InventoryStatus value (e.g. complete | incomplete_provider_missing). */
+  inventoryStatus: string | null;
+  /** True when no external backlink provider contributed (crawl-only). */
+  providerMissing: boolean;
+  /** Enriched preservation mappings (priority + backlink counts resolved). */
+  mappings: PreservationMapping[];
+  /** True when a durable redirect-plan artifact could be computed. */
+  redirectPlanPresent: boolean;
+  /** True when the static package emitted a `_redirects` artifact. */
+  redirectsArtifactPresent: boolean;
+  /** True when the chosen deployment adapter natively supports 301 redirects. */
+  adapterSupportsRedirects: boolean;
 }
 
 export interface PreviewReadinessResult {
@@ -351,6 +389,91 @@ export function evaluatePreviewReadiness(ctx: PreviewReadinessContext): PreviewR
   }
   warnings.push(...targetWarnings);
 
+  // ── Backlink preservation readiness (Milestone 10) ─────────────────────────
+  // Absent context = backlink layer not evaluated → defaults keep prior flows
+  // unaffected. When present, high/critical unmapped URLs BLOCK readiness so a
+  // site is never marked ready-for-future-deploy while high-value URLs would 404.
+  const bl = ctx.backlink;
+  let backlinkInventoryPresent = false;
+  let backlinkHighValueMapped = true;
+  let backlinkRedirectPlanReady = true;
+  if (bl) {
+    if (!bl.inventoryPresent) {
+      // Evaluated but no inventory available → warn (never a silent pass).
+      warnings.push(
+        'incomplete_provider_missing: no backlink inventory is available for this site, so backlink preservation could not be verified. Run a backlink scan or upload a backlink export before deploying.',
+      );
+    } else {
+      backlinkInventoryPresent = true;
+
+      // Provider coverage warning (crawl-only inventory).
+      if (bl.providerMissing || bl.inventoryStatus === 'incomplete_provider_missing') {
+        warnings.push(
+          'incomplete_provider_missing: backlink provider data is unavailable; inventory is crawl-only and external backlink coverage may be incomplete.',
+        );
+      }
+
+      // High/critical unmapped backlinked URL → BLOCK (would 404 on the new site).
+      const highUnmapped = unmappedHighValue(bl.mappings);
+      if (highUnmapped.length > 0) {
+        backlinkHighValueMapped = false;
+        blocking.push({
+          code: 'backlink_high_value_unmapped',
+          message: `${highUnmapped.length} high-value backlinked URL(s) are unmapped and would become 404s: ${highUnmapped
+            .map((m) => `${m.oldPath} (${m.priority})`)
+            .join(', ')}. Preserve, 301-redirect, or explicitly review them before this site can be marked ready.`,
+        });
+      }
+
+      // Medium unmapped / needs-review → warning (does not block).
+      const medReview = needsReviewMedium(bl.mappings);
+      if (medReview.length > 0) {
+        warnings.push(
+          `${medReview.length} medium-value backlinked URL(s) still need review: ${medReview
+            .map((m) => m.oldPath)
+            .join(', ')}.`,
+        );
+      }
+
+      // Low-value ignored URLs MUST carry a reason.
+      const lowIgnoredNoReason = bl.mappings.filter(
+        (m) => m.action === 'ignore_no_value' && !(m.reason && m.reason.trim()),
+      );
+      if (lowIgnoredNoReason.length > 0) {
+        blocking.push({
+          code: 'backlink_low_value_missing_reason',
+          message: `${lowIgnoredNoReason.length} ignored backlinked URL(s) are missing a required reason: ${lowIgnoredNoReason
+            .map((m) => m.oldPath)
+            .join(', ')}.`,
+        });
+      }
+
+      // Redirect plan + `_redirects` artifact are required when any 301 exists.
+      const redirectsRequired = bl.mappings.some(
+        (m) => m.action === 'redirect_301' && Boolean(m.newPath),
+      );
+      if (redirectsRequired) {
+        if (!bl.redirectPlanPresent) {
+          backlinkRedirectPlanReady = false;
+          blocking.push({
+            code: 'backlink_redirect_plan_missing',
+            message: 'Backlinked URLs require 301 redirects but no redirect plan exists. Generate the redirect plan before this site can be marked ready.',
+          });
+        } else if (!bl.redirectsArtifactPresent) {
+          blocking.push({
+            code: 'backlink_redirects_artifact_missing',
+            message: 'A redirect plan exists but the static package has not emitted a `_redirects` artifact. Rebuild the static site so redirects are included.',
+          });
+        }
+        if (!bl.adapterSupportsRedirects) {
+          warnings.push(
+            'The selected deployment adapter does not natively apply 301 redirects — a follow-up action will be required to configure redirects at deploy time.',
+          );
+        }
+      }
+    }
+  }
+
   const checks: PreviewReadinessChecks = {
     siteBuildReady:
       Boolean(build) &&
@@ -367,6 +490,9 @@ export function evaluatePreviewReadiness(ctx: PreviewReadinessContext): PreviewR
     dryRunPlanAvailable,
     deploymentTargetConfigured: targetStatus === 'target_ready_for_future_deploy',
     liveDeployDisabled,
+    backlinkInventoryPresent,
+    backlinkHighValueMapped,
+    backlinkRedirectPlanReady,
   };
 
   const approvable = blocking.length === 0;
@@ -434,6 +560,20 @@ export interface WebsitePreviewReadinessReport {
   blockingReasons: PreviewReadinessIssue[];
   warnings: string[];
   approval: { approvedBy: string | null; approvedAt: string | null; notes: string | null } | null;
+  /** Milestone 10 backlink-preservation snapshot (null when not evaluated). */
+  backlink: {
+    inventoryPresent: boolean;
+    inventoryStatus: string | null;
+    providerMissing: boolean;
+    totalMapped: number;
+    highValueUnmapped: number;
+    mediumNeedsReview: number;
+    redirectPlanPresent: boolean;
+    redirectsArtifactPresent: boolean;
+    adapterSupportsRedirects: boolean;
+    highValueMapped: boolean;
+    redirectPlanReady: boolean;
+  } | null;
 }
 
 export function buildReadinessReport(args: {
@@ -445,8 +585,25 @@ export function buildReadinessReport(args: {
   dryRunPlan: DryRunPlan | null;
   checkedAt: string;
   approval?: { approvedBy: string | null; approvedAt: string | null; notes: string | null } | null;
+  backlink?: BacklinkReadinessContext | null;
 }): WebsitePreviewReadinessReport {
   const { result, manifest, mobileQa, dryRunPlan } = args;
+  const bl = args.backlink || null;
+  const backlink = bl
+    ? {
+        inventoryPresent: bl.inventoryPresent,
+        inventoryStatus: bl.inventoryStatus,
+        providerMissing: bl.providerMissing,
+        totalMapped: bl.mappings.length,
+        highValueUnmapped: unmappedHighValue(bl.mappings).length,
+        mediumNeedsReview: needsReviewMedium(bl.mappings).length,
+        redirectPlanPresent: bl.redirectPlanPresent,
+        redirectsArtifactPresent: bl.redirectsArtifactPresent,
+        adapterSupportsRedirects: bl.adapterSupportsRedirects,
+        highValueMapped: result.checks.backlinkHighValueMapped,
+        redirectPlanReady: result.checks.backlinkRedirectPlanReady,
+      }
+    : null;
 
   const routes: { path: string; title: string | null; status: string }[] = [];
   if (manifest?.pages?.length) {
@@ -503,5 +660,6 @@ export function buildReadinessReport(args: {
     blockingReasons: result.blockingReasons,
     warnings: result.warnings,
     approval: args.approval || null,
+    backlink,
   };
 }

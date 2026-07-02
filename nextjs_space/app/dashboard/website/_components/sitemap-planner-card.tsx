@@ -47,6 +47,14 @@ interface SitemapPage {
   status?: string;
   approvalStatus: string;
   sortOrder: number;
+  backlinkPreservation?: {
+    oldUrls: string[];
+    backlinkPriority: string | null;
+    preservationAction: string | null;
+    redirectTarget: string | null;
+    needsReview: boolean;
+    reason: string | null;
+  } | null;
 }
 
 interface SitemapArtifact {
@@ -875,6 +883,27 @@ export default function SitemapPlannerCard() {
                           <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">{p.pageType}</span>
                           {p.source === 'user_requested' && (
                             <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">User requested</span>
+                          )}
+                          {p.backlinkPreservation && (p.backlinkPreservation.oldUrls?.length > 0) && (
+                            <span
+                              className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                                p.backlinkPreservation.needsReview
+                                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                  : p.backlinkPreservation.preservationAction === 'redirect_301'
+                                    ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                    : 'border-green-200 bg-green-50 text-green-700'
+                              }`}
+                              title={
+                                (p.backlinkPreservation.reason || 'Backlink preservation') +
+                                ` — old: ${p.backlinkPreservation.oldUrls.join(', ')}`
+                              }
+                            >
+                              {p.backlinkPreservation.needsReview
+                                ? 'Backlinks: needs review'
+                                : p.backlinkPreservation.preservationAction === 'redirect_301'
+                                  ? `301 ← ${p.backlinkPreservation.oldUrls.length} URL${p.backlinkPreservation.oldUrls.length > 1 ? 's' : ''}`
+                                  : `Backlinks preserved${p.backlinkPreservation.backlinkPriority ? ` · ${p.backlinkPreservation.backlinkPriority}` : ''}`}
+                            </span>
                           )}
                         </div>
                         <p className="truncate text-xs text-gray-500">{p.slug} · H1: {p.h1}</p>

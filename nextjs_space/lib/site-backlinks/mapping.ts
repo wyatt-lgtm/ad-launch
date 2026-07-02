@@ -147,7 +147,8 @@ export function mapOldUrl(
   const highValue = isHighValue(priority);
   const lowValue = priority === 'low';
 
-  if (score >= 1 && matchedPath) {
+  if (matchedPath && matchedPath === oldPath) {
+    // The EXACT same path exists in the new sitemap — preserve it in place.
     action = 'preserve_same_url';
     reason = `Exact path preserved in the new sitemap (${matchedPath}).`;
   } else if (score >= STRONG_MATCH && matchedPath) {

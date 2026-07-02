@@ -8,6 +8,7 @@ import MobileQaCard from './_components/mobile-qa-card';
 import PreviewApprovalCard from './_components/preview-approval-card';
 import DeploymentSettingsCard from './_components/deployment-settings-card';
 import SitemapPlannerCard from './_components/sitemap-planner-card';
+import BacklinkPreservationCard from './_components/backlink-preservation-card';
 
 export default function WebsitePage() {
   return (
@@ -16,6 +17,7 @@ export default function WebsitePage() {
       <main className="flex-1">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
           <SitemapPlannerCard />
+          <BacklinkPreservationCard />
           <StaticSiteBuildCard />
           <MobileQaCard />
           <PreviewApprovalCard />

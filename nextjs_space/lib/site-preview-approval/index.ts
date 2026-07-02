@@ -34,7 +34,12 @@ import {
   type PreviewReadinessResult,
   type WebsitePreviewReadinessReport,
   type OverallReadinessStatus,
+  type BacklinkReadinessContext,
 } from '@/lib/site-preview-approval/readiness-gate';
+import { loadLatestInventory, loadEnrichedMappings, loadRedirectPlan } from '@/lib/site-backlinks/store';
+
+/** Deployment adapters that natively apply 301 redirects from a `_redirects` file. */
+const REDIRECT_CAPABLE_ADAPTERS = new Set(['cloudflare_pages', 'vercel']);
 
 export interface EvaluatePreviewOptions {
   businessId: string;
@@ -94,6 +99,7 @@ interface LoadedContext {
   copyArtifactExists: boolean;
   dryRunPlan: DryRunPlan | null;
   manifest: ArtifactManifest | null;
+  backlink: BacklinkReadinessContext | null;
 }
 
 /** Load every input the readiness gate needs (all read-only). */
@@ -218,6 +224,37 @@ async function loadContext(opts: {
         })
       : null;
 
+  // Backlink-preservation readiness context (Milestone 10; all read-only).
+  // Absent inventory => backlink layer not run for this site => never gates.
+  let backlink: BacklinkReadinessContext | null = null;
+  if (belongs) {
+    try {
+      const inv = await loadLatestInventory(opts.businessId, websiteProjectId);
+      if (inv) {
+        const mappings = await loadEnrichedMappings(opts.businessId, websiteProjectId);
+        const plan = await loadRedirectPlan(opts.businessId, websiteProjectId);
+        const redirectsArtifact = manifest?.redirects || null;
+        backlink = {
+          inventoryPresent: true,
+          inventoryStatus: inv.status || inv.inventory?.status || null,
+          providerMissing:
+            inv.inventory?.providerMissing ?? inv.status === 'incomplete_provider_missing',
+          mappings,
+          redirectPlanPresent: Boolean(plan),
+          redirectsArtifactPresent: Boolean(
+            redirectsArtifact && (redirectsArtifact.count > 0 || redirectsArtifact.artifactPath),
+          ),
+          adapterSupportsRedirects: target
+            ? REDIRECT_CAPABLE_ADAPTERS.has(target.targetType)
+            : false,
+        };
+      }
+    } catch {
+      // Non-fatal: leave backlink null (layer treated as not evaluated).
+      backlink = null;
+    }
+  }
+
   return {
     build,
     businessExists: Boolean(business),
@@ -229,6 +266,7 @@ async function loadContext(opts: {
     copyArtifactExists,
     dryRunPlan,
     manifest,
+    backlink,
   };
 }
 
@@ -245,6 +283,7 @@ function runGate(ctx: LoadedContext, businessId: string, deployRequested?: boole
     targetStatusRaw: ctx.target?.status || null,
     dryRunPlan: ctx.dryRunPlan,
     deployRequested,
+    backlink: ctx.backlink,
   });
 }
 
@@ -293,6 +332,7 @@ export async function evaluatePreviewReadiness(
     deploymentTargetId: ctx.target?.id || null,
     dryRunPlan: ctx.dryRunPlan,
     checkedAt,
+    backlink: ctx.backlink,
   });
 
   let approvalId: string | undefined;
@@ -412,6 +452,7 @@ export async function approvePreviewApproval(
       deploymentTargetId: ctx.target?.id || null,
       dryRunPlan: ctx.dryRunPlan,
       checkedAt,
+      backlink: ctx.backlink,
     });
     await prisma.websitePreviewApproval.update({
       where: { id: approval.id },
@@ -439,6 +480,7 @@ export async function approvePreviewApproval(
     deploymentTargetId: ctx.target?.id || null,
     dryRunPlan: ctx.dryRunPlan,
     checkedAt,
+    backlink: ctx.backlink,
     approval: { approvedBy: opts.approvedByUserId, approvedAt, notes: opts.notes || null },
   });
 
