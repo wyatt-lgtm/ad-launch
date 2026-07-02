@@ -5,6 +5,7 @@ import WebsiteSection from './_components/website-section';
 import StaticBuildCard from './_components/static-build-card';
 import StaticSiteBuildCard from './_components/static-site-build-card';
 import MobileQaCard from './_components/mobile-qa-card';
+import PreviewApprovalCard from './_components/preview-approval-card';
 import DeploymentSettingsCard from './_components/deployment-settings-card';
 import SitemapPlannerCard from './_components/sitemap-planner-card';
 
@@ -17,6 +18,7 @@ export default function WebsitePage() {
           <SitemapPlannerCard />
           <StaticSiteBuildCard />
           <MobileQaCard />
+          <PreviewApprovalCard />
           <StaticBuildCard />
           <DeploymentSettingsCard />
         </div>

@@ -135,13 +135,14 @@ model Business {
   websitePageCopies         WebsitePageCopy[]
   websiteImageBriefs        WebsiteImageBrief[]
   websiteGeneratedImages    WebsiteGeneratedImageAsset[]
-  websiteQaResults   WebsiteQaResult[]
+  websiteQaResults          WebsiteQaResult[]
 
   // ── Static-first site generation: deployment targets / builds / env ─
   siteDeploymentTargets    SiteDeploymentTarget[]
   siteBuilds               SiteBuild[]
   siteEnvironmentVariables SiteEnvironmentVariable[]
   websiteMobileQas         WebsiteMobileQa[]
+  websitePreviewApprovals  WebsitePreviewApproval[]
 
   // ── Industry match (from Jim Bridger / owner-confirmed) ────────────
   matchedIndustryId         String?
@@ -2762,21 +2763,22 @@ model WebsiteProject {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  business          Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  concepts          WebsiteConcept[]
-  productions       WebsiteProduction[]
+  business           Business                     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  concepts           WebsiteConcept[]
+  productions        WebsiteProduction[]
   serviceDiscoveries WebsiteServiceDiscovery[]
-  sitemaps          WebsiteSitemap[]
-  pageCopies        WebsitePageCopy[]
-  imageBriefs       WebsiteImageBrief[]
-  generatedImages   WebsiteGeneratedImageAsset[]
-  pages             WebsitePage[]
-  sections          WebsiteSection[]
-  assets            WebsiteAsset[]
-  qaResults         WebsiteQaResult[]
-  deploymentTargets SiteDeploymentTarget[]
-  builds            SiteBuild[]
-  mobileQas         WebsiteMobileQa[]
+  sitemaps           WebsiteSitemap[]
+  pageCopies         WebsitePageCopy[]
+  imageBriefs        WebsiteImageBrief[]
+  generatedImages    WebsiteGeneratedImageAsset[]
+  pages              WebsitePage[]
+  sections           WebsiteSection[]
+  assets             WebsiteAsset[]
+  qaResults          WebsiteQaResult[]
+  deploymentTargets  SiteDeploymentTarget[]
+  builds             SiteBuild[]
+  mobileQas          WebsiteMobileQa[]
+  previewApprovals   WebsitePreviewApproval[]
 
   @@index([businessId])
   @@index([conceptStatus])
@@ -3080,10 +3082,11 @@ model SiteDeploymentTarget {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  business Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  project  WebsiteProject?           @relation(fields: [websiteProjectId], references: [id], onDelete: SetNull)
-  builds   SiteBuild[]
-  envVars  SiteEnvironmentVariable[]
+  business         Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project          WebsiteProject?           @relation(fields: [websiteProjectId], references: [id], onDelete: SetNull)
+  builds           SiteBuild[]
+  envVars          SiteEnvironmentVariable[]
+  previewApprovals WebsitePreviewApproval[]
 
   @@index([businessId])
   @@index([websiteProjectId])
@@ -3123,11 +3126,12 @@ model SiteBuild {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  business         Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  project          WebsiteProject        @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
-  production       WebsiteProduction?    @relation(fields: [websiteProductionId], references: [id], onDelete: SetNull)
-  deploymentTarget SiteDeploymentTarget? @relation(fields: [deploymentTargetId], references: [id], onDelete: SetNull)
+  business         Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project          WebsiteProject           @relation(fields: [websiteProjectId], references: [id], onDelete: Cascade)
+  production       WebsiteProduction?       @relation(fields: [websiteProductionId], references: [id], onDelete: SetNull)
+  deploymentTarget SiteDeploymentTarget?    @relation(fields: [deploymentTargetId], references: [id], onDelete: SetNull)
   mobileQas        WebsiteMobileQa[]
+  previewApprovals WebsitePreviewApproval[]
 
   @@index([businessId])
   @@index([websiteProjectId])
@@ -3135,7 +3139,6 @@ model SiteBuild {
   @@index([deploymentTargetId])
   @@index([buildStatus])
 }
-
 
 /// Milestone 7 — Mobile / responsive QA result for a generated static preview
 /// package. Read-only inspection of the M6 static build (re-rendered from the
@@ -3164,13 +3167,62 @@ model WebsiteMobileQa {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  business  Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  project   WebsiteProject? @relation(fields: [websiteProjectId], references: [id], onDelete: SetNull)
-  siteBuild SiteBuild       @relation(fields: [siteBuildId], references: [id], onDelete: Cascade)
+  business         Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project          WebsiteProject?          @relation(fields: [websiteProjectId], references: [id], onDelete: SetNull)
+  siteBuild        SiteBuild                @relation(fields: [siteBuildId], references: [id], onDelete: Cascade)
+  previewApprovals WebsitePreviewApproval[]
 
   @@index([businessId])
   @@index([websiteProjectId])
   @@index([siteBuildId])
+  @@index([status])
+}
+
+/// Milestone 8 — Preview approval + deployment-readiness gate for a generated
+/// static preview package (built in M6, QA'd in M7). Records a human review
+/// decision on whether the preview is ready for a FUTURE, separately-gated
+/// deployment milestone. This model NEVER deploys, publishes, launches, changes
+/// DNS, uploads to hosting, generates images/copy, or rebuilds the static site.
+/// It never advances SiteBuild.buildStatus to deployed/live/published. The
+/// durable, auditable readiness report lives in `readinessJson`; artifacts never
+/// contain secrets or signed URLs. Status values: pending_review |
+/// approved_for_deployment_readiness | approved_preview_only_target_incomplete |
+/// rejected | blocked | archived. (NEVER deployed/published/live/launched.)
+model WebsitePreviewApproval {
+  id                 String  @id @default(cuid())
+  businessId         String
+  websiteProjectId   String?
+  siteBuildId        String
+  mobileQaId         String?
+  deploymentTargetId String?
+
+  // status: pending_review | approved_for_deployment_readiness |
+  //         approved_preview_only_target_incomplete | rejected | blocked | archived
+  status String @default("pending_review")
+
+  readinessJson Json?
+
+  approvalNotes   String?
+  rejectionReason String?
+
+  approvedByUserId String?
+  rejectedByUserId String?
+  approvedAt       DateTime?
+  rejectedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business         Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project          WebsiteProject?       @relation(fields: [websiteProjectId], references: [id], onDelete: SetNull)
+  siteBuild        SiteBuild             @relation(fields: [siteBuildId], references: [id], onDelete: Cascade)
+  mobileQa         WebsiteMobileQa?      @relation(fields: [mobileQaId], references: [id], onDelete: SetNull)
+  deploymentTarget SiteDeploymentTarget? @relation(fields: [deploymentTargetId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([websiteProjectId])
+  @@index([siteBuildId])
+  @@index([mobileQaId])
   @@index([status])
 }
 
@@ -3254,10 +3306,10 @@ model WebsiteServiceDiscovery {
   // Full classified discovery artifact (services with confirmationStatus/source/evidence/confidence).
   discoveryJson          Json
   // Denormalized counts for quick UI/gates.
-  confirmedCount         Int @default(0)
-  likelyCount            Int @default(0)
-  needsConfirmationCount Int @default(0)
-  rejectedCount          Int @default(0)
+  confirmedCount         Int  @default(0)
+  likelyCount            Int  @default(0)
+  needsConfirmationCount Int  @default(0)
+  rejectedCount          Int  @default(0)
 
   source  String @default("agent_research")
   version Int    @default(1)
@@ -3274,7 +3326,7 @@ model WebsiteServiceDiscovery {
 
 /// The website_sitemap.json artifact for a business (hub-and-spoke plan + approval state).
 model WebsiteSitemap {
-  id               String @id @default(cuid())
+  id               String  @id @default(cuid())
   businessId       String
   websiteProjectId String?
 
@@ -3356,8 +3408,8 @@ model WebsitePageCopy {
   // Full PageCopy artifact JSON.
   copyJson Json
 
-  version            Int    @default(1)
-  generatedByUserId  String?
+  version           Int     @default(1)
+  generatedByUserId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3394,7 +3446,7 @@ model WebsiteImageBrief {
 
   generatedByUserId String?
   // source: copy_gate (default generation path) | manual | diagnostic
-  source String @default("copy_gate")
+  source            String  @default("copy_gate")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3444,19 +3496,19 @@ model WebsiteGeneratedImageAsset {
   width    Int?
   height   Int?
 
-  altText        String?
-  promptSummary  String?
+  altText         String?
+  promptSummary   String?
   visualRationale String?
 
   // Hero QA scores (0-100). Null for non-hero unless scored.
-  qualityScore        Int?
-  brandFitScore       Int?
-  mobileSafeScore     Int?
+  qualityScore         Int?
+  brandFitScore        Int?
+  mobileSafeScore      Int?
   textReadabilityScore Int?
-  focalPointScore     Int?
+  focalPointScore      Int?
   // qaStatus: pending | passed | failed | skipped
-  qaStatus        String?
-  requiredFixesJson Json?
+  qaStatus             String?
+  requiredFixesJson    Json?
 
   generatedByUserId String?
 
