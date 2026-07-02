@@ -117,7 +117,10 @@ export interface CloudflareReadiness {
   pagesApiToken: { configured: boolean };
   /** Cloudflare DNS API token. Presence only — NEVER a value. */
   dnsApiToken: { configured: boolean };
-  /** Optional default zone id reference. Presence only. */
+  /**
+   * Optional zone id reference (presence only). Detected from either
+   * CLOUDFLARE_ZONE_ID or the legacy CLOUDFLARE_DEFAULT_ZONE_ID.
+   */
   defaultZoneId: { configured: boolean };
   /** True only when the minimum Pages-readiness refs are present. */
   ready: boolean;
@@ -133,7 +136,9 @@ export function getCloudflareReadiness(): CloudflareReadiness {
   const accountId = present(process.env.CLOUDFLARE_ACCOUNT_ID);
   const pagesApiToken = present(process.env.CLOUDFLARE_PAGES_API_TOKEN);
   const dnsApiToken = present(process.env.CLOUDFLARE_DNS_API_TOKEN);
-  const defaultZoneId = present(process.env.CLOUDFLARE_DEFAULT_ZONE_ID);
+  // Support both the current CLOUDFLARE_ZONE_ID and the legacy
+  // CLOUDFLARE_DEFAULT_ZONE_ID name.
+  const defaultZoneId = firstPresent('CLOUDFLARE_ZONE_ID', 'CLOUDFLARE_DEFAULT_ZONE_ID');
 
   const missing: string[] = [];
   if (!accountId) missing.push('CLOUDFLARE_ACCOUNT_ID');

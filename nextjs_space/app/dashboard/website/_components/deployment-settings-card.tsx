@@ -120,6 +120,48 @@ function ReadyRow({ label, ok, hint }: { label: string; ok: boolean; hint?: stri
   );
 }
 
+/**
+ * A single configuration-source row. Shows WHERE a value resolves from
+ * (deployment target override, inherited environment, credential reference)
+ * or that it is missing. Never renders a secret value.
+ */
+function SourceRow({
+  label, present, source, hint,
+}: {
+  label: string;
+  present: boolean;
+  source?: 'target' | 'environment' | 'credential_ref' | 'missing' | string;
+  hint?: string;
+}) {
+  const sourceLabel =
+    source === 'target'
+      ? 'Configured via target'
+      : source === 'environment'
+        ? 'Configured via environment'
+        : source === 'credential_ref'
+          ? 'Configured via credential reference'
+          : 'Missing';
+  const tone = present
+    ? source === 'environment'
+      ? 'text-sky-600'
+      : source === 'credential_ref'
+        ? 'text-violet-600'
+        : 'text-green-600'
+    : 'text-gray-400';
+  return (
+    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+      <span className="text-gray-600">
+        {label}
+        {hint && <span className="ml-1 text-[10px] text-gray-400">({hint})</span>}
+      </span>
+      <span className={`inline-flex items-center gap-1 font-medium ${tone}`}>
+        {present ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+        {sourceLabel}
+      </span>
+    </div>
+  );
+}
+
 const PUBLIC_EXAMPLES = [
   'NEXT_PUBLIC_SITE_URL',
   'NEXT_PUBLIC_GHL_FORM_ID',
@@ -509,7 +551,7 @@ export default function DeploymentSettingsCard() {
                     <ReadyRow label="CLOUDFLARE_ACCOUNT_ID" ok={cloudflare.accountId.configured} />
                     <ReadyRow label="CLOUDFLARE_PAGES_API_TOKEN" ok={cloudflare.pagesApiToken.configured} />
                     <ReadyRow label="CLOUDFLARE_DNS_API_TOKEN" ok={cloudflare.dnsApiToken.configured} />
-                    <ReadyRow label="CLOUDFLARE_DEFAULT_ZONE_ID" ok={cloudflare.defaultZoneId.configured} hint="optional" />
+                    <ReadyRow label="Cloudflare Zone ID" ok={cloudflare.defaultZoneId.configured} hint="optional" />
                   </div>
                 ) : (
                   <p className="text-[11px] text-gray-400">Loading Cloudflare readiness…</p>
@@ -563,6 +605,32 @@ export default function DeploymentSettingsCard() {
                       <ReadyRow label="Live deploy disabled" ok={!!cfBundle.readiness.checks.liveDeployDisabled} />
                       {Array.isArray(cfBundle.readiness.missingFields) && cfBundle.readiness.missingFields.length > 0 && (
                         <p className="mt-1 text-[11px] text-amber-700">Missing: {cfBundle.readiness.missingFields.join(', ')}</p>
+                      )}
+                      {cfBundle.readiness.configSources && (
+                        <div className="mt-3 border-t border-gray-100 pt-2">
+                          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Configuration source</p>
+                          <SourceRow
+                            label="Account ID"
+                            present={!!cfBundle.readiness.configSources.accountId?.present}
+                            source={cfBundle.readiness.configSources.accountId?.source}
+                          />
+                          <SourceRow
+                            label="Cloudflare Zone ID"
+                            present={!!cfBundle.readiness.configSources.zoneId?.present}
+                            source={cfBundle.readiness.configSources.zoneId?.source}
+                            hint="optional"
+                          />
+                          <SourceRow
+                            label="Pages API token"
+                            present={!!cfBundle.readiness.configSources.pagesToken?.present}
+                            source={cfBundle.readiness.configSources.pagesToken?.source}
+                          />
+                          <SourceRow
+                            label="DNS API token"
+                            present={!!cfBundle.readiness.configSources.dnsToken?.present}
+                            source={cfBundle.readiness.configSources.dnsToken?.source}
+                          />
+                        </div>
                       )}
                     </div>
 

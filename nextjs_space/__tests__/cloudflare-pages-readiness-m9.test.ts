@@ -214,8 +214,15 @@ describe('M9 Cloudflare Pages readiness gate — passing + blocking', () => {
     expect(res.blockingReasons.some((b) => b.code === 'business_missing')).toBe(true);
   });
 
-  it('blocks when account id is missing', async () => {
-    const res = evaluateCloudflareReadiness(await ctx({ target: fullTarget({ cloudflareAccountId: null }) }));
+  it('blocks when account id is missing from BOTH target and environment', async () => {
+    const res = evaluateCloudflareReadiness(await ctx({
+      target: fullTarget({ cloudflareAccountId: null }),
+      envReadiness: {
+        accountId: { configured: false }, pagesApiToken: { configured: true },
+        dnsApiToken: { configured: true }, defaultZoneId: { configured: true },
+        ready: false, missing: ['CLOUDFLARE_ACCOUNT_ID'],
+      },
+    }));
     expect(res.checks.accountIdPresent).toBe(false);
     expect(res.missingFields).toContain('cloudflareAccountId');
     expect(res.blockingReasons.some((b) => b.code === 'account_id_missing')).toBe(true);
@@ -233,8 +240,15 @@ describe('M9 Cloudflare Pages readiness gate — passing + blocking', () => {
     expect(res.blockingReasons.some((b) => b.code === 'repo_url_missing')).toBe(true);
   });
 
-  it('blocks when the credential reference is missing', async () => {
-    const res = evaluateCloudflareReadiness(await ctx({ target: fullTarget({ credentialsRef: null }) }));
+  it('blocks when the credential reference is missing from BOTH target and environment', async () => {
+    const res = evaluateCloudflareReadiness(await ctx({
+      target: fullTarget({ credentialsRef: null }),
+      envReadiness: {
+        accountId: { configured: true }, pagesApiToken: { configured: false },
+        dnsApiToken: { configured: false }, defaultZoneId: { configured: true },
+        ready: false, missing: ['CLOUDFLARE_PAGES_API_TOKEN'],
+      },
+    }));
     expect(res.checks.credentialRefPresent).toBe(false);
     expect(res.blockingReasons.some((b) => b.code === 'credential_ref_missing')).toBe(true);
   });

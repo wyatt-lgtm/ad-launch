@@ -161,6 +161,27 @@ export interface CustomDomainReadiness {
 
 export type CloudflareReadinessStatus = 'ready' | 'incomplete' | 'blocked';
 
+/**
+ * Where a piece of Cloudflare config was resolved from. `target` = a
+ * deployment-target-row override; `environment` = an inherited (master) env var;
+ * `credential_ref` = a stored credential reference NAME (never a value);
+ * `missing` = neither present.
+ */
+export type CloudflareConfigSource = 'target' | 'environment' | 'credential_ref' | 'missing';
+
+export interface CloudflareConfigResolution {
+  present: boolean;
+  source: CloudflareConfigSource;
+}
+
+/** Resolved config with its source (no secret values — presence + source only). */
+export interface CloudflareConfigSources {
+  accountId: CloudflareConfigResolution;
+  zoneId: CloudflareConfigResolution;
+  pagesToken: CloudflareConfigResolution;
+  dnsToken: CloudflareConfigResolution;
+}
+
 export interface CloudflareReadinessResult {
   status: CloudflareReadinessStatus;
   /** Recommended targetStatus (never deploys): configured | verified | draft. */
@@ -175,9 +196,12 @@ export interface CloudflareReadinessResult {
     accountTokenConfigured: boolean;
     pagesTokenConfigured: boolean;
     dnsTokenConfigured: boolean;
+    zoneIdConfigured: boolean;
     expectedPublicEnvVars: string[];
     configuredEnvVarNames: string[];
   };
+  /** Resolved config + source (target row / environment / credential_ref). */
+  configSources: CloudflareConfigSources;
   refs: {
     businessId: string;
     targetType: string | null;
@@ -395,12 +419,36 @@ export function evaluateCloudflareReadiness(
     });
   }
 
-  // 3) Cloudflare account id present.
-  const accountIdPresent = present(t?.cloudflareAccountId);
+  // 3) Cloudflare account id present. Resolve from the target-row override
+  //    first, then fall back to the inherited (master) environment. Do NOT
+  //    block on a null target row when the environment provides the value.
+  const env = ctx.envReadiness || null;
+  const accountIdFromTarget = present(t?.cloudflareAccountId);
+  const accountIdFromEnv = Boolean(env?.accountId.configured);
+  const accountId: CloudflareConfigResolution = accountIdFromTarget
+    ? { present: true, source: 'target' }
+    : accountIdFromEnv
+      ? { present: true, source: 'environment' }
+      : { present: false, source: 'missing' };
+  const accountIdPresent = accountId.present;
   if (!accountIdPresent) {
     missingFields.push('cloudflareAccountId');
-    blocking.push({ code: 'account_id_missing', message: 'Cloudflare account id is required.' });
+    blocking.push({
+      code: 'account_id_missing',
+      message:
+        'Cloudflare account id is required (set a target override or the CLOUDFLARE_ACCOUNT_ID environment variable).',
+    });
   }
+
+  // 3b) Cloudflare zone id (optional). Resolve target override, then env
+  //     (CLOUDFLARE_ZONE_ID or legacy CLOUDFLARE_DEFAULT_ZONE_ID). Non-blocking.
+  const zoneIdFromTarget = present(t?.cloudflareZoneId);
+  const zoneIdFromEnv = Boolean(env?.defaultZoneId.configured);
+  const zoneId: CloudflareConfigResolution = zoneIdFromTarget
+    ? { present: true, source: 'target' }
+    : zoneIdFromEnv
+      ? { present: true, source: 'environment' }
+      : { present: false, source: 'missing' };
 
   // 4) Cloudflare Pages project name present.
   const projectNamePresent = present(t?.cloudflareProjectName);
@@ -444,11 +492,29 @@ export function evaluateCloudflareReadiness(
     });
   }
 
-  // 9) Credential reference present.
+  // 9) Credential reference present. A stored credentialsRef (name only) OR an
+  //    inherited environment token satisfies token readiness. Tokens are never
+  //    read as values — presence + source only.
   const credentialRefPresent = present(t?.credentialsRef);
-  if (!credentialRefPresent) {
+  const pagesTokenFromEnv = Boolean(env?.pagesApiToken.configured);
+  const dnsTokenFromEnv = Boolean(env?.dnsApiToken.configured);
+  const pagesToken: CloudflareConfigResolution = credentialRefPresent
+    ? { present: true, source: 'credential_ref' }
+    : pagesTokenFromEnv
+      ? { present: true, source: 'environment' }
+      : { present: false, source: 'missing' };
+  const dnsToken: CloudflareConfigResolution = credentialRefPresent
+    ? { present: true, source: 'credential_ref' }
+    : dnsTokenFromEnv
+      ? { present: true, source: 'environment' }
+      : { present: false, source: 'missing' };
+  if (!credentialRefPresent && !pagesTokenFromEnv) {
     missingFields.push('credentialsRef');
-    blocking.push({ code: 'credential_ref_missing', message: 'A Cloudflare credential REFERENCE name is required (never the token value).' });
+    blocking.push({
+      code: 'credential_ref_missing',
+      message:
+        'A Cloudflare credential is required: set a credential REFERENCE name on the target, or the CLOUDFLARE_PAGES_API_TOKEN environment variable (never the token value).',
+    });
   }
 
   // 10) Env vars configured or placeholders present in the package.
@@ -529,7 +595,7 @@ export function evaluateCloudflareReadiness(
   }
 
   // 18) Env-token presence (references only) — informational warnings.
-  const env = ctx.envReadiness || null;
+  //     (`env` is resolved once near the top of this function.)
   if (env && !env.accountId.configured) {
     warnings.push('CLOUDFLARE_ACCOUNT_ID is not configured in the server environment (needed for a future deploy).');
   }
@@ -602,9 +668,11 @@ export function evaluateCloudflareReadiness(
       accountTokenConfigured: Boolean(env?.accountId.configured),
       pagesTokenConfigured: Boolean(env?.pagesApiToken.configured),
       dnsTokenConfigured: Boolean(env?.dnsApiToken.configured),
+      zoneIdConfigured: Boolean(env?.defaultZoneId.configured),
       expectedPublicEnvVars: [...EXPECTED_PUBLIC_ENV_VARS],
       configuredEnvVarNames,
     },
+    configSources: { accountId, zoneId, pagesToken, dnsToken },
     refs: {
       businessId: ctx.businessId,
       targetType: t?.targetType || null,
@@ -690,7 +758,8 @@ export function computeCloudflarePagesDryRun(args: {
     projectName: t?.cloudflareProjectName || null,
     cloudflarePagesProjectName: t?.cloudflareProjectName || null,
     cloudflarePagesProjectRef: t?.cloudflareProjectRef || null,
-    accountIdConfigured: present(t?.cloudflareAccountId),
+    accountIdConfigured:
+      Boolean(readiness?.configSources?.accountId?.present) || present(t?.cloudflareAccountId),
     repoUrl: resolveRepoUrl(t),
     branch: resolveBranch(t) || DEFAULT_PRODUCTION_BRANCH,
     buildCommand: resolveBuildCommand(t) || DEFAULT_BUILD_COMMAND,
